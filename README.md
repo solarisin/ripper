@@ -1,2 +1,1 @@
-# ripper
-A repository for importing bank transaction data from Google Sheets
+This repository is empty. Any task executed on it should be considered a new capability and needs to be created.
