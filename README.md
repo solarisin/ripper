@@ -1,4 +1,4 @@
-# Bank Transaction Data Importer
+# Ripper
 
 This project is a PySide6 application that authenticates over OAuth to import bank transaction data from a Google Sheet populated by Tiller Finance. The transactions are then displayed in a sortable, filterable table.
 
@@ -6,8 +6,8 @@ This project is a PySide6 application that authenticates over OAuth to import ba
 
 1. Clone the repository:
    ```
-   git clone https://github.com/githubnext/workspace-blank.git
-   cd workspace-blank
+   git clone https://github.com/solarisin/ripper.git
+   cd ripper
    ```
 
 2. Create a virtual environment and activate it:

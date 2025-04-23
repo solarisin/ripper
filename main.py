@@ -9,7 +9,7 @@ from data_fetcher import fetch_transactions
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Bank Transaction Data Importer")
+        self.setWindowTitle("Ripper")
         self.setGeometry(100, 100, 800, 600)
 
         self.model = QStandardItemModel()
