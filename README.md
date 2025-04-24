@@ -10,27 +10,16 @@ This project is a PySide6 application that authenticates over OAuth to import ba
    cd ripper
    ```
 
-2. Create a virtual environment and activate it:
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-   ```
+2. Register the application with Google API Console and obtain the client ID and client secret. Save the JSON file containing the client ID and client secret in the project directory.
 
-3. Install the required dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-4. Register the application with Google API Console and obtain the client ID and client secret. Save the JSON file containing the client ID and client secret in the project directory.
-
-5. Configure the SQLite database:
+3. Configure the SQLite database:
    - The database file will be created automatically when you run the application for the first time.
 
 ## Running the Project
 
 1. Run the application:
    ```
-   python main.py
+   ./start_ripper.sh
    ```
 
 2. Follow the instructions in the application to authenticate with your Google account and import the bank transaction data from the Google Sheet.
