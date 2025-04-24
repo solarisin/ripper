@@ -13,9 +13,14 @@ This project is a PySide6 application that authenticates over OAuth to import ba
 ## Running the Project
 
 1. Run the application:
-   ```
-   ./start_ripper.sh
-   ```
+   - On Linux or macOS:
+     ```
+     ./start_ripper.sh
+     ```
+   - On Windows:
+     ```
+     start_ripper.bat
+     ```
 
 2. Follow the instructions in the application to authenticate with your Google account and import the bank transaction data from the Google Sheet.
    - After the first login, you will be prompted to configure where to pull transaction data from.
