@@ -27,7 +27,9 @@ def create_table():
             c.execute('''CREATE TABLE IF NOT EXISTS data_sources (
                             id INTEGER PRIMARY KEY,
                             spreadsheet_id TEXT NOT NULL,
-                            range_name TEXT NOT NULL
+                            range_name TEXT NOT NULL,
+                            sheet_name TEXT NOT NULL,
+                            cell_range TEXT NOT NULL
                         );''')
             c.execute('''CREATE TABLE IF NOT EXISTS login_attempts (
                             id INTEGER PRIMARY KEY,
@@ -75,13 +77,13 @@ def retrieve_transactions():
             conn.close()
     return transactions
 
-def insert_data_source(spreadsheet_id, range_name):
+def insert_data_source(spreadsheet_id, range_name, sheet_name, cell_range):
     conn = create_connection()
     if conn is not None:
         try:
             c = conn.cursor()
-            c.execute('''INSERT INTO data_sources (spreadsheet_id, range_name)
-                         VALUES (?, ?)''', (spreadsheet_id, range_name))
+            c.execute('''INSERT INTO data_sources (spreadsheet_id, range_name, sheet_name, cell_range)
+                         VALUES (?, ?, ?, ?)''', (spreadsheet_id, range_name, sheet_name, cell_range))
             conn.commit()
         except Error as e:
             print(e)

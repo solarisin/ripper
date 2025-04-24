@@ -3,7 +3,7 @@ import logging
 from PySide6.QtWidgets import QApplication, QMainWindow, QTableView, QVBoxLayout, QWidget, QMessageBox, QHeaderView, QLineEdit, QHBoxLayout, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QSortFilterProxyModel
 from PySide6.QtGui import QStandardItemModel, QStandardItem
-from auth import authenticate
+from google_sheets_selector import GoogleSheetsSelector
 from data_fetcher import fetch_transactions
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -39,6 +39,15 @@ class MainWindow(QMainWindow):
         self.chart_button = QPushButton("Show Charts")
         self.chart_button.clicked.connect(self.show_charts)
 
+        self.google_sheets_combo = QComboBox()
+        self.google_sheets_combo.currentIndexChanged.connect(self.load_selected_google_sheet)
+
+        self.sheet_name_input = QLineEdit()
+        self.sheet_name_input.setPlaceholderText("Enter sheet name")
+
+        self.cell_range_input = QLineEdit()
+        self.cell_range_input.setPlaceholderText("Enter cell range (e.g., A1:D10)")
+
         search_layout = QHBoxLayout()
         search_layout.addWidget(self.search_bar)
         search_layout.addWidget(self.filter_combo)
@@ -48,6 +57,9 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.addLayout(search_layout)
         layout.addWidget(self.table_view)
+        layout.addWidget(self.google_sheets_combo)
+        layout.addWidget(self.sheet_name_input)
+        layout.addWidget(self.cell_range_input)
 
         container = QWidget()
         container.setLayout(layout)
@@ -63,8 +75,10 @@ class MainWindow(QMainWindow):
 
     def load_data(self):
         try:
-            credentials = authenticate()
-            transactions = fetch_transactions(credentials)
+            google_sheets_selector = GoogleSheetsSelector()
+            google_sheets = google_sheets_selector.list_google_sheets()
+            self.display_google_sheets(google_sheets)
+            transactions = fetch_transactions(google_sheets_selector.credentials)
             self.display_data(transactions)
         except Exception as e:
             logging.error(f"Error loading data: {e}")
@@ -119,6 +133,20 @@ class MainWindow(QMainWindow):
             }
             transactions.append(transaction)
         return transactions
+
+    def load_selected_google_sheet(self, index):
+        selected_sheet = self.google_sheets_combo.itemData(index)
+        if selected_sheet:
+            sheet_name = self.sheet_name_input.text() or "Transactions"
+            cell_range = self.cell_range_input.text() or "A:D"
+            # Insert data source with sheet name and cell range
+            insert_data_source(selected_sheet['id'], f"{sheet_name}!{cell_range}")
+            self.load_data()
+
+    def display_google_sheets(self, google_sheets):
+        self.google_sheets_combo.clear()
+        for sheet in google_sheets:
+            self.google_sheets_combo.addItem(sheet["name"], sheet)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

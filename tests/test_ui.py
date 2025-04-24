@@ -123,3 +123,33 @@ def test_fetch_and_display_metadata(app, qtbot, mocker):
     app.display_google_sheets(google_sheets)
     app.google_sheets_combo.setCurrentIndex(1)
     assert app.metadata_label.text() == "Selected Google Sheet ID: sheet2\nLast Modified: 2022-01-02\nOwner: User2"
+
+def test_search_google_sheets(app, qtbot, mocker):
+    google_sheets = [
+        {"id": "sheet1", "name": "Test Sheet 1"},
+        {"id": "sheet2", "name": "Test Sheet 2"},
+        {"id": "sheet3", "name": "Another Sheet"}
+    ]
+    app.display_google_sheets(google_sheets)
+    app.search_bar.setText("Test")
+    assert app.google_sheets_combo.count() == 2
+    assert app.google_sheets_combo.itemText(0) == "Test Sheet 1"
+    assert app.google_sheets_combo.itemText(1) == "Test Sheet 2"
+    app.search_bar.setText("Another")
+    assert app.google_sheets_combo.count() == 1
+    assert app.google_sheets_combo.itemText(0) == "Another Sheet"
+
+def test_filter_google_sheets_by_criteria(app, qtbot, mocker):
+    google_sheets = [
+        {"id": "sheet1", "name": "Test Sheet 1", "modifiedTime": "2022-01-01T00:00:00Z", "owner": "user1@example.com"},
+        {"id": "sheet2", "name": "Test Sheet 2", "modifiedTime": "2022-02-01T00:00:00Z", "owner": "user2@example.com"},
+        {"id": "sheet3", "name": "Another Sheet", "modifiedTime": "2022-03-01T00:00:00Z", "owner": "user1@example.com"}
+    ]
+    app.display_google_sheets(google_sheets)
+    app.filter_google_sheets("user1@example.com")
+    assert app.google_sheets_combo.count() == 2
+    assert app.google_sheets_combo.itemText(0) == "Test Sheet 1"
+    assert app.google_sheets_combo.itemText(1) == "Another Sheet"
+    app.filter_google_sheets("2022-02-01")
+    assert app.google_sheets_combo.count() == 1
+    assert app.google_sheets_combo.itemText(0) == "Test Sheet 2"
