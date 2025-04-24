@@ -1,10 +1,8 @@
 import sqlite3
 from sqlite3 import Error
-from cryptography.fernet import Fernet
 import os
 
-DATABASE_FILE = 'transactions.db'
-ENCRYPTION_KEY_FILE = 'encryption.key'
+DATABASE_FILE = 'ripper.db'
 
 def create_connection():
     conn = None
@@ -103,32 +101,4 @@ def insert_login_attempt(success):
         finally:
             conn.close()
 
-def generate_encryption_key():
-    key = Fernet.generate_key()
-    with open(ENCRYPTION_KEY_FILE, 'wb') as key_file:
-        key_file.write(key)
-
-def load_encryption_key():
-    return open(ENCRYPTION_KEY_FILE, 'rb').read()
-
-def encrypt_database():
-    key = load_encryption_key()
-    fernet = Fernet(key)
-    with open(DATABASE_FILE, 'rb') as file:
-        original = file.read()
-    encrypted = fernet.encrypt(original)
-    with open(DATABASE_FILE, 'wb') as encrypted_file:
-        encrypted_file.write(encrypted)
-
-def decrypt_database():
-    key = load_encryption_key()
-    fernet = Fernet(key)
-    with open(DATABASE_FILE, 'rb') as file:
-        encrypted = file.read()
-    decrypted = fernet.decrypt(encrypted)
-    with open(DATABASE_FILE, 'wb') as decrypted_file:
-        decrypted_file.write(decrypted)
-
-if not os.path.exists(ENCRYPTION_KEY_FILE):
-    generate_encryption_key()
 create_table()

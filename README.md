@@ -25,10 +25,6 @@ This project is a PySide6 application that authenticates over OAuth to import ba
 
 5. Configure the SQLite database:
    - The database file will be created automatically when you run the application for the first time.
-   - Ensure the database is encrypted by generating an encryption key:
-     ```
-     python -c "from database import generate_encryption_key; generate_encryption_key()"
-     ```
 
 ## Running the Project
 
