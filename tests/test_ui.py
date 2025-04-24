@@ -1,7 +1,7 @@
 import sys
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QComboBox
-from ui import MainWindow
+from ui import MainWindow, GoogleSheetsSelector
 
 @pytest.fixture
 def app(qtbot):
@@ -153,3 +153,35 @@ def test_filter_google_sheets_by_criteria(app, qtbot, mocker):
     app.filter_google_sheets("2022-02-01")
     assert app.google_sheets_combo.count() == 1
     assert app.google_sheets_combo.itemText(0) == "Test Sheet 2"
+
+def test_google_sheets_selector_list_google_sheets(mocker):
+    mocker.patch("ui.authenticate", return_value="mock_credentials")
+    mocker.patch("ui.list_google_sheets", return_value=[
+        {"id": "sheet1", "name": "Test Sheet 1"},
+        {"id": "sheet2", "name": "Test Sheet 2"}
+    ])
+    selector = GoogleSheetsSelector()
+    sheets = selector.list_google_sheets()
+    assert len(sheets) == 2
+    assert sheets[0]["name"] == "Test Sheet 1"
+    assert sheets[1]["name"] == "Test Sheet 2"
+
+def test_google_sheets_selector_search_google_sheets(mocker):
+    mocker.patch("ui.authenticate", return_value="mock_credentials")
+    mocker.patch("ui.search_google_sheets", return_value=[
+        {"id": "sheet1", "name": "Test Sheet 1"}
+    ])
+    selector = GoogleSheetsSelector()
+    sheets = selector.search_google_sheets("Test")
+    assert len(sheets) == 1
+    assert sheets[0]["name"] == "Test Sheet 1"
+
+def test_google_sheets_selector_filter_google_sheets(mocker):
+    mocker.patch("ui.authenticate", return_value="mock_credentials")
+    mocker.patch("ui.filter_google_sheets", return_value=[
+        {"id": "sheet1", "name": "Test Sheet 1"}
+    ])
+    selector = GoogleSheetsSelector()
+    sheets = selector.filter_google_sheets({"owner": "user1@example.com"})
+    assert len(sheets) == 1
+    assert sheets[0]["name"] == "Test Sheet 1"

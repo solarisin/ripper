@@ -3,7 +3,7 @@ import logging
 from PySide6.QtWidgets import QApplication, QMainWindow, QTableView, QVBoxLayout, QWidget, QMessageBox, QHBoxLayout, QPushButton, QLabel, QComboBox, QLineEdit
 from PySide6.QtCore import Qt, QSortFilterProxyModel
 from PySide6.QtGui import QStandardItemModel, QStandardItem
-from google_sheets_selector import GoogleSheetsSelector
+from ui import GoogleSheetsSelector
 from database import retrieve_transactions, insert_data_source
 
 class MainWindow(QMainWindow):
