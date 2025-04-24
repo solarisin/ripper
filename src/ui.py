@@ -3,10 +3,10 @@ import logging
 from PySide6.QtWidgets import QApplication, QMainWindow, QTableView, QVBoxLayout, QWidget, QMessageBox, QHeaderView, QLineEdit, QHBoxLayout, QPushButton, QComboBox, QLabel
 from PySide6.QtCore import Qt, QSortFilterProxyModel
 from PySide6.QtGui import QStandardItemModel, QStandardItem
-from data_fetcher import fetch_transactions
+from sheets_backend import fetch_transactions, list_google_sheets, search_google_sheets, filter_google_sheets
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from auth import authenticate, list_google_sheets, search_google_sheets, filter_google_sheets
+from auth import authenticate
 from database import insert_data_source, retrieve_transactions
 
 class GoogleSheetsSelector(QWidget):

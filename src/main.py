@@ -3,6 +3,7 @@ import logging
 from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QMessageBox, QHBoxLayout, QPushButton, QLineEdit, QComboBox
 from ui import GoogleSheetsSelector, TransactionTableViewWidget
 from database import retrieve_transactions
+from sheets_backend import list_google_sheets, fetch_transactions
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -48,9 +49,9 @@ class MainWindow(QMainWindow):
 
     def load_data(self):
         try:
-            google_sheets = self.google_sheets_selector.list_google_sheets()
+            google_sheets = list_google_sheets(self.google_sheets_selector.credentials)
             self.google_sheets_selector.display_google_sheets(google_sheets)
-            transactions = retrieve_transactions()
+            transactions = fetch_transactions(self.google_sheets_selector.credentials)
             self.transaction_table_view_widget.display_data(transactions)
         except Exception as e:
             logging.error(f"Error loading data: {e}")
