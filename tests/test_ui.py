@@ -1,6 +1,6 @@
 import sys
 import pytest
-from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QComboBox
 from ui import MainWindow
 
 @pytest.fixture
@@ -47,21 +47,35 @@ def test_user_notifications_for_errors(app, qtbot, mocker):
         app.load_data()
     assert app.findChild(QMessageBox, "Error") is not None
 
-def test_file_picker_dialog(app, qtbot, mocker):
-    mocker.patch("ui.QFileDialog.getOpenFileName", return_value=("test_sheet.gsheet", None))
-    app.open_file_picker()
-    assert app.metadata_label.text() == "Selected file: test_sheet.gsheet"
+def test_display_google_sheets(app, qtbot):
+    google_sheets = [
+        {"id": "sheet1", "name": "Test Sheet 1"},
+        {"id": "sheet2", "name": "Test Sheet 2"}
+    ]
+    app.display_google_sheets(google_sheets)
+    assert app.google_sheets_combo.count() == 2
+    assert app.google_sheets_combo.itemText(0) == "Test Sheet 1"
+    assert app.google_sheets_combo.itemText(1) == "Test Sheet 2"
 
-def test_display_metadata(app, qtbot, mocker):
-    mocker.patch("ui.QFileDialog.getOpenFileName", return_value=("test_sheet.gsheet", None))
-    app.open_file_picker()
-    assert app.metadata_label.text() == "Selected file: test_sheet.gsheet"
+def test_load_selected_google_sheet(app, qtbot, mocker):
+    google_sheets = [
+        {"id": "sheet1", "name": "Test Sheet 1"},
+        {"id": "sheet2", "name": "Test Sheet 2"}
+    ]
+    app.display_google_sheets(google_sheets)
+    app.google_sheets_combo.setCurrentIndex(1)
+    assert app.metadata_label.text() == "Selected Google Sheet ID: sheet2"
     # Add additional assertions for metadata such as last modified date and owner
 
 def test_filter_google_sheets(app, qtbot, mocker):
-    mocker.patch("ui.QFileDialog.getOpenFileName", return_value=("test_sheet.gsheet", None))
-    app.open_file_picker()
-    assert app.metadata_label.text() == "Selected file: test_sheet.gsheet"
+    google_sheets = [
+        {"id": "sheet1", "name": "Test Sheet 1"},
+        {"id": "sheet2", "name": "Test Sheet 2"}
+    ]
+    app.display_google_sheets(google_sheets)
+    assert app.google_sheets_combo.count() == 2
+    assert app.google_sheets_combo.itemText(0) == "Test Sheet 1"
+    assert app.google_sheets_combo.itemText(1) == "Test Sheet 2"
     # Add additional assertions to ensure only Google Sheets are displayed
 
 def test_maintain_separate_datasets(app, qtbot, mocker):
@@ -77,3 +91,35 @@ def test_maintain_separate_datasets(app, qtbot, mocker):
     app.display_data(transactions2)
     assert app.model.rowCount() == 1
     assert app.model.item(0, 0).text() == "2022-01-02"
+
+def test_load_data_displays_google_sheets(app, qtbot, mocker):
+    mocker.patch("ui.authenticate", return_value="mock_credentials")
+    mocker.patch("ui.list_google_sheets", return_value=[
+        {"id": "sheet1", "name": "Test Sheet 1"},
+        {"id": "sheet2", "name": "Test Sheet 2"}
+    ])
+    mocker.patch("ui.retrieve_transactions", return_value=[])
+
+    app.load_data()
+    assert app.google_sheets_combo.count() == 2
+    assert app.google_sheets_combo.itemText(0) == "Test Sheet 1"
+    assert app.google_sheets_combo.itemText(1) == "Test Sheet 2"
+
+def test_open_file_picker_allows_selecting_google_sheet(app, qtbot, mocker):
+    google_sheets = [
+        {"id": "sheet1", "name": "Test Sheet 1"},
+        {"id": "sheet2", "name": "Test Sheet 2"}
+    ]
+    app.display_google_sheets(google_sheets)
+    app.google_sheets_combo.setCurrentIndex(1)
+    assert app.metadata_label.text() == "Selected Google Sheet ID: sheet2"
+    # Add additional assertions for metadata such as last modified date and owner
+
+def test_fetch_and_display_metadata(app, qtbot, mocker):
+    google_sheets = [
+        {"id": "sheet1", "name": "Test Sheet 1", "last_modified": "2022-01-01", "owner": "User1"},
+        {"id": "sheet2", "name": "Test Sheet 2", "last_modified": "2022-01-02", "owner": "User2"}
+    ]
+    app.display_google_sheets(google_sheets)
+    app.google_sheets_combo.setCurrentIndex(1)
+    assert app.metadata_label.text() == "Selected Google Sheet ID: sheet2\nLast Modified: 2022-01-02\nOwner: User2"

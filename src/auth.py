@@ -4,6 +4,7 @@ import keyring
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 from database import insert_login_attempt
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -26,7 +27,29 @@ def authenticate():
         keyring.set_password(TOKEN_KEY, 'user', creds.to_json())
     
     insert_login_attempt(success=True)
+    list_google_sheets(creds)
     return creds
+
+def list_google_sheets(credentials):
+    try:
+        service = build('drive', 'v3', credentials=credentials)
+        results = service.files().list(
+            q="mimeType='application/vnd.google-apps.spreadsheet'",
+            pageSize=10,
+            fields="nextPageToken, files(id, name)").execute()
+        items = results.get('files', [])
+
+        if not items:
+            print('No Google Sheets found.')
+            return []
+        else:
+            print('Google Sheets:')
+            for item in items:
+                print(f"{item['name']} ({item['id']})")
+            return items
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return []
 
 def prompt_data_source_configuration():
     # Implement the logic to prompt the user to configure data sources
