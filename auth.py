@@ -4,6 +4,7 @@ import keyring
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from database import insert_login_attempt
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 TOKEN_KEY = 'google_sheets_token'
@@ -24,4 +25,9 @@ def authenticate():
         
         keyring.set_password(TOKEN_KEY, 'user', creds.to_json())
     
+    insert_login_attempt(success=True)
     return creds
+
+def prompt_data_source_configuration():
+    # Implement the logic to prompt the user to configure data sources
+    pass

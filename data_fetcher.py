@@ -3,15 +3,16 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from database import insert_transaction
 
-SPREADSHEET_ID = 'your_spreadsheet_id'
-RANGE_NAME = 'Sheet1!A:D'
+DEFAULT_SPREADSHEET_ID = 'your_spreadsheet_id'
+DEFAULT_RANGE_NAME = 'Transactions!A:D'
 
-def fetch_transactions(credentials):
+def fetch_transactions(credentials, spreadsheet_id=DEFAULT_SPREADSHEET_ID, range_name=DEFAULT_RANGE_NAME):
     try:
         service = build('sheets', 'v4', credentials=credentials)
         sheet = service.spreadsheets()
-        result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
+        result = sheet.values().get(spreadsheetId=spreadsheet_id, range=range_name).execute()
         values = result.get('values', [])
 
         if not values:
@@ -27,6 +28,7 @@ def fetch_transactions(credentials):
                 'category': row[3]
             }
             transactions.append(transaction)
+            insert_transaction(transaction)
 
         return transactions
 

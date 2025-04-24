@@ -1,6 +1,6 @@
 import sys
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QMainWindow, QMessageBox
 from ui import MainWindow
 
 @pytest.fixture
@@ -46,3 +46,34 @@ def test_user_notifications_for_errors(app, qtbot, mocker):
     with qtbot.waitSignal(app.load_data, timeout=1000):
         app.load_data()
     assert app.findChild(QMessageBox, "Error") is not None
+
+def test_file_picker_dialog(app, qtbot, mocker):
+    mocker.patch("ui.QFileDialog.getOpenFileName", return_value=("test_sheet.gsheet", None))
+    app.open_file_picker()
+    assert app.metadata_label.text() == "Selected file: test_sheet.gsheet"
+
+def test_display_metadata(app, qtbot, mocker):
+    mocker.patch("ui.QFileDialog.getOpenFileName", return_value=("test_sheet.gsheet", None))
+    app.open_file_picker()
+    assert app.metadata_label.text() == "Selected file: test_sheet.gsheet"
+    # Add additional assertions for metadata such as last modified date and owner
+
+def test_filter_google_sheets(app, qtbot, mocker):
+    mocker.patch("ui.QFileDialog.getOpenFileName", return_value=("test_sheet.gsheet", None))
+    app.open_file_picker()
+    assert app.metadata_label.text() == "Selected file: test_sheet.gsheet"
+    # Add additional assertions to ensure only Google Sheets are displayed
+
+def test_maintain_separate_datasets(app, qtbot, mocker):
+    transactions1 = [
+        {"date": "2022-01-01", "description": "Test Transaction 1", "amount": 100.0, "category": "Test"}
+    ]
+    transactions2 = [
+        {"date": "2022-01-02", "description": "Test Transaction 2", "amount": 200.0, "category": "Test"}
+    ]
+    app.display_data(transactions1)
+    assert app.model.rowCount() == 1
+    assert app.model.item(0, 0).text() == "2022-01-01"
+    app.display_data(transactions2)
+    assert app.model.rowCount() == 1
+    assert app.model.item(0, 0).text() == "2022-01-02"
