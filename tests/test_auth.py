@@ -5,7 +5,7 @@ import keyring
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from auth import authenticate, TOKEN_KEY, CLIENT_SECRET_FILE, prompt_data_source_configuration
+from auth import authenticate, TOKEN_KEY, CLIENT_SECRET_FILE
 from database import insert_login_attempt
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -66,13 +66,6 @@ def test_secure_storage(monkeypatch):
     }))
 
     authenticate()
-
-def test_prompt_data_source_configuration(monkeypatch):
-    def mock_prompt_data_source_configuration():
-        return True
-
-    monkeypatch.setattr('auth.prompt_data_source_configuration', mock_prompt_data_source_configuration)
-    assert prompt_data_source_configuration() == True
 
 def test_insert_login_attempt(monkeypatch):
     def mock_insert_login_attempt(success):
