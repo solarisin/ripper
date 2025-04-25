@@ -27,7 +27,3 @@ def authenticate():
     
     insert_login_attempt(success=True)
     return creds
-
-def prompt_data_source_configuration():
-    # Implement the logic to prompt the user to configure data sources
-    pass
