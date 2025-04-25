@@ -2,7 +2,7 @@ import sys
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QComboBox
 from widgets.main_window import MainWindow
-from ui import GoogleSheetsSelector
+from google_sheets_selector import GoogleSheetsSelector
 from widgets.transaction_table import TransactionTableViewWidget
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def test_dashboard_view(app, qtbot):
     assert app.findChild(QMainWindow, "Charts") is not None
 
 def test_user_notifications_for_errors(app, qtbot, mocker):
-    mocker.patch("ui.authenticate", side_effect=Exception("Test Error"))
+    mocker.patch("google_sheets_selector.authenticate", side_effect=Exception("Test Error"))
     with qtbot.waitSignal(app.load_data, timeout=1000):
         app.load_data()
     assert app.findChild(QMessageBox, "Error") is not None
@@ -95,12 +95,12 @@ def test_maintain_separate_datasets(app, qtbot, mocker):
     assert app.transaction_table_view_widget.model.item(0, 0).text() == "2022-01-02"
 
 def test_load_data_displays_google_sheets(app, qtbot, mocker):
-    mocker.patch("ui.authenticate", return_value="mock_credentials")
-    mocker.patch("ui.list_google_sheets", return_value=[
+    mocker.patch("google_sheets_selector.authenticate", return_value="mock_credentials")
+    mocker.patch("google_sheets_selector.list_google_sheets", return_value=[
         {"id": "sheet1", "name": "Test Sheet 1"},
         {"id": "sheet2", "name": "Test Sheet 2"}
     ])
-    mocker.patch("ui.retrieve_transactions", return_value=[])
+    mocker.patch("google_sheets_selector.retrieve_transactions", return_value=[])
 
     app.load_data()
     assert app.google_sheets_selector.google_sheets_combo.count() == 2
@@ -157,8 +157,8 @@ def test_filter_google_sheets_by_criteria(app, qtbot, mocker):
     assert app.google_sheets_selector.google_sheets_combo.itemText(0) == "Test Sheet 2"
 
 def test_google_sheets_selector_list_google_sheets(mocker):
-    mocker.patch("ui.authenticate", return_value="mock_credentials")
-    mocker.patch("ui.list_google_sheets", return_value=[
+    mocker.patch("google_sheets_selector.authenticate", return_value="mock_credentials")
+    mocker.patch("google_sheets_selector.list_google_sheets", return_value=[
         {"id": "sheet1", "name": "Test Sheet 1"},
         {"id": "sheet2", "name": "Test Sheet 2"}
     ])
@@ -169,8 +169,8 @@ def test_google_sheets_selector_list_google_sheets(mocker):
     assert sheets[1]["name"] == "Test Sheet 2"
 
 def test_google_sheets_selector_search_google_sheets(mocker):
-    mocker.patch("ui.authenticate", return_value="mock_credentials")
-    mocker.patch("ui.search_google_sheets", return_value=[
+    mocker.patch("google_sheets_selector.authenticate", return_value="mock_credentials")
+    mocker.patch("google_sheets_selector.search_google_sheets", return_value=[
         {"id": "sheet1", "name": "Test Sheet 1"}
     ])
     selector = GoogleSheetsSelector()
@@ -179,8 +179,8 @@ def test_google_sheets_selector_search_google_sheets(mocker):
     assert sheets[0]["name"] == "Test Sheet 1"
 
 def test_google_sheets_selector_filter_google_sheets(mocker):
-    mocker.patch("ui.authenticate", return_value="mock_credentials")
-    mocker.patch("ui.filter_google_sheets", return_value=[
+    mocker.patch("google_sheets_selector.authenticate", return_value="mock_credentials")
+    mocker.patch("google_sheets_selector.filter_google_sheets", return_value=[
         {"id": "sheet1", "name": "Test Sheet 1"}
     ])
     selector = GoogleSheetsSelector()
