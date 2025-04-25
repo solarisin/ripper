@@ -6,3 +6,5 @@ google-api-python-client
 keyring
 pytest
 sqlite3
+pytest-qt
+uibot
