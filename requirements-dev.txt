@@ -1,4 +1,5 @@
 pytest
 pytest-qt
+pytest-cov
 pytest-mock
 flake8
