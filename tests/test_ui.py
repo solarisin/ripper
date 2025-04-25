@@ -1,7 +1,9 @@
 import sys
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QMessageBox, QComboBox
-from ui import MainWindow, GoogleSheetsSelector, TransactionTableViewWidget
+from widgets.main_window import MainWindow
+from ui import GoogleSheetsSelector
+from widgets.transaction_table import TransactionTableViewWidget
 
 @pytest.fixture
 def app(qtbot):
