@@ -1,7 +1,8 @@
 import sys
 import logging
 from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QMessageBox, QHBoxLayout, QPushButton, QLineEdit, QComboBox
-from ui import GoogleSheetsSelector, TransactionTableViewWidget
+from google_sheets_selector import GoogleSheetsSelector
+from ui import TransactionTableViewWidget
 from database import retrieve_transactions
 from sheets_backend import list_google_sheets, fetch_transactions
 

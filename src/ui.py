@@ -8,58 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from auth import authenticate
 from database import insert_data_source, retrieve_transactions
-
-class GoogleSheetsSelector(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.credentials = None
-        self.google_sheets_combo = QComboBox()
-        self.google_sheets_combo.currentIndexChanged.connect(self.load_selected_google_sheet)
-        self.sheet_name_input = QLineEdit()
-        self.sheet_name_input.setPlaceholderText("Enter sheet name")
-        self.cell_range_input = QLineEdit()
-        self.cell_range_input.setPlaceholderText("Enter cell range (e.g., A1:D10)")
-        self.metadata_label = QLabel()
-        self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Search Google Sheets...")
-        self.search_bar.textChanged.connect(self.filter_google_sheets)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.search_bar)
-        layout.addWidget(self.google_sheets_combo)
-        layout.addWidget(self.sheet_name_input)
-        layout.addWidget(self.cell_range_input)
-        layout.addWidget(self.metadata_label)
-        self.setLayout(layout)
-
-    def list_google_sheets(self):
-        if not self.credentials:
-            self.credentials = authenticate()
-        return list_google_sheets(self.credentials)
-
-    def search_google_sheets(self, query):
-        if not self.credentials:
-            self.credentials = authenticate()
-        return search_google_sheets(self.credentials, query)
-
-    def filter_google_sheets(self, criteria):
-        if not self.credentials:
-            self.credentials = authenticate()
-        return filter_google_sheets(self.credentials, criteria)
-
-    def display_google_sheets(self, google_sheets):
-        self.google_sheets_combo.clear()
-        for sheet in google_sheets:
-            self.google_sheets_combo.addItem(sheet["name"], sheet)
-
-    def load_selected_google_sheet(self, index):
-        selected_sheet = self.google_sheets_combo.itemData(index)
-        if selected_sheet:
-            self.metadata_label.setText(f"Selected Google Sheet ID: {selected_sheet['id']}\nLast Modified: {selected_sheet.get('last_modified', 'N/A')}\nOwner: {selected_sheet.get('owner', 'N/A')}")
-            sheet_name = self.sheet_name_input.text() or "Transactions"
-            cell_range = self.cell_range_input.text() or "A:D"
-            insert_data_source(selected_sheet['id'], f"{sheet_name}!{cell_range}")
-            self.parent().load_data()
+from google_sheets_selector import GoogleSheetsSelector
 
 class TransactionTableViewWidget(QWidget):
     def __init__(self):
@@ -176,7 +125,7 @@ class MainWindow(QMainWindow):
 
         fig, ax = plt.subplots()
         ax.pie(categories.values(), labels=categories.keys(), autopct='%1.1f%%')
-        ax.set_title("Spending by Category")
+        ax.setTitle("Spending by Category")
 
         canvas = FigureCanvas(fig)
         chart_window = QMainWindow(self)
