@@ -5,6 +5,7 @@ from src.widgets.main_window import MainWindow
 from src.widgets.google_sheets_selector import GoogleSheetsSelector
 from src.widgets.transaction_table import TransactionTableViewWidget
 from uibot import UIBot
+from unittest.mock import patch, MagicMock
 
 @pytest.fixture
 def app(qtbot):
@@ -230,3 +231,43 @@ def test_transaction_table_view_widget_filtering(qtbot):
     widget.proxy_model.setFilterFixedString("Test Transaction 1")
     assert widget.proxy_model.rowCount() == 1
     assert widget.proxy_model.index(0, 1).data() == "Test Transaction 1"
+
+# Add test for end-to-end testing using pytest-qt and uibot
+def test_end_to_end(app, uibot):
+    transactions = [
+        {"date": "2022-01-01", "description": "Test Transaction 1", "amount": 100.0, "category": "Test"},
+        {"date": "2022-01-02", "description": "Test Transaction 2", "amount": 200.0, "category": "Test"}
+    ]
+    app.transaction_table_view_widget.display_data(transactions)
+    uibot.set_text(app.search_bar, "Test Transaction 1")
+    assert app.transaction_table_view_widget.proxy_model.rowCount() == 1
+    assert app.transaction_table_view_widget.proxy_model.index(0, 1).data() == "Test Transaction 1"
+    uibot.click_button(app.refresh_button)
+    assert app.transaction_table_view_widget.model.rowCount() == 2
+
+# Add test for mocking and patching capabilities using pytest
+def test_mocking_and_patching(app, mocker):
+    mocker.patch("src.widgets.google_sheets_selector.authenticate", return_value="mock_credentials")
+    mocker.patch("src.widgets.google_sheets_selector.list_google_sheets", return_value=[
+        {"id": "sheet1", "name": "Test Sheet 1"},
+        {"id": "sheet2", "name": "Test Sheet 2"}
+    ])
+    app.load_data()
+    assert app.google_sheets_selector.google_sheets_combo.count() == 2
+    assert app.google_sheets_selector.google_sheets_combo.itemText(0) == "Test Sheet 1"
+    assert app.google_sheets_selector.google_sheets_combo.itemText(1) == "Test Sheet 2"
+
+# Add test for data-driven tests by parameterizing test functions
+@pytest.mark.parametrize("search_text, expected_count", [
+    ("Test Transaction 1", 1),
+    ("Test Transaction 2", 1),
+    ("Nonexistent Transaction", 0)
+])
+def test_data_driven(app, uibot, search_text, expected_count):
+    transactions = [
+        {"date": "2022-01-01", "description": "Test Transaction 1", "amount": 100.0, "category": "Test"},
+        {"date": "2022-01-02", "description": "Test Transaction 2", "amount": 200.0, "category": "Test"}
+    ]
+    app.transaction_table_view_widget.display_data(transactions)
+    uibot.set_text(app.search_bar, search_text)
+    assert app.transaction_table_view_widget.proxy_model.rowCount() == expected_count

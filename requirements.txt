@@ -8,3 +8,4 @@ pytest
 sqlite3
 pytest-qt
 uibot
+pytest-mock
