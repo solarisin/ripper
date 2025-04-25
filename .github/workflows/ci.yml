@@ -25,6 +25,9 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Start Xvfb
+      uses: simplyitio/actions-xvfb@v1
+      
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
