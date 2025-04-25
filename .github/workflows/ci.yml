@@ -76,7 +76,10 @@ jobs:
     - name: Run tests with xvfb
       uses: GabrielBB/xvfb-action@v1
       with:
-        run: pytest --cov=src --cov-report=xml
+        run: |
+          export QT_QPA_PLATFORM=offscreen
+          export QT_ASSUME_STDERR_CONSOLE=1 
+          pytest --cov=src --cov-report=xml
 
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
