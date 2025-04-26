@@ -1,6 +1,7 @@
 import os
 import json
 import keyring
+import logging
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -18,10 +19,20 @@ def authenticate():
     
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                logging.error(f"Error refreshing credentials: {e}")
+                insert_login_attempt(success=False)
+                raise Exception(f"Error refreshing credentials: {e}")
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, SCOPES)
+                creds = flow.run_local_server(port=0)
+            except Exception as e:
+                logging.error(f"Error during authentication flow: {e}")
+                insert_login_attempt(success=False)
+                raise Exception(f"Error during authentication flow: {e}")
         
         keyring.set_password(TOKEN_KEY, 'user', creds.to_json())
     

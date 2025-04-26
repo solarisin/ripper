@@ -73,3 +73,15 @@ def test_insert_login_attempt(monkeypatch):
 
     monkeypatch.setattr('database.insert_login_attempt', mock_insert_login_attempt)
     insert_login_attempt(success=True)
+
+def test_authenticate_error_message(monkeypatch):
+    def mock_run_local_server(self, *args, **kwargs):
+        raise Exception("Test authentication error")
+
+    monkeypatch.setattr(InstalledAppFlow, "run_local_server", mock_run_local_server)
+    monkeypatch.setattr(keyring, "get_password", lambda *args: None)
+    monkeypatch.setattr(keyring, "set_password", lambda *args: None)
+
+    with pytest.raises(Exception) as excinfo:
+        authenticate()
+    assert str(excinfo.value) == "Test authentication error"

@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget, QMessageBox, QH
 from widgets.google_sheets_selector import GoogleSheetsSelector
 from widgets.transaction_table import TransactionTableViewWidget
 from sheets_backend import list_google_sheets, fetch_transactions
+from notifications import NotificationSystem
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -39,6 +40,7 @@ class MainWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
+        self.notification_system = NotificationSystem(self)
         self.load_data()
 
     def update_filter_column(self, index):
@@ -55,7 +57,7 @@ class MainWindow(QMainWindow):
             self.transaction_table_view_widget.display_data(transactions)
         except Exception as e:
             logging.error(f"Error loading data: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
+            self.notification_system.show_notification(f"Failed to load data: {e}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
