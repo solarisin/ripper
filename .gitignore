@@ -1,0 +1,5 @@
+.vscode/
+**/__pycache__/
+venv/
+**/ripper.db
+client_secret.json
