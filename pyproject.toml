@@ -1,0 +1,41 @@
+
+[tool.poetry]
+name = "ripper"
+version = "0.1.0"
+description = "ripper"
+authors = ["Rob L <solarisin@gmail.com>"]
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/solarisin/ripper"
+homepage = "https://github.com/solarisin/ripper"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.14"
+pyside6 = ">=6.7.0"
+google-auth = ">=2.39.0"
+google-auth-oauthlib = ">=1.2.2"
+google-auth-httplib2 = ">=0.2.0"
+google-api-python-client = ">=2.168.0"
+keyring = ">=25.0.1"
+requests = ">=2.32.3"
+pytest = ">=8.3.5"
+toml = "^0.10.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.3.5"
+pytest-qt = ">=4.4.0"
+pytest-cov = ">=6.1.1"
+pytest-mock = ">=3.14.0"
+flake8 = ">=7.2.0"
+black = ">=25.1.0"
+
+[project.gui-scripts]
+start = "src.main:main_gui"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[virtualenvs]
+in-project = true

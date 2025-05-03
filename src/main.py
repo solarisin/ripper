@@ -1,16 +1,33 @@
 import sys
 import logging
-from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QMessageBox, QHBoxLayout, QPushButton, QLineEdit, QComboBox
-from widgets.google_sheets_selector import GoogleSheetsSelector
-from widgets.transaction_table import TransactionTableViewWidget
+import toml
+from PySide6.QtWidgets import QApplication
 from widgets.main_window import MainWindow
-from database import retrieve_transactions
-from sheets_backend import list_google_sheets, fetch_transactions
 from notifications import NotificationSystem
+import importlib.metadata
+from pathlib import Path
 
-if __name__ == "__main__":
+logging.basicConfig(level=logging.INFO)
+
+def get_version():
+    try:
+        version = importlib.metadata.version('ProjectName')
+        return version
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    project_path = Path(__file__).parent.parent.resolve()
+    pyproject_toml = toml.load(str(project_path / 'pyproject.toml'))
+    return pyproject_toml['tool']['poetry']['version']
+
+
+def main_gui():
+    logging.info(f"Starting ripper v{get_version()}")
     app = QApplication(sys.argv)
     window = MainWindow()
     window.notification_system = NotificationSystem()
     window.show()
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main_gui()
