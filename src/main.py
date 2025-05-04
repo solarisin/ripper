@@ -21,7 +21,7 @@ def get_version():
     except importlib.metadata.PackageNotFoundError:
         pass
     pyproject_toml = toml.load(str(project_path / 'pyproject.toml'))
-    return pyproject_toml['tool']['poetry']['version']
+    return pyproject_toml['project']['version']
 
 
 def test_service_creation():

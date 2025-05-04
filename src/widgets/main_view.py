@@ -1,13 +1,13 @@
 from PySide6.QtWidgets import QMainWindow, QDockWidget, QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QToolBar
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
-from PySide6.QtAds import QDockManager
+import PySide6QtAds as QtAds
 
 class MainView(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Ripper - Transaction Viewer")
-        self.dock_manager = QDockManager(self)
+        self.dock_manager = QtAds.CDockManager(self)
 
         self.init_ui()
 
