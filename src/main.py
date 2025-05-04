@@ -5,6 +5,8 @@ from src.auth import create_sheets_service, create_drive_service
 from src.sheets_backend import read_data_from_spreadsheet, list_sheets
 import importlib.metadata
 from pathlib import Path
+from src.widgets.main_view import MainView
+from PySide6.QtWidgets import QApplication
 
 
 project_path = Path(__file__).parent.parent.resolve()
@@ -41,7 +43,10 @@ def test_service_creation():
 def main_gui():
     logging.info(f"Starting ripper v{get_version()}")
     test_service_creation()
-    #TODO implement gui
+    app = QApplication(sys.argv)
+    main_view = MainView()
+    main_view.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
