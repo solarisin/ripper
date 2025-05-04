@@ -1,13 +1,16 @@
 import sys
 import logging
 import toml
-from PySide6.QtWidgets import QApplication
-from widgets.main_window import MainWindow
-from notifications import NotificationSystem
+from src.auth import create_sheets_service, create_drive_service
+from src.sheets_backend import read_data_from_spreadsheet, list_sheets
 import importlib.metadata
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO)
+
+project_path = Path(__file__).parent.parent.resolve()
+data_path = project_path
+client_secret_json = data_path / 'client_secret.json'
+
 
 def get_version():
     try:
@@ -15,18 +18,30 @@ def get_version():
         return version
     except importlib.metadata.PackageNotFoundError:
         pass
-    project_path = Path(__file__).parent.parent.resolve()
     pyproject_toml = toml.load(str(project_path / 'pyproject.toml'))
     return pyproject_toml['tool']['poetry']['version']
 
 
+def test_service_creation():
+    drive_service = create_drive_service(client_secret_json)
+    if not drive_service:
+        logging.error('No drive service')
+        return
+    logging.info('Drive service created')
+
+    sheets = list_sheets(drive_service)
+
+    sheets_service = create_sheets_service(client_secret_json)
+    if not sheets_service:
+        logging.error('No sheets service')
+        return
+    logging.info('Sheets service created')
+
+
 def main_gui():
     logging.info(f"Starting ripper v{get_version()}")
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.notification_system = NotificationSystem()
-    window.show()
-    sys.exit(app.exec())
+    test_service_creation()
+    #TODO implement gui
 
 
 if __name__ == "__main__":

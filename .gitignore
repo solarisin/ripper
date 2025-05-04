@@ -2,4 +2,3 @@
 **/__pycache__/
 venv/
 **/ripper.db
-client_secret.json
