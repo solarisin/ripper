@@ -13,16 +13,17 @@ dynamic = ["requires-python", "dependencies"]
 package-mode = false
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.14"
-pyside6 = ">=6.7.0"
-google-auth = ">=2.39.0"
-google-auth-oauthlib = ">=1.2.2"
-google-auth-httplib2 = ">=0.2.0"
-google-api-python-client = ">=2.168.0"
-keyring = ">=25.0.1"
-requests = ">=2.32.3"
-pytest = ">=8.3.5"
+python = ">=3.11,<3.14"
+pyside6 = "^6.7.0"
+google-auth = "^2.39.0"
+google-auth-oauthlib = "^1.2.2"
+google-auth-httplib2 = "^0.2.0"
+google-api-python-client = "^2.168.0"
+keyring = "^25.0.1"
+requests = "^2.32.3"
+pytest = "^8.3.5"
 toml = "^0.10.2"
+pyside6-qtads = "^4.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.3.5"
