@@ -7,13 +7,13 @@
 
 import sys
 
-from PySide6.QtCore import QDate, QFile, Qt, QTextStream
+from PySide6.QtCore import QDate, QFile, Qt, QTextStream, QSize
 from PySide6.QtGui import (QAction, QFont, QIcon, QKeySequence,
                            QTextCharFormat, QTextCursor, QTextTableFormat)
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget,
                                QFileDialog, QListWidget, QMainWindow,
-                               QMessageBox, QTextEdit)
+                               QMessageBox, QTextEdit, QWidget, QGridLayout, QSizePolicy)
 
 import rc.images.tools
 
@@ -22,8 +22,15 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self._text_edit = QTextEdit()
-        self.setCentralWidget(self._text_edit)
+        self.dockNestingEnabled = True
+
+        dock = QDockWidget("Customers", self)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._text_edit = QTextEdit(dock)
+        dock.setWidget(self._text_edit)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self.setDockOptions(self.dockOptions() | QMainWindow.DockOption.AllowNestedDocks)
+        print(self.dockOptions())
 
         self.create_actions()
         self.create_menus()
@@ -32,6 +39,13 @@ class MainWindow(QMainWindow):
         self.create_dock_windows()
 
         self.setWindowTitle("Dock Widgets")
+
+        # Ensure we have a central widget, then hide it
+        grid_layout = QGridLayout()
+        widget = QWidget()
+        widget.setLayout(grid_layout)
+        self.setCentralWidget(widget)
+        widget.hide()
 
         self.new_letter()
 
