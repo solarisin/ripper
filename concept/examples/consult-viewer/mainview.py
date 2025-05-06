@@ -1,16 +1,20 @@
 import sys
+import platform
 import logging
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QCoreApplication, QSettings
 from PySide6.QtWidgets import QSizePolicy, QApplication, QMainWindow, QMessageBox, QInputDialog
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QGuiApplication, Qt
 
 import PySide6QtAds as QtAds
 
-from parametertable import ParameterTableView
-from options import OptionsView
 from statuslog import StatusLogView
 from dockutils import DockableView, create_and_dock_view
+from blankview import BlankView
+
+PLATFORM = platform.system()
+if PLATFORM == "Windows":
+    sys.argv += ['-platform', 'windows:darkmode=1']
 
 
 # Subclass QMainWindow to customize your application's main window
@@ -56,10 +60,7 @@ class MainWindow(QMainWindow):
         self.create_status_bar()
         self.create_dock_windows()
 
-        # connect options update to table view
-        self._options_view.parameterSelectionChanged.connect(self._table_view.parameters_changed)
-
-        self.setWindowTitle("Consult Viewer")
+        self.setWindowTitle("ripper")
         self.restore_window_state()
 
         logging.debug("Main window initialized.")
@@ -78,6 +79,7 @@ class MainWindow(QMainWindow):
                           "customer to add a customer name and address, and click "
                           "standard paragraphs to add them.")
 
+    # noinspection PyArgumentList
     def create_actions(self):
         self._quit_act = QAction("&Quit",
                                  parent=self,
@@ -194,13 +196,13 @@ class MainWindow(QMainWindow):
     def create_dock_windows(self):
         # set the table view as the central widget (the main view)
         table_dock = QtAds.CDockWidget("Parameter Table", self)
-        self._table_view = ParameterTableView(table_dock)
+        self._table_view = BlankView(table_dock)
         table_dock.setWidget(self._table_view)
         table_dock.setMinimumSizeHintMode(QtAds.CDockWidget.MinimumSizeHintFromContent)
         self._dock_mgr.setCentralWidget(table_dock)
 
         # create the auto-hide dockable views
-        self._options_view = OptionsView()
+        self._options_view = BlankView(None)
         options_dock_view, options_dock_container = create_and_dock_view(self, self._dock_mgr, "Options",
                                                                          QtAds.SideBarRight,
                                                                          self._options_view)
@@ -213,7 +215,10 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    QCoreApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
+    QGuiApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
     app = QApplication(sys.argv)
+    app.setStyle('Windows')
 
     logging.basicConfig(
         format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)s] %(message)s",
