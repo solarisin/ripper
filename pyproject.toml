@@ -23,7 +23,6 @@ keyring = "^25.0.1"
 requests = "^2.32.3"
 pytest = "^8.3.5"
 toml = "^0.10.2"
-pyside6-qtads = "^4.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.3.5"

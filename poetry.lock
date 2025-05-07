@@ -500,14 +500,14 @@ uritemplate = ">=3.0.1,<5"
 
 [[package]]
 name = "google-auth"
-version = "2.40.0"
+version = "2.40.1"
 description = "Google Authentication Library"
 optional = false
 python-versions = ">=3.7"
 groups = ["main"]
 files = [
-    {file = "google_auth-2.40.0-py2.py3-none-any.whl", hash = "sha256:dc3a5078acb1043c3e43685c22d628afe40af8559cf561de388e0c939280fcc8"},
-    {file = "google_auth-2.40.0.tar.gz", hash = "sha256:c277cf39f7c192d8540eb6331c08b5a0796e8041af8343ae73dd6b269732ca6c"},
+    {file = "google_auth-2.40.1-py2.py3-none-any.whl", hash = "sha256:ed4cae4f5c46b41bae1d19c036e06f6c371926e97b19e816fc854eff811974ee"},
+    {file = "google_auth-2.40.1.tar.gz", hash = "sha256:58f0e8416a9814c1d86c9b7f6acf6816b51aba167b2c76821965271bac275540"},
 ]
 
 [package.dependencies]
@@ -1037,26 +1037,6 @@ files = [
 shiboken6 = "6.9.0"
 
 [[package]]
-name = "pyside6-qtads"
-version = "4.4.0"
-description = "PySide6 bindings to Qt Advanced Docking System"
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-files = [
-    {file = "pyside6_qtads-4.4.0-cp39-abi3-macosx_12_0_arm64.whl", hash = "sha256:92e256007aac06a74e31b3f8318592fb97a275a2d068b1a8358c630b000a3b59"},
-    {file = "pyside6_qtads-4.4.0-cp39-abi3-macosx_12_0_x86_64.whl", hash = "sha256:e5abdf4078a22447a4bc7c390322b9d3fb697088e67c6b1ccd2652be48bda4d8"},
-    {file = "pyside6_qtads-4.4.0-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:7c86d4f0535e05cc996f3e659777bf7834de753bbc6be7f56be97e4c09f89193"},
-    {file = "pyside6_qtads-4.4.0-cp39-abi3-manylinux_2_39_aarch64.whl", hash = "sha256:2e8ecb4f16c153266b188ca78477353404bc58d4bb4e3e0a67e45e396c27da0d"},
-    {file = "pyside6_qtads-4.4.0-cp39-abi3-win_amd64.whl", hash = "sha256:da2104edfce1a9df111a0a0e054967ceac9afa4800cd1121ddc538454ff2f8e7"},
-    {file = "pyside6_qtads-4.4.0.tar.gz", hash = "sha256:e76466b2f6af8252ffb7ad688ab4d330bec228b129a92758354d40d07e8fae75"},
-]
-
-[package.dependencies]
-PySide6-Essentials = "6.9.0"
-shiboken6 = "6.9.0"
-
-[[package]]
 name = "pytest"
 version = "8.3.5"
 description = "pytest: simple powerful testing with Python"
@@ -1301,4 +1281,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "fea404c065e1b18078a9f90fad604e4d8d8fa778d67c132c40d7b53506784b5f"
+content-hash = "d655b7523981eb3fde3cda724707f1b240bb034df389953b2018dbe7935aacc3"

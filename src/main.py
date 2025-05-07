@@ -42,7 +42,7 @@ def test_service_creation():
 
 def main_gui():
     logging.info(f"Starting ripper v{get_version()}")
-    test_service_creation()
+    # test_service_creation()
     app = QApplication(sys.argv)
     main_view = MainView()
     main_view.show()
@@ -50,4 +50,6 @@ def main_gui():
 
 
 if __name__ == "__main__":
+    # TODO add logging levels to configuration
+    logging.basicConfig(level=logging.DEBUG)
     main_gui()
