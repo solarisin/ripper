@@ -5,13 +5,12 @@ from src.auth import create_sheets_service, create_drive_service
 from src.sheets_backend import read_data_from_spreadsheet, list_sheets
 import importlib.metadata
 from pathlib import Path
-from src.widgets.main_view import MainView
+from src.widgets.mainview import MainView
 from PySide6.QtWidgets import QApplication
 
 
 project_path = Path(__file__).parent.parent.resolve()
-data_path = project_path
-client_secret_json = data_path / 'client_secret.json'
+
 
 
 def get_version():
@@ -25,6 +24,7 @@ def get_version():
 
 
 def test_service_creation():
+    client_secret_json = project_path / 'client_secret.json'
     drive_service = create_drive_service(client_secret_json)
     if not drive_service:
         logging.error('No drive service')

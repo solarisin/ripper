@@ -1,15 +1,15 @@
 import logging
 import sys
 
-from PySide6.QtCore import QDate, QFile, Qt, QTextStream, QSize
-from PySide6.QtGui import (QAction, QFont, QIcon, QKeySequence,
-                           QTextCharFormat, QTextCursor, QTextTableFormat)
+from PySide6.QtCore import QFile, Qt, QTextStream, QSize
+from PySide6.QtGui import QAction, QFont, QIcon, QKeySequence
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget,
-                               QFileDialog, QListWidget, QMainWindow,
-                               QMessageBox, QTextEdit, QWidget, QGridLayout, QSizePolicy)
+                               QFileDialog, QMainWindow,
+                               QMessageBox, QWidget, QGridLayout)
 
 import res.images.tools
+from src.widgets.auth_view import AuthView
 
 
 class MainView(QMainWindow):
@@ -21,11 +21,13 @@ class MainView(QMainWindow):
         self._file_menu = None
         self._edit_menu = None
         self._view_menu = None
+        self._oauth_menu = None
         self._help_menu = None
 
         self._file_tool_bar = None
         self._edit_tool_bar = None
 
+        self._register_oauth_act = None
         self._new_source_act = None
         self._save_act = None
         self._print_act = None
@@ -48,6 +50,7 @@ class MainView(QMainWindow):
         widget = QWidget()
         widget.setLayout(grid_layout)
         self.setCentralWidget(widget)
+        self.centralWidget().hide()
 
     def create_menus(self):
         self._file_menu = self.menuBar().addMenu("&File")
@@ -61,6 +64,9 @@ class MainView(QMainWindow):
         self._edit_menu.addAction(self._undo_act)
 
         self._view_menu = self.menuBar().addMenu("&View")
+
+        self._oauth_menu = self.menuBar().addMenu("&OAuth")
+        self._oauth_menu.addAction(self._register_oauth_act)
 
         self.menuBar().addSeparator()
 
@@ -85,11 +91,18 @@ class MainView(QMainWindow):
 
     # noinspection PyArgumentList
     def create_actions(self):
+        # TODO add google oauth-specific icon
+        icon = QIcon.fromTheme('document-new', QIcon(':/res/new.png'))
+        self._register_oauth_act = QAction(icon, "Register/Update OAuth Client",
+                                           self, statusTip="Register or update the target Google OAuth Client",
+                                           triggered=self.register_oauth)
+
         icon = QIcon.fromTheme('document-new', QIcon(':/res/new.png'))
         self._new_source_act = QAction(icon, "&New Source",
                                        self, shortcut=QKeySequence.New,
                                        statusTip="Import a new source sheet",
                                        triggered=self.new_source)
+
 
         icon = QIcon.fromTheme('document-save', QIcon(':/res/save.png'))
         self._save_act = QAction(icon, "&Save...", self,
@@ -118,10 +131,31 @@ class MainView(QMainWindow):
                                      statusTip="About Qt",
                                      triggered=QApplication.instance().aboutQt)
 
-    # TODO action to be taken upon clicking 'New source'
-    # User should be prompted to select a google sheet from their google drive
+    # User is prompted to supply an OAuth client and authenticate with Google API
+    def register_oauth(self):
+        self.log.debug("Register OAuth selected")
+        self.show_auth_view()
+
     def new_source(self):
         self.log.debug("New source selected")
+
+    def show_auth_view(self):
+        """Show the authentication view as a dialog"""
+        self.auth_dialog = QDialog(self)
+        self.auth_dialog.setWindowTitle("Google API Authentication")
+        self.auth_dialog.setMinimumWidth(500)
+
+        # Create auth view
+        auth_view = AuthView(self.auth_dialog)
+        auth_view.oauth_client_registered.connect(self.on_oauth_client_registered)
+
+        # Set layout
+        layout = QGridLayout(self.auth_dialog)
+        layout.addWidget(auth_view)
+        self.auth_dialog.setLayout(layout)
+
+        # Show dialog
+        self.auth_dialog.exec()
 
     def print_(self):
         document = self._text_edit.document()
@@ -168,10 +202,18 @@ class MainView(QMainWindow):
 
     ####### Slots #######################################################################
 
-    # TODO slot to be called when the user successfully selects a new datasource
-    def source_selected(self):
-        self.blockSignals(True)
-        self.centralWidget().hide()
-        self.create_dock_windows()
-        # self.new_sheet()
-        self.blockSignals(False)
+    # Slot to be called when the user successfully selects or updates the target OAuth client
+    def on_oauth_client_registered(self, client_secret_file):
+        """Handle user update of target oauth client"""
+        self.log.debug(f"User configured OAuth client_secret_file: {client_secret_file}")
+
+        # Close the auth dialog
+        if hasattr(self, 'auth_dialog') and self.auth_dialog:
+            self.auth_dialog.accept()
+
+        # TODO: Update Toolbar/Menu to enable options only available after an OAuth client is configured
+
+        # For now, just show a message that authentication was successful
+        if client_secret_file:
+            QMessageBox.information(self, "OAuth Client Update Successful",
+                                   f"OAuth Client successfully updated - client_secret_file: {client_secret_file}")
