@@ -203,9 +203,9 @@ class MainView(QMainWindow):
     ####### Slots #######################################################################
 
     # Slot to be called when the user successfully selects or updates the target OAuth client
-    def on_oauth_client_registered(self, client_secret_file):
+    def on_oauth_client_registered(self):
         """Handle user update of target oauth client"""
-        self.log.debug(f"User configured OAuth client_secret_file: {client_secret_file}")
+        self.log.debug("User configured OAuth client credentials")
 
         # Close the auth dialog
         if hasattr(self, 'auth_dialog') and self.auth_dialog:
@@ -214,6 +214,5 @@ class MainView(QMainWindow):
         # TODO: Update Toolbar/Menu to enable options only available after an OAuth client is configured
 
         # For now, just show a message that authentication was successful
-        if client_secret_file:
-            QMessageBox.information(self, "OAuth Client Update Successful",
-                                   f"OAuth Client successfully updated - client_secret_file: {client_secret_file}")
+        QMessageBox.information(self, "OAuth Client Update Successful",
+                               "OAuth Client credentials successfully updated and stored securely")

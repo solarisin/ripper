@@ -24,8 +24,7 @@ def get_version():
 
 
 def test_service_creation():
-    client_secret_json = project_path / 'client_secret.json'
-    drive_service = create_drive_service(client_secret_json)
+    drive_service = create_drive_service()
     if not drive_service:
         logging.error('No drive service')
         return
@@ -33,7 +32,7 @@ def test_service_creation():
 
     sheets = list_sheets(drive_service)
 
-    sheets_service = create_sheets_service(client_secret_json)
+    sheets_service = create_sheets_service()
     if not sheets_service:
         logging.error('No sheets service')
         return
