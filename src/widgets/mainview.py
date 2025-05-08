@@ -28,6 +28,7 @@ class MainView(QMainWindow):
         self._edit_tool_bar = None
 
         self._register_oauth_act = None
+        self._authenticate_oauth_act = None
         self._new_source_act = None
         self._save_act = None
         self._print_act = None
@@ -52,6 +53,9 @@ class MainView(QMainWindow):
         self.setCentralWidget(widget)
         self.centralWidget().hide()
 
+        # Check if OAuth client is configured and update UI accordingly
+        self.update_oauth_ui()
+
     def create_menus(self):
         self._file_menu = self.menuBar().addMenu("&File")
         self._file_menu.addAction(self._new_source_act)
@@ -67,6 +71,7 @@ class MainView(QMainWindow):
 
         self._oauth_menu = self.menuBar().addMenu("&OAuth")
         self._oauth_menu.addAction(self._register_oauth_act)
+        self._oauth_menu.addAction(self._authenticate_oauth_act)
 
         self.menuBar().addSeparator()
 
@@ -96,6 +101,14 @@ class MainView(QMainWindow):
         self._register_oauth_act = QAction(icon, "Register/Update OAuth Client",
                                            self, statusTip="Register or update the target Google OAuth Client",
                                            triggered=self.register_oauth)
+
+        # Authenticate action
+        icon = QIcon.fromTheme('dialog-password', QIcon(':/res/new.png'))
+        self._authenticate_oauth_act = QAction(icon, "Authenticate",
+                                              self, statusTip="Start Google OAuth authentication flow",
+                                              triggered=self.authenticate_oauth)
+        # Initially disabled until client is configured
+        self._authenticate_oauth_act.setEnabled(False)
 
         icon = QIcon.fromTheme('document-new', QIcon(':/res/new.png'))
         self._new_source_act = QAction(icon, "&New Source",
@@ -135,6 +148,46 @@ class MainView(QMainWindow):
     def register_oauth(self):
         self.log.debug("Register OAuth selected")
         self.show_auth_view()
+
+    # Start the Google OAuth authentication flow
+    def authenticate_oauth(self):
+        self.log.debug("Authenticate OAuth selected")
+        from src.auth import authorize
+
+        try:
+            # Show a message to inform the user about the browser opening
+            QMessageBox.information(self, "Google Authentication",
+                                   "A browser window will open for you to authenticate with Google.\n\n"
+                                   "Please follow the instructions in the browser.")
+
+            # Start the OAuth flow
+            cred = authorize()
+
+            if cred:
+                QMessageBox.information(self, "Authentication Successful",
+                                       "Successfully authenticated with Google!")
+            else:
+                QMessageBox.warning(self, "Authentication Failed",
+                                   "Failed to authenticate with Google. Please try again.")
+        except Exception as e:
+            self.log.error(f"Error during OAuth authentication: {str(e)}")
+            QMessageBox.critical(self, "Authentication Error",
+                               f"An error occurred during authentication:\n{str(e)}")
+
+    # Check if OAuth client is configured and update UI accordingly
+    def update_oauth_ui(self):
+        """Check if OAuth client credentials are available and update UI accordingly"""
+        from src.auth import get_client_credentials
+
+        client_id, client_secret = get_client_credentials()
+        has_credentials = client_id is not None and client_secret is not None
+
+        # Enable/disable the authenticate action based on whether credentials are available
+        if hasattr(self, '_authenticate_oauth_act') and self._authenticate_oauth_act:
+            self._authenticate_oauth_act.setEnabled(has_credentials)
+
+        self.log.debug(f"OAuth client credentials {'found' if has_credentials else 'not found'}, "
+                      f"authenticate action {'enabled' if has_credentials else 'disabled'}")
 
     def new_source(self):
         self.log.debug("New source selected")
@@ -211,8 +264,9 @@ class MainView(QMainWindow):
         if hasattr(self, 'auth_dialog') and self.auth_dialog:
             self.auth_dialog.accept()
 
-        # TODO: Update Toolbar/Menu to enable options only available after an OAuth client is configured
+        # Update UI to enable options only available after an OAuth client is configured
+        self.update_oauth_ui()
 
-        # For now, just show a message that authentication was successful
+        # Show a message that authentication was successful
         QMessageBox.information(self, "OAuth Client Update Successful",
                                "OAuth Client credentials successfully updated and stored securely")
