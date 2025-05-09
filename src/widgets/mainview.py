@@ -6,7 +6,8 @@ from PySide6.QtGui import QAction, QFont, QIcon, QKeySequence
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget,
                                QFileDialog, QMainWindow,
-                               QMessageBox, QWidget, QGridLayout)
+                               QMessageBox, QWidget, QGridLayout, QLabel)
+from src.auth import auth_manager, AuthState
 
 import res.images.tools
 from src.widgets.auth_view import AuthView
@@ -16,7 +17,7 @@ class MainView(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.log = logging.getLogger('mainview')
+        self.log = logging.getLogger('ripper:mainview')
 
         self._file_menu = None
         self._edit_menu = None
@@ -91,6 +92,18 @@ class MainView(QMainWindow):
     def create_status_bar(self):
         self.statusBar().showMessage("Ready")
 
+        # Create a permanent widget for auth status
+        self.auth_status_label = QLabel()
+        self.auth_status_label.setFrameStyle(QLabel.Panel | QLabel.Sunken)
+        self.auth_status_label.setMinimumWidth(200)
+        self.statusBar().addPermanentWidget(self.auth_status_label)
+
+        # Connect to auth state changed signal
+        auth_manager.authStateChanged.connect(self.update_auth_status)
+
+        # Initialize auth status display
+        self.update_auth_status(*auth_manager.get_current_state())
+
 
     ####### Actions #####################################################################
 
@@ -152,7 +165,6 @@ class MainView(QMainWindow):
     # Start the Google OAuth authentication flow
     def authenticate_oauth(self):
         self.log.debug("Authenticate OAuth selected")
-        from src.auth import authorize
 
         try:
             # Show a message to inform the user about the browser opening
@@ -161,7 +173,7 @@ class MainView(QMainWindow):
                                    "Please follow the instructions in the browser.")
 
             # Start the OAuth flow
-            cred = authorize()
+            cred = auth_manager.authorize()
 
             if cred:
                 QMessageBox.information(self, "Authentication Successful",
@@ -169,18 +181,21 @@ class MainView(QMainWindow):
             else:
                 QMessageBox.warning(self, "Authentication Failed",
                                    "Failed to authenticate with Google. Please try again.")
+
+            # Auth state is already updated in the authorize() function
         except Exception as e:
             self.log.error(f"Error during OAuth authentication: {str(e)}")
             QMessageBox.critical(self, "Authentication Error",
                                f"An error occurred during authentication:\n{str(e)}")
+            # Update auth state in case of exception
+            auth_manager.update_auth_state()
 
     # Check if OAuth client is configured and update UI accordingly
     def update_oauth_ui(self):
         """Check if OAuth client credentials are available and update UI accordingly"""
-        from src.auth import get_client_credentials
-
-        client_id, client_secret = get_client_credentials()
-        has_credentials = client_id is not None and client_secret is not None
+        # Get current auth state
+        state, _ = auth_manager.get_current_state()
+        has_credentials = state != AuthState.NO_CLIENT
 
         # Enable/disable the authenticate action based on whether credentials are available
         if hasattr(self, '_authenticate_oauth_act') and self._authenticate_oauth_act:
@@ -254,6 +269,21 @@ class MainView(QMainWindow):
 
 
     ####### Slots #######################################################################
+
+    # Slot to update the auth status in the status bar
+    def update_auth_status(self, state, user_email=""):
+        """Update the auth status display in the status bar"""
+        if state == AuthState.NO_CLIENT:
+            self.auth_status_label.setText("No OAuth Client")
+        elif state == AuthState.NOT_LOGGED_IN:
+            self.auth_status_label.setText("Not Logged In")
+        elif state == AuthState.LOGGED_IN:
+            self.auth_status_label.setText(f"Logged In: {user_email}")
+        else:
+            self.auth_status_label.setText("Unknown Auth State")
+
+        # Update UI elements that depend on auth state
+        self.update_oauth_ui()
 
     # Slot to be called when the user successfully selects or updates the target OAuth client
     def on_oauth_client_registered(self):

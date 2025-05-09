@@ -1,7 +1,7 @@
 import sys
 import logging
 import toml
-from src.auth import create_sheets_service, create_drive_service
+from src.auth import auth_manager
 from src.sheets_backend import read_data_from_spreadsheet, list_sheets
 import importlib.metadata
 from pathlib import Path
@@ -24,7 +24,7 @@ def get_version():
 
 
 def test_service_creation():
-    drive_service = create_drive_service()
+    drive_service = auth_manager.create_drive_service()
     if not drive_service:
         logging.error('No drive service')
         return
@@ -32,7 +32,7 @@ def test_service_creation():
 
     sheets = list_sheets(drive_service)
 
-    sheets_service = create_sheets_service()
+    sheets_service = auth_manager.create_sheets_service()
     if not sheets_service:
         logging.error('No sheets service')
         return

@@ -33,6 +33,10 @@ class AuthView(QWidget):
         }
         keyring.set_password(self.KEYRING_SERVICE, self.KEYRING_USERNAME, json.dumps(credentials))
 
+        # Update auth state after storing credentials
+        from src.auth import auth_manager
+        auth_manager.update_auth_state()
+
     def load_credentials_from_keyring(self):
         """Load client ID and secret from keyring and populate fields"""
         try:
