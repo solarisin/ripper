@@ -1,7 +1,6 @@
 import json
 import logging
 import enum
-from json.decoder import JSONObject
 
 import keyring
 from google.auth.exceptions import RefreshError
@@ -12,8 +11,7 @@ from google.auth.transport.requests import Request
 from PySide6.QtCore import QObject, Signal
 from shiboken6.Shiboken import invalidate
 
-DEFAULT_TOKEN_USER = 'default-user'
-TOKEN_KEY = 'ripper-gsheets'
+
 OAUTH_CLIENT_KEY = 'ripper-oauth-client'
 OAUTH_CLIENT_USER = 'default-user'
 SCOPES = ['openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.readonly']
@@ -59,6 +57,57 @@ def create_client_config():
     return client_config
 
 
+class TokenStore:
+    """Manages token storage and retrieval through keyring"""
+    TOKEN_KEY = 'ripper-app'
+    DEFAULT_TOKEN_USER = 'default-user'
+
+    def __init__(self):
+        self._current_token = None
+        self._token_user_id:str = self.DEFAULT_TOKEN_USER  # TODO multi-user support
+
+    def invalidate(self):
+        """Clear the current token and erase entry from keyring"""
+        self._current_token = None
+        keyring.delete_password(self.TOKEN_KEY, self._token_user_id)
+
+    def store(self, token):
+        if token is None:
+            self.invalidate()
+            return
+        self._current_token = token
+        keyring.set_password(self.TOKEN_KEY, self._token_user_id, token)
+
+    def load(self, force=False):
+        if self._current_token is None or force:
+            self._current_token = keyring.get_password(self.TOKEN_KEY, self._token_user_id)
+        if self._current_token is None:
+            raise ValueError("No token found in keyring.")
+        return self._current_token
+
+    def get_credentials(self, scopes=None):
+        """Get OAuth2 credentials from stored token.
+    
+        Args:
+            scopes (list, optional): List of OAuth scopes to validate against stored token.
+                                   If None, uses default SCOPES. Defaults to None.
+    
+        Returns:
+            Credentials: Google OAuth2 credentials object created from stored token.
+    
+        Raises:
+            ValueError: If no token is found in keyring.
+            SystemError: If required scopes are missing from stored token.
+        """
+
+        if scopes is None:
+            scopes = SCOPES
+        token = self.load()
+        if 'scopes' not in token or any([s for s in scopes if s not in token['scopes']]):
+            raise SystemError("Required scopes are missing from token.")
+        return Credentials.from_authorized_user_info(token)
+
+
 class AuthManager(QObject):
     """Manages authentication state and provides signals for state changes"""
     authStateChanged = Signal(AuthInfo)  # Signal emitted when auth state changes
@@ -76,10 +125,11 @@ class AuthManager(QObject):
             return
         super().__init__(parent)
         self._current_state = AuthState.NO_CLIENT
-        self._token_user_id = DEFAULT_TOKEN_USER
         self._user_info = None
         self._initialized = True
         self._credentials = None
+        self._token_store = TokenStore()
+
 
     def get_user_info(self, cred):
         userinfo = None
@@ -90,82 +140,42 @@ class AuthManager(QObject):
             log.error(f"Failed to get user info: {e}")
         return userinfo
 
-    def invalidate_credentials(self):
-        self._credentials = None
-        keyring.delete_password(TOKEN_KEY, self._token_user_id)
-
-    def store_credentials(self, cred):
-        if cred is None:
-            self.invalidate_credentials()
-            return
-        self._credentials = cred
-        keyring.set_password(TOKEN_KEY, self._token_user_id, cred.to_json())
-
-    def get_credentials(self, *, load_if_none=False):
-        if self._credentials is None and load_if_none:
-            return self.load_credentials()
-        return self._credentials
-
-    def load_credentials(self, *, new_token=None):
-        cred_loaded = None
-        if new_token:
-            token_json = new_token.to_json()
-        else:
-            token_json = keyring.get_password(TOKEN_KEY, self._token_user_id)
-        if token_json:
-            cred_loaded = Credentials.from_authorized_user_info(token_json)
-
-        // TODO
-
-        self._credentials = cred_loaded
-        return cred_loaded
 
     def refresh_token(self, expired_cred):
-        valid_cred = None
         if expired_cred.refresh_token:
             try:
                 expired_cred.refresh(Request())
                 if expired_cred.valid:
                     valid_cred = expired_cred
                     log.debug("Expired token successfully refreshed")
-                    self.store_credentials(valid_cred)
+                    self._token_store.store(valid_cred.to_json())
                     return valid_cred
                 else:
-                    log.debug("Expired token still invalid after refresh - invalidating credentials")
+                    log.debug("Expired credentials still invalid after refresh - invalidating token")
             except RefreshError as ex:
-                log.error(f"Existing token could not be refreshed and will be invalidated - error: {ex}")
-        self.invalidate_credentials()
+                log.error(f"Existing credentials could not be refreshed, token will be invalidated - error: {ex}")
+        self._token_store.invalidate()
         return None
 
 
     def attempt_load_stored_token(self):
-        """
-        Check keyring for a matching TOKEN_KEY and user_id. If one exists, ensure the scopes
-          match the currently configured SCOPES variable. If so, refresh the token if required, then
-          return the valid credentials.  Otherwise, None is returned.
-        """
-        stored_cred = None
-        token = self.get_credentials(authorize_if_none=False)
-        if token:
-            log.debug(f"Found existing token for user '{self._token_user_id}'")
-            token_json = token.to_json()
-            if 'scopes' in token_json and token_json['scopes'] != SCOPES:
-                log.warning(f"Stored token scopes are outdated - invalidating credentials.")
-                self.invalidate_credentials()
-            else:
-                stored_cred = self.load_credentials()
-                if stored_cred.expired:
-                    log.debug(f"Existing token for user '{self._token_user_id}' expired, attempting refresh")
-                    stored_cred = self.refresh_token(stored_cred)
-                if stored_cred.invalid:
-                    log.warning("Token not valid - invalidating credentials")
-                    stored_cred = None
-                    self.invalidate_credentials()
+        try:
+            stored_cred = self._token_store.get_credentials()
+            log.debug(f"Found existing token")
+            if stored_cred.expired:
+                log.debug(f"Existing token is expired, attempting refresh")
+                stored_cred = self.refresh_token(stored_cred)
+        except ValueError as e:
+            log.error(f"No token found in keyring: {e}")
+            stored_cred = None
+        except SystemError as e:
+            log.error(f"Existing token is invalid, please re-authorize: {e}")
+            stored_cred = None
         return stored_cred
 
 
     def acquire_new_credentials(self):
-        log.debug(f"Starting OAuth flow to acquire new token for user {self._token_user_id}")
+        log.debug(f"Starting OAuth flow to acquire new token")
         try:
             client_config = create_client_config()
             if not client_config:
@@ -177,42 +187,39 @@ class AuthManager(QObject):
             log.error(f"OAuth flow failed with error: {e}")
             self.authStateChanged.emit(AuthState.NO_CLIENT, None)
             return None
-        self.store_credentials(cred)
+        self._token_store.store(cred.to_json())
         log.debug(f"New OAuth token successfully created")
         return cred
 
-    def authorize(self, user_id=DEFAULT_TOKEN_USER):
 
-        log.debug(f"Attempting to authorize user {self._token_user_id}")
+    def authorize(self):
+        log.debug(f"Attempting to authorize")
 
         # Attempt to load any stored credentials for this user
         cred = self.attempt_load_stored_token()
         if not cred:
             cred = self.acquire_new_credentials()
         else:
-            log.debug(f"Previous token found and successfully authorized for user {user_id}.")
+            log.debug(f"Previous token found and successfully authorized.")
 
         self._user_info = self.get_user_info(cred)
-
-        # Update auth state after authorization
-        self.update_auth_state()
         return cred
 
-    def create_sheets_service(self, user_id=DEFAULT_TOKEN_USER):
-        cred = self.authorize(user_id)
+    def create_sheets_service(self):
+        cred = self.authorize()
         if not cred:
             return None
         return build('sheets', 'v4', credentials=cred, cache_discovery=False)
 
-    def create_drive_service(self, user_id=DEFAULT_TOKEN_USER):
-        cred = self.authorize(user_id)
+    def create_drive_service(self):
+        cred = self.authorize()
         if not cred:
             return None
         return build('drive', 'v3', credentials=cred, cache_discovery=False)
 
-    def create_userinfo_service(self, cred=None, user_id=DEFAULT_TOKEN_USER):
+    def create_userinfo_service(self, cred=None):
         if not cred:
-            cred = self.authorize(user_id)
+            cred = self.authorize()
         if not cred:
             return None
         return build('oauth2', 'v2', credentials=cred, cache_discovery=False)
@@ -220,4 +227,4 @@ class AuthManager(QObject):
 # Create a singleton instance
 auth_manager = AuthManager()
 
-
+# TODO re=implement status signal
