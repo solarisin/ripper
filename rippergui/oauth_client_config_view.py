@@ -1,11 +1,23 @@
 import os
-import json
-import keyring
 from pathlib import Path
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                              QLineEdit, QPushButton, QFileDialog, QRadioButton,
-                              QGroupBox, QFormLayout, QMessageBox)
+
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QFileDialog,
+    QRadioButton,
+    QGroupBox,
+    QFormLayout,
+    QMessageBox,
+)
+
+from ripperlib.auth import AuthManager
+
 
 class AuthView(QWidget):
     """
@@ -16,41 +28,27 @@ class AuthView(QWidget):
     # Signal emitted when authentication is successful
     oauth_client_registered = Signal()  # Signal emitted when OAuth client is registered
 
-    # Constants for keyring
-    KEYRING_SERVICE = "ripper-oauth-client"
-    KEYRING_USERNAME = "default-user"
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
-        self.load_credentials_from_keyring()
+        self.load_credentials()
 
-    def store_credentials_in_keyring(self, client_id, client_secret):
-        """Store client ID and secret in keyring"""
-        credentials = {
-            "client_id": client_id,
-            "client_secret": client_secret
-        }
-        keyring.set_password(self.KEYRING_SERVICE, self.KEYRING_USERNAME, json.dumps(credentials))
+    def store_credentials(self, client_id=None, client_secret=None):
+        """Store client ID and secret in AuthManager"""
+        client_id = client_id or self.client_id_edit.text()
+        client_secret = client_secret or self.client_secret_edit.text()
+        if client_id and client_secret:
+            AuthManager().store_oauth_client_credentials(client_id, client_secret)
 
-        # Update auth state after storing credentials
-        from src.auth import auth_manager
-        auth_manager.update_auth_state()
+    def load_credentials(self):
+        """Load client ID and secret from AuthManager and populate fields"""
+        client_id, client_secret = AuthManager().load_oauth_client_credentials()
+        self.client_id_edit.setText(client_id or "")
+        self.client_secret_edit.setText(client_secret or "")
 
-    def load_credentials_from_keyring(self):
-        """Load client ID and secret from keyring and populate fields"""
-        try:
-            credentials_json = keyring.get_password(self.KEYRING_SERVICE, self.KEYRING_USERNAME)
-            if credentials_json:
-                credentials = json.loads(credentials_json)
-                self.client_id_edit.setText(credentials.get("client_id", ""))
-                self.client_secret_edit.setText(credentials.get("client_secret", ""))
-                # If we have credentials, select the manual entry option
-                if credentials.get("client_id") and credentials.get("client_secret"):
-                    self.manual_radio.setChecked(True)
-        except Exception as e:
-            # If there's any error loading credentials, just continue without them
-            pass
+        # If we have credentials, select the manual entry option
+        if client_id and client_secret:
+            self.manual_radio.setChecked(True)
 
     def setup_ui(self):
         # Main layout
@@ -59,13 +57,13 @@ class AuthView(QWidget):
         # Title
         title_label = QLabel("Register Google API OAuth Client")
         title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(title_label)
 
         # Description
         desc_label = QLabel("Please provide your Google API credentials to access Google Sheets.")
         desc_label.setWordWrap(True)
-        desc_label.setAlignment(Qt.AlignCenter)
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(desc_label)
 
         # Option selection
@@ -106,7 +104,7 @@ class AuthView(QWidget):
 
         self.client_id_edit = QLineEdit()
         self.client_secret_edit = QLineEdit()
-        self.client_secret_edit.setEchoMode(QLineEdit.Password)
+        self.client_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
 
         manual_layout.addRow("Client ID:", self.client_id_edit)
         manual_layout.addRow("Client Secret:", self.client_secret_edit)
@@ -158,32 +156,13 @@ class AuthView(QWidget):
                 return
 
             # Extract credentials from the file
-            try:
-                with open(file_path, 'r') as f:
-                    client_data = json.load(f)
-
-                # Extract client ID and secret from the file
-                if 'installed' in client_data:
-                    client_id = client_data['installed'].get('client_id')
-                    client_secret = client_data['installed'].get('client_secret')
-
-                    if not client_id or not client_secret:
-                        QMessageBox.warning(self, "OAuth Client Error", 
-                                          "The selected file does not contain valid client ID and secret.")
-                        return
-
-                    # Store credentials in keyring
-                    self.store_credentials_in_keyring(client_id, client_secret)
-                else:
-                    QMessageBox.warning(self, "OAuth Client Error", 
-                                      "The selected file does not have the expected format.")
-                    return
-            except Exception as e:
-                QMessageBox.warning(self, "OAuth Client Error", 
-                                  f"Error reading the selected file: {str(e)}")
+            client_id, client_secret = AuthManager.oauth_client_credentials_from_json(file_path)
+            if not client_id or not client_secret:
+                QMessageBox.warning(self, "OAuth Client Error", f"Invalid client_secret.json file: {file_path}")
                 return
 
-            # Emit signal indicating successful registration
+            # Store entered credentials and emit signal indicating successful registration
+            self.store_credentials(client_id, client_secret)
             self.oauth_client_registered.emit()
 
         else:
@@ -195,8 +174,8 @@ class AuthView(QWidget):
                 QMessageBox.warning(self, "OAuth Client Error", "Please enter both Client ID and Client Secret.")
                 return
 
-            # Store credentials in keyring for future use
-            self.store_credentials_in_keyring(client_id, client_secret)
+            # Store credentials for future use
+            self.store_credentials(client_id, client_secret)
 
             # Emit signal indicating successful registration
             self.oauth_client_registered.emit()

@@ -1,42 +1,42 @@
-import sys
-import logging
-import toml
-from src.auth import auth_manager
-from src.sheets_backend import read_data_from_spreadsheet, list_sheets
 import importlib.metadata
+import logging
+import sys
 from pathlib import Path
-from src.widgets.mainview import MainView
+
+import toml
 from PySide6.QtWidgets import QApplication
 
+from rippergui.mainview import MainView
+from ripperlib.auth import AuthManager
+from ripperlib.sheets_backend import list_sheets
 
 project_path = Path(__file__).parent.parent.resolve()
 
 
-
 def get_version():
     try:
-        version = importlib.metadata.version('ProjectName')
+        version = importlib.metadata.version("ProjectName")
         return version
     except importlib.metadata.PackageNotFoundError:
         pass
-    pyproject_toml = toml.load(str(project_path / 'pyproject.toml'))
-    return pyproject_toml['project']['version']
+    pyproject_toml = toml.load(str(project_path / "pyproject.toml"))
+    return pyproject_toml["project"]["version"]
 
 
 def test_service_creation():
-    drive_service = auth_manager.create_drive_service()
+    drive_service = AuthManager().create_drive_service()
     if not drive_service:
-        logging.error('No drive service')
+        logging.error("No drive service")
         return
-    logging.info('Drive service created')
+    logging.info("Drive service created")
 
     sheets = list_sheets(drive_service)
 
-    sheets_service = auth_manager.create_sheets_service()
+    sheets_service = AuthManager().create_sheets_service()
     if not sheets_service:
-        logging.error('No sheets service')
+        logging.error("No sheets service")
         return
-    logging.info('Sheets service created')
+    logging.info("Sheets service created")
 
 
 def main_gui():
