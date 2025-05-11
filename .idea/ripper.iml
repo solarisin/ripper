@@ -3,6 +3,7 @@
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/concept" />
     </content>
     <orderEntry type="jdk" jdkName="Poetry (ripper)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
