@@ -1,6 +1,7 @@
 import enum
 import json
 import logging
+from json import JSONDecodeError
 
 import keyring
 from PySide6.QtCore import QObject, Signal
@@ -9,6 +10,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from keyring.errors import PasswordDeleteError
 
 OAUTH_CLIENT_KEY = "ripper-oauth-client"
 OAUTH_CLIENT_USER = "default-user"
@@ -55,31 +57,47 @@ class AuthInfo:
 class TokenStore:
     """Manages token storage and retrieval through keyring"""
 
-    TOKEN_KEY = "ripper-app"
+    TOKEN_KEY = "ripper-app-auth-token"
+    USERINFO_KEY = "ripper-app-auth-userinfo"
     DEFAULT_TOKEN_USER = "default-user"
 
     def __init__(self):
         self._current_token = None
+        self._current_userinfo = None
         self._token_user_id: str = self.DEFAULT_TOKEN_USER  # TODO multi-user support
 
     def invalidate(self):
         """Clear the current token and erase entry from keyring"""
         self._current_token = None
+        self._current_userinfo = None
         keyring.delete_password(self.TOKEN_KEY, self._token_user_id)
+        keyring.delete_password(self.USERINFO_KEY, self._token_user_id)
 
-    def store(self, token):
+    def store(self, token, userinfo=None):
         if token is None:
             self.invalidate()
             return
         self._current_token = token
         keyring.set_password(self.TOKEN_KEY, self._token_user_id, token)
+        if userinfo is not None:
+            self._current_userinfo = userinfo
+            keyring.set_password(self.USERINFO_KEY, self._token_user_id, userinfo)
+        else:
+            try:
+                self._current_userinfo = None
+                keyring.delete_password(self.USERINFO_KEY, self._token_user_id)
+            except PasswordDeleteError:
+                pass
+
+        log.debug(f"Stored token for user {self._token_user_id}")
 
     def load(self, force=False):
         if self._current_token is None or force:
             self._current_token = keyring.get_password(self.TOKEN_KEY, self._token_user_id)
+            self._current_userinfo = keyring.get_password(self.USERINFO_KEY, self._token_user_id)
         if self._current_token is None:
             raise ValueError("No token found in keyring.")
-        return self._current_token
+        return self._current_token, self._current_userinfo
 
     def get_credentials(self, scopes=None):
         """Get OAuth2 credentials from stored token.
@@ -98,11 +116,27 @@ class TokenStore:
 
         if scopes is None:
             scopes = SCOPES
-        token = self.load()
+        token, _ = self.load()
         token_json = json.loads(token)
         if "scopes" not in token_json or any([s for s in scopes if s not in token_json["scopes"]]):
             raise SystemError("Required scopes are missing from token.")
         return Credentials.from_authorized_user_info(token_json)
+
+    def get_user_info(self):
+        """Get user info associated with stored token."""
+        try:
+            _, userinfo = self.load()
+            if userinfo is None:
+                return None
+            return json.loads(userinfo)
+        except JSONDecodeError as e:
+            log.error(f"Stored user info json was malformed. {e}: {userinfo}")
+            self._current_userinfo = None
+            keyring.delete_password(self.USERINFO_KEY, self._token_user_id)
+            return None
+        except Exception as e:
+            log.error(f"Failed to load stored user info: {repr(e)}")
+            return None
 
 
 class AuthManager(QObject):
@@ -126,6 +160,11 @@ class AuthManager(QObject):
         self._initialized = True
         self._credentials = None
         self._token_store = TokenStore()
+
+    def has_oauth_client_credentials(self):
+        """Check if we have OAuth client credentials stored"""
+        client_id, client_secret = self.load_oauth_client_credentials()
+        return client_id is not None and client_secret is not None
 
     def load_oauth_client_credentials(self):
         """Load client ID and secret from keyring"""
@@ -244,12 +283,30 @@ class AuthManager(QObject):
             self.authStateChanged.emit(AuthState.NO_CLIENT, None)
             return None
 
-        # Store the new credentials token
-        self._token_store.store(new_credentials.to_json())
         log.debug(f"New OAuth token successfully created")
         return new_credentials
 
-    def authorize(self, force=False):
+    def check_stored_credentials(self):
+        log.debug(f"Updating state based on stored credentials")
+        if self._current_auth_info.auth_state() == AuthState.NO_CLIENT:
+            if not self.has_oauth_client_credentials():
+                self.update_state(AuthState.NO_CLIENT)
+                return
+
+        stored_cred = self.attempt_load_stored_token()
+        if stored_cred:
+            user_info = self._token_store.get_user_info()
+            if not user_info:
+                user_info = self.retrieve_user_info(stored_cred)
+                if user_info:
+                    self._token_store.store(stored_cred.to_json(), json.dumps(user_info))
+
+            self._credentials = stored_cred
+            self.update_state(AuthState.LOGGED_IN, user_info)
+        else:
+            self.update_state(AuthState.NOT_LOGGED_IN)
+
+    def authorize(self, *, force=False, silent=False):
         log.debug(f"Attempting to authorize")
 
         # First, check if we have previously successfully authenticated and return cached credentials if so
@@ -267,6 +324,9 @@ class AuthManager(QObject):
         if not credentials:
             credentials = self.acquire_new_credentials()
             user_info = self.retrieve_user_info(credentials)
+
+            # Store the new credentials token and userinfo
+            self._token_store.store(credentials.to_json(), json.dumps(user_info))
         else:
             log.debug(f"Previous token found and successfully authorized.")
 

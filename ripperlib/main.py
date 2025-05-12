@@ -44,6 +44,7 @@ def main_gui():
     # test_service_creation()
     app = QApplication(sys.argv)
     main_view = MainView()
+    AuthManager().check_stored_credentials()
     main_view.show()
     sys.exit(app.exec())
 
