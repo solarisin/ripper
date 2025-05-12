@@ -1,8 +1,8 @@
 import logging
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QAction, QIcon, QKeySequence
-from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, QWidget, QGridLayout, QLabel
+from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, QWidget, QGridLayout, QLabel, QDockWidget
 
 from rippergui.oauth_client_config_view import AuthView
 from ripperlib.auth import AuthManager, AuthState, AuthInfo
@@ -35,6 +35,11 @@ class MainView(QMainWindow):
 
         self.setWindowTitle("ripper")
         self.dockNestingEnabled = True
+        self.setDockOptions(
+            QMainWindow.DockOption.AllowTabbedDocks
+            | QMainWindow.DockOption.AnimatedDocks
+            | QMainWindow.DockOption.AllowNestedDocks
+        )
         self.resize(QSize(640, 480))
 
         self.create_actions()
@@ -197,6 +202,17 @@ class MainView(QMainWindow):
 
     def new_source(self):
         self.log.debug("New source selected")
+
+        from rippergui import table_view
+
+        transactions = table_view.sample_transactions
+        self._table_widget = table_view.TransactionTableViewWidget(transactions)
+
+        dock = QDockWidget("Table", self)
+        # dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        dock.setWidget(self._table_widget)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
 
     def show_auth_view(self):
         """Show the authentication view as a dialog"""
