@@ -8,11 +8,12 @@ from rippergui.oauth_client_config_view import AuthView
 from ripperlib.auth import AuthManager, AuthState, AuthInfo
 
 
+log = logging.getLogger("ripper:mainview")
+
+
 class MainView(QMainWindow):
     def __init__(self):
         super().__init__()
-
-        self.log = logging.getLogger("ripper:mainview")
 
         self._file_menu = None
         self._edit_menu = None
@@ -32,6 +33,8 @@ class MainView(QMainWindow):
         self._quit_act = None
         self._about_act = None
         self._about_qt_act = None
+
+        self._auth_status_label = None
 
         self.setWindowTitle("ripper")
         self.dockNestingEnabled = True
@@ -93,10 +96,10 @@ class MainView(QMainWindow):
         self.statusBar().showMessage("Ready")
 
         # Create a permanent widget for auth status
-        self.auth_status_label = QLabel()
+        self._auth_status_label = QLabel()
         # self.auth_status_label.setFrameStyle(QLabel.Panel | QLabel.Sunken)
-        self.auth_status_label.setMinimumWidth(200)
-        self.statusBar().addPermanentWidget(self.auth_status_label)
+        self._auth_status_label.setMinimumWidth(200)
+        self.statusBar().addPermanentWidget(self._auth_status_label)
 
         # Connect to auth state changed signal
         AuthManager().authStateChanged.connect(self.update_auth_status)
@@ -104,7 +107,7 @@ class MainView(QMainWindow):
         # Initialize auth status display
         self.update_auth_status(AuthManager().auth_info())
 
-    ####### Actions #####################################################################
+    # Actions ###########################################################################
 
     # noinspection PyArgumentList
     def create_actions(self):
@@ -170,12 +173,12 @@ class MainView(QMainWindow):
 
     # User is prompted to supply an OAuth client and authenticate with Google API
     def register_oauth(self):
-        self.log.debug("Register OAuth selected")
+        log.debug("Register OAuth selected")
         self.show_auth_view()
 
     # Start the Google OAuth authentication flow
     def authenticate_oauth(self):
-        self.log.debug("Authenticate OAuth selected")
+        log.debug("Authenticate OAuth selected")
         # Start the OAuth flow
         cred = AuthManager().authorize()
 
@@ -192,69 +195,71 @@ class MainView(QMainWindow):
         has_credentials = state != AuthState.NO_CLIENT
 
         # Enable/disable the authenticate action based on whether credentials are available
-        if hasattr(self, "_authenticate_oauth_act") and self._authenticate_oauth_act:
+        if self._authenticate_oauth_act:
             self._authenticate_oauth_act.setEnabled(has_credentials)
 
-        self.log.debug(
+        log.debug(
             f"OAuth client credentials {'found' if has_credentials else 'not found'}, "
-            f"authenticate action {'enabled' if has_credentials else 'disabled'}"
+            f"authentication is {'enabled' if has_credentials else 'disabled'}"
         )
 
     def new_source(self):
-        self.log.debug("New source selected")
+        log.debug("New source selected")
 
         from rippergui import table_view
 
         transactions = table_view.sample_transactions
-        self._table_widget = table_view.TransactionTableViewWidget(transactions)
+        table_widget = table_view.TransactionTableViewWidget(transactions)
 
         dock = QDockWidget("Table", self)
         # dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
-        dock.setWidget(self._table_widget)
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        dock.setWidget(table_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self._view_menu.addAction(dock.toggleViewAction())
 
     def show_auth_view(self):
         """Show the authentication view as a dialog"""
-        self.auth_dialog = QDialog(self)
-        self.auth_dialog.setWindowTitle("Google API Authentication")
-        self.auth_dialog.setMinimumWidth(500)
+        self._auth_dialog = QDialog(self)
+        self._auth_dialog.setWindowTitle("Google API Authentication")
+        self._auth_dialog.setMinimumWidth(500)
 
         # Create auth view
-        auth_view = AuthView(self.auth_dialog)
+        auth_view = AuthView(self._auth_dialog)
         auth_view.oauth_client_registered.connect(self.on_oauth_client_registered)
 
         # Set layout
-        layout = QGridLayout(self.auth_dialog)
+        layout = QGridLayout(self._auth_dialog)
         layout.addWidget(auth_view)
-        self.auth_dialog.setLayout(layout)
+        self._auth_dialog.setLayout(layout)
 
         # Show dialog
-        self.auth_dialog.exec()
+        self._auth_dialog.exec()
 
     def save(self):
-        self.log.debug("Save selected")
-        self.statusBar().showMessage(f"Saved '[filename]'", 2000)
+        log.debug("Save selected")
+        # TODO saving
+        self.statusBar().showMessage("Saved '[filename]'", 2000)
 
     def undo(self):
-        self.log.debug("Undo selected")
+        log.debug("Undo selected")
 
     def about(self):
         QMessageBox.about(self, "About ripper", "This is ripper")
 
-    ####### Slots #######################################################################
+    # Slots #############################################################################
 
     # Slot to update the auth status in the status bar
     def update_auth_status(self, info: AuthInfo):
         """Update the auth status display in the status bar"""
         if info.auth_state() == AuthState.NO_CLIENT:
-            self.auth_status_label.setText("No OAuth Client")
+            self._auth_status_label.setText("No OAuth Client")
         elif info.auth_state() == AuthState.NOT_LOGGED_IN:
-            self.auth_status_label.setText("Not Logged In")
+            self._auth_status_label.setText("Not Logged In")
         elif info.auth_state() == AuthState.LOGGED_IN:
-            self.auth_status_label.setText(f"Logged In: {info.user_email()}")
+            self._auth_status_label.setText(f"Logged In: {info.user_email()}")
         else:
-            self.auth_status_label.setText("Unknown Auth State")
+            self._auth_status_label.setText("Unknown Auth State")
 
         # Update UI elements that depend on auth state
         self.update_oauth_ui()
@@ -262,16 +267,12 @@ class MainView(QMainWindow):
     # Slot to be called when the user successfully selects or updates the target OAuth client
     def on_oauth_client_registered(self):
         """Handle user update of target oauth client"""
-        self.log.debug("User configured OAuth client credentials")
+        log.debug("User configured OAuth client credentials")
 
-        # Close the auth dialog
-        if hasattr(self, "auth_dialog") and self.auth_dialog:
-            self.auth_dialog.accept()
+        # Close the auth dialog if it is open
+        if self._auth_dialog:
+            self._auth_dialog.accept()
 
         # Update UI to enable options only available after an OAuth client is configured
         self.update_oauth_ui()
-
-        # Show a message that authentication was successful
-        QMessageBox.information(
-            self, "OAuth Client Update Successful", "OAuth Client credentials successfully updated and stored securely"
-        )
+        log.info("OAuth client registration successful")

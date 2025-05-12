@@ -203,14 +203,13 @@ class AuthManager(QObject):
 
     def update_state(self, new_state: AuthState, user_info=None, *, override=True):
         """Update auth state and emit signal"""
-        log.debug(
-            f"Called update_state - current: {self._current_auth_info.auth_state()} new: {new_state} override: {override}"
-        )
-        if new_state == self._current_auth_info.auth_state():
+        current_state = self._current_auth_info.auth_state()
+        log.debug(f"Called update_state - current: {current_state} new: {new_state} override: {override}")
+        if new_state == current_state:
             return
         if new_state == AuthState.LOGGED_IN and user_info is None:
             raise ValueError("User info must be provided for logged-in state.")
-        if new_state > self._current_auth_info.auth_state() or override:
+        if new_state > current_state or override:
             log.debug(f"Updating auth state to {new_state}")
             self._current_auth_info = AuthInfo(new_state, user_info)
             self.authStateChanged.emit(self._current_auth_info)
@@ -243,9 +242,9 @@ class AuthManager(QObject):
     def attempt_load_stored_token(self):
         try:
             stored_cred = self._token_store.get_credentials()
-            log.debug(f"Found existing token")
+            log.debug("Found existing token")
             if stored_cred.expired:
-                log.debug(f"Existing token is expired, attempting refresh")
+                log.debug("Existing token is expired, attempting refresh")
                 stored_cred = self.refresh_token(stored_cred)
         except ValueError as e:
             log.error(f"No token found in keyring: {e}")
@@ -256,7 +255,7 @@ class AuthManager(QObject):
         return stored_cred
 
     def acquire_new_credentials(self):
-        log.debug(f"Starting OAuth flow to acquire new token")
+        log.debug("Starting OAuth flow to acquire new token")
         try:
             client_config = None
             client_id, client_secret = self.load_oauth_client_credentials()
@@ -283,11 +282,11 @@ class AuthManager(QObject):
             self.authStateChanged.emit(AuthState.NO_CLIENT, None)
             return None
 
-        log.debug(f"New OAuth token successfully created")
+        log.debug("New OAuth token successfully created")
         return new_credentials
 
     def check_stored_credentials(self):
-        log.debug(f"Updating state based on stored credentials")
+        log.debug("Updating state based on stored credentials")
         if self._current_auth_info.auth_state() == AuthState.NO_CLIENT:
             if not self.has_oauth_client_credentials():
                 self.update_state(AuthState.NO_CLIENT)
@@ -307,12 +306,12 @@ class AuthManager(QObject):
             self.update_state(AuthState.NOT_LOGGED_IN)
 
     def authorize(self, *, force=False, silent=False):
-        log.debug(f"Attempting to authorize")
+        log.debug("Attempting to authorize")
 
         # First, check if we have previously successfully authenticated and return cached credentials if so
         #  unless force is True, in which case we will re-authenticate regardless of cached credentials.
         if self._credentials and not force:
-            log.debug(f"Using cached credentials")
+            log.debug("Using cached credentials")
             return self._credentials
 
         # No cached credentials, attempt to load from storage unless force is true. Otherwise,
@@ -328,10 +327,10 @@ class AuthManager(QObject):
             # Store the new credentials token and userinfo
             self._token_store.store(credentials.to_json(), json.dumps(user_info))
         else:
-            log.debug(f"Previous token found and successfully authorized.")
+            log.debug("Previous token found and successfully authorized.")
 
         if not credentials:
-            log.debug(f"Failed to authorize")
+            log.debug("Failed to authorize")
             self.update_state(AuthState.NOT_LOGGED_IN)
             return None
 
@@ -339,7 +338,7 @@ class AuthManager(QObject):
         #  loaded credentials from storage and don't have user info yet.
         if user_info is None:
             user_info = self.retrieve_user_info(credentials)
-        _credentials = credentials
+        self._credentials = credentials
         self.update_state(AuthState.LOGGED_IN, user_info)
         return credentials
 

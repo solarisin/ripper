@@ -2,8 +2,9 @@ import logging
 
 from googleapiclient.errors import HttpError
 
+
 def list_sheets(service):
-    log = logging.getLogger('list_sheets')
+    log = logging.getLogger("list_sheets")
     log.setLevel(logging.DEBUG)
     files = []
     try:
@@ -46,15 +47,14 @@ def read_data_from_spreadsheet(service, spreadsheet_id, range_name):
     sheets = service.spreadsheets()
 
     # Request to get values from the specified range in the Google Sheet
-    s = sheets.values()
     result = sheets.values().get(spreadsheetId=spreadsheet_id, range=range_name).execute()
 
     # Extract the values from the response
-    values = result.get('values', [])
+    values = result.get("values", [])
 
     # If the spreadsheet is empty, log an info message and return None
     if not values:
-        logging.info('No data found.')
+        logging.info("No data found.")
         return None
 
     # Log the values and return them
