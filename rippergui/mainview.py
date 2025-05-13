@@ -7,7 +7,6 @@ from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, Q
 from rippergui.oauth_client_config_view import AuthView
 from ripperlib.auth import AuthManager, AuthState, AuthInfo
 
-
 log = logging.getLogger("ripper:mainview")
 
 
@@ -208,11 +207,9 @@ class MainView(QMainWindow):
 
         from rippergui import table_view
 
-        transactions = table_view.sample_transactions
-        table_widget = table_view.TransactionTableViewWidget(transactions)
+        table_widget = table_view.TransactionTableViewWidget(None, simulate=True)
 
         dock = QDockWidget("Table", self)
-        # dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         dock.setWidget(table_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)

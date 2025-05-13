@@ -112,7 +112,6 @@ sample_transactions = [
 ]
 
 
-# --- Transaction Model (Unchanged from previous version) ---
 class TransactionModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
@@ -429,15 +428,14 @@ class FilterDialog(QDialog):
 
 # --- Main Application Window ---
 class TransactionTableViewWidget(QWidget):
-    def __init__(self, transactions_data):
+    def __init__(self, transactions_data, *, simulate=False):
         super().__init__()
         self.setWindowTitle("Tiller Transaction Viewer")
         self.setGeometry(100, 100, 1000, 600)
 
-        self._transactions_data = transactions_data  # Store for unique accounts
-        self._unique_accounts = sorted(
-            list(set(t.get("Account", "") for t in self._transactions_data if t.get("Account")))
-        )
+        if not transactions_data and simulate:
+            transactions_data = sample_transactions
+        self._unique_accounts = sorted(list(set(t.get("Account", "") for t in transactions_data if t.get("Account"))))
 
         layout = QVBoxLayout(self)
 
@@ -458,7 +456,7 @@ class TransactionTableViewWidget(QWidget):
         layout.addWidget(self.table_view)
 
         # --- Model Setup ---
-        self.source_model = TransactionModel(self._transactions_data)
+        self.source_model = TransactionModel(transactions_data)
         self.proxy_model = TransactionSortFilterProxyModel()
         self.proxy_model.setSourceModel(self.source_model)
 
