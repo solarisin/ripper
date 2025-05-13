@@ -1,15 +1,27 @@
+import logging
 import os
 import sqlite3
-import logging
-from pathlib import Path
 from sqlite3 import Error
+from typing import Optional, Dict, List, Any
 
 log = logging.getLogger("ripper:database")
 
-def get_db_path(db_file_name="ripper.db"):
-    """Get the absolute path for the database file"""
+# Flag to track if database path has been logged
+_db_path_logged = False
+
+
+def get_db_path(db_file_name: str = "ripper.db") -> str:
+    """
+    Get the absolute path for the database file.
+
+    Args:
+        db_file_name: Name of the database file. Defaults to "ripper.db".
+
+    Returns:
+        The absolute path to the database file.
+    """
     # Use the user's app data directory for Windows
-    app_data_dir = os.path.join(os.environ.get('APPDATA', ''), 'ripper')
+    app_data_dir = os.path.join(os.environ.get("APPDATA", ""), "ripper")
 
     # Create the directory if it doesn't exist
     if not os.path.exists(app_data_dir):
@@ -23,20 +35,39 @@ def get_db_path(db_file_name="ripper.db"):
             log.debug(f"Using current directory for database: {app_data_dir}")
 
     db_path = os.path.join(app_data_dir, db_file_name)
-    log.debug(f"Database path: {db_path}")
     return db_path
 
 
-def create_connection(db_file_path):
+def create_connection(db_file_path: str) -> Optional[sqlite3.Connection]:
+    """
+    Create a database connection to the SQLite database specified by db_file_path.
+
+    Args:
+        db_file_path: Path to the database file
+
+    Returns:
+        Connection object or None if connection fails
+    """
+    global _db_path_logged
     conn = None
     try:
         conn = sqlite3.connect(db_file_path)
+        # Log the database path only on the first successful connection
+        if not _db_path_logged:
+            log.debug(f"Database path: {db_file_path}")
+            _db_path_logged = True
     except Error as e:
         log.error(f"Database connection error: {e}")
     return conn
 
 
-def create_table(db_file_path):
+def create_table(db_file_path: str) -> None:
+    """
+    Create the necessary tables in the database if they don't exist.
+
+    Args:
+        db_file_path: Path to the database file
+    """
     conn = create_connection(db_file_path)
     if conn is not None:
         try:
@@ -73,7 +104,17 @@ def create_table(db_file_path):
             conn.close()
 
 
-def insert_transaction(transaction, db_file_path=None):
+def insert_transaction(transaction: Dict[str, Any], db_file_path: Optional[str] = None) -> bool:
+    """
+    Insert a transaction into the database.
+
+    Args:
+        transaction: Dictionary containing transaction data with keys: date, description, amount, category
+        db_file_path: Path to the database file. If None, uses default path.
+
+    Returns:
+        True if successful, False otherwise
+    """
     if db_file_path is None:
         db_file_path = get_db_path()
     conn = create_connection(db_file_path)
@@ -86,13 +127,25 @@ def insert_transaction(transaction, db_file_path=None):
                 (transaction["date"], transaction["description"], transaction["amount"], transaction["category"]),
             )
             conn.commit()
+            return True
         except Error as e:
             log.error(f"Error inserting transaction: {e}")
+            return False
         finally:
             conn.close()
+    return False
 
 
-def retrieve_transactions(db_file_path=None):
+def retrieve_transactions(db_file_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Retrieve all transactions from the database.
+
+    Args:
+        db_file_path: Path to the database file. If None, uses default path.
+
+    Returns:
+        List of dictionaries containing transaction data
+    """
     if db_file_path is None:
         db_file_path = get_db_path()
     conn = create_connection(db_file_path)
@@ -112,22 +165,58 @@ def retrieve_transactions(db_file_path=None):
     return transactions
 
 
-def insert_data_source(source_name, spreadsheet_id, sheet_name, cell_range, db_file_path=None):
+def insert_data_source(
+    source_name: str, spreadsheet_id: str, sheet_name: str, cell_range: str, db_file_path: Optional[str] = None
+) -> bool:
+    """
+    Insert a data source into the database.
+
+    Args:
+        source_name: Name of the data source
+        spreadsheet_id: ID of the Google spreadsheet
+        sheet_name: Name of the sheet within the spreadsheet
+        cell_range: Range of cells to read (e.g., 'A1:Z100')
+        db_file_path: Path to the database file. If None, uses default path.
+
+    Returns:
+        True if successful, False otherwise
+    """
     if db_file_path is None:
         db_file_path = get_db_path()
     conn = create_connection(db_file_path)
     if conn is not None:
         try:
-            # TODO
+            c = conn.cursor()
+            c.execute(
+                """INSERT INTO data_sources (source_name, spreadsheet_id, sheet_name, cell_range)
+                   VALUES (?, ?, ?, ?)""",
+                (source_name, spreadsheet_id, sheet_name, cell_range),
+            )
             conn.commit()
+            return True
         except Error as e:
             log.error(f"Error inserting data source: {e}")
+            return False
         finally:
             conn.close()
+    return False
 
 
-def store_thumbnail(sheet_id, thumbnail_data, last_modified, db_file_path=None):
-    """Store or update a sheet thumbnail in the database"""
+def store_thumbnail(
+    sheet_id: str, thumbnail_data: bytes, last_modified: str, db_file_path: Optional[str] = None
+) -> bool:
+    """
+    Store or update a sheet thumbnail in the database.
+
+    Args:
+        sheet_id: ID of the Google sheet
+        thumbnail_data: Binary thumbnail image data
+        last_modified: Timestamp of when the thumbnail was last modified
+        db_file_path: Path to the database file. If None, uses default path.
+
+    Returns:
+        True if successful, False otherwise
+    """
     if db_file_path is None:
         db_file_path = get_db_path()
     conn = create_connection(db_file_path)
@@ -161,8 +250,17 @@ def store_thumbnail(sheet_id, thumbnail_data, last_modified, db_file_path=None):
     return False
 
 
-def get_thumbnail(sheet_id, db_file_path=None):
-    """Retrieve a sheet thumbnail from the database"""
+def get_thumbnail(sheet_id: str, db_file_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a sheet thumbnail from the database.
+
+    Args:
+        sheet_id: ID of the Google sheet
+        db_file_path: Path to the database file. If None, uses default path.
+
+    Returns:
+        Dictionary containing thumbnail_data and last_modified, or None if not found
+    """
     if db_file_path is None:
         db_file_path = get_db_path()
     conn = create_connection(db_file_path)
@@ -182,5 +280,10 @@ def get_thumbnail(sheet_id, db_file_path=None):
     return None
 
 
-# Create tables with absolute database file path
-create_table(get_db_path())
+def init_database():
+    """Initialize the database by creating necessary tables."""
+    create_table(get_db_path())
+
+
+# Initialize database when module is imported
+init_database()

@@ -1,6 +1,6 @@
 import logging
-import io
 from datetime import datetime
+from typing import Dict, List, Optional, Any, Union, Tuple
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QPixmap, QImage
@@ -21,19 +21,35 @@ from googleapiclient.errors import HttpError
 
 from ripperlib.auth import AuthManager
 from ripperlib.database import get_thumbnail, store_thumbnail
+from ripperlib.sheets_backend import list_sheets
 
 log = logging.getLogger("ripper:sheets_selection_view")
 
 
 class SheetThumbnailWidget(QFrame):
-    """Widget to display a Google Sheet thumbnail with its name"""
+    """
+    Widget to display a Google Sheet thumbnail with its name.
 
-    def __init__(self, sheet_info, dialog=None, parent=None):
+    This widget shows a thumbnail image of a Google Sheet along with its name.
+    It loads the thumbnail from cache if available, or from the Google API if not.
+    """
+
+    def __init__(self, sheet_info: Dict[str, Any], dialog: Optional['SheetsSelectionDialog'] = None, parent: Optional[QWidget] = None):
+        """
+        Initialize the thumbnail widget.
+
+        Args:
+            sheet_info: Dictionary containing sheet information (id, name, thumbnailLink, etc.)
+            dialog: Parent dialog that will handle sheet selection
+            parent: Parent widget
+        """
         super().__init__(parent)
-        self.sheet_info = sheet_info
-        self.dialog = dialog
-        self.setFrameShape(QFrame.Box)
-        self.setFrameShadow(QFrame.Raised)
+        self.sheet_info: Dict[str, Any] = sheet_info
+        self.dialog: Optional['SheetsSelectionDialog'] = dialog
+
+        # Configure frame appearance
+        self.setFrameShape(QFrame.Shape.Box)
+        self.setFrameShadow(QFrame.Shadow.Raised)
         self.setLineWidth(1)
         self.setMinimumSize(200, 200)
         self.setMaximumSize(200, 200)
@@ -43,19 +59,19 @@ class SheetThumbnailWidget(QFrame):
 
         # Thumbnail image
         self.thumbnail_label = QLabel()
-        self.thumbnail_label.setAlignment(Qt.AlignCenter)
+        self.thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumbnail_label.setMinimumSize(180, 150)
         self.thumbnail_label.setMaximumSize(180, 150)
         self.thumbnail_label.setScaledContents(True)
 
         # Sheet name
         self.name_label = QLabel(sheet_info.get("name", "Unknown"))
-        self.name_label.setAlignment(Qt.AlignCenter)
+        self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setWordWrap(True)
 
         # Loading indicator
         self.loading_label = QLabel("Loading...")
-        self.loading_label.setAlignment(Qt.AlignCenter)
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.loading_label.hide()  # Hide initially
 
         layout.addWidget(self.thumbnail_label)
@@ -73,29 +89,42 @@ class SheetThumbnailWidget(QFrame):
         if "thumbnailLink" in sheet_info and "id" in sheet_info:
             self.load_thumbnail(sheet_info["thumbnailLink"], sheet_info["id"])
 
-    def set_default_thumbnail(self):
-        """Set a default thumbnail for the sheet"""
-        # Create a simple colored rectangle as default thumbnail
+    def set_default_thumbnail(self) -> None:
+        """
+        Set a default thumbnail for the sheet.
+
+        Creates a simple colored rectangle as a placeholder.
+        """
         pixmap = QPixmap(180, 150)
-        pixmap.fill(Qt.lightGray)
+        pixmap.fill(Qt.GlobalColor.lightGray)
         self.thumbnail_label.setPixmap(pixmap)
 
-    def load_thumbnail(self, url, sheet_id):
-        """Load thumbnail from cache or URL asynchronously"""
+    def load_thumbnail(self, url: str, sheet_id: str) -> None:
+        """
+        Load thumbnail from cache or URL asynchronously.
+
+        Args:
+            url: URL to load the thumbnail from if not in cache
+            sheet_id: ID of the sheet to use as cache key
+        """
         # Check cache first
         cached_thumbnail = get_thumbnail(sheet_id)
         if cached_thumbnail:
             try:
                 thumbnail_data = cached_thumbnail["thumbnail_data"]
                 image = QImage()
-                image.loadFromData(thumbnail_data)
-                pixmap = QPixmap.fromImage(image)
-                self.thumbnail_label.setPixmap(pixmap)
-                log.debug(f"Loaded thumbnail for sheet {sheet_id} from cache")
-                return
+                if image.loadFromData(thumbnail_data):
+                    pixmap = QPixmap.fromImage(image)
+                    self.thumbnail_label.setPixmap(pixmap)
+                    log.debug(f"Loaded thumbnail for sheet {sheet_id} from cache")
+                    return
+                else:
+                    log.warning(f"Failed to load image data for sheet {sheet_id} from cache")
+            except KeyError as e:
+                log.error(f"Missing key in cached thumbnail data: {e}")
             except Exception as e:
                 log.error(f"Error loading cached thumbnail: {e}")
-                # Continue to load from URL if cache fails
+            # Continue to load from URL if cache fails
 
         # Show loading indicator
         self.loading_label.show()
@@ -105,62 +134,96 @@ class SheetThumbnailWidget(QFrame):
         self.network_manager.get(request)
         log.debug(f"Requesting thumbnail for sheet {sheet_id} from URL: {url}")
 
-    def handle_thumbnail_response(self, reply):
-        """Handle the network reply with the thumbnail data"""
+    def handle_thumbnail_response(self, reply: QNetworkReply) -> None:
+        """
+        Handle the network reply with the thumbnail data.
+
+        Args:
+            reply: Network reply containing the thumbnail data
+        """
         # Hide loading indicator
         self.loading_label.hide()
 
-        if reply.error() == QNetworkReply.NoError:
-            # Get the image data
-            image_data = reply.readAll().data()
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            try:
+                # Get the image data
+                image_data = reply.readAll().data()
 
-            # Create image from data
-            image = QImage()
-            image.loadFromData(image_data)
-            pixmap = QPixmap.fromImage(image)
-            self.thumbnail_label.setPixmap(pixmap)
+                # Create image from data
+                image = QImage()
+                if image.loadFromData(image_data):
+                    pixmap = QPixmap.fromImage(image)
+                    self.thumbnail_label.setPixmap(pixmap)
 
-            # Store in cache if we have a sheet ID
-            if "id" in self.sheet_info:
-                sheet_id = self.sheet_info["id"]
-                last_modified = datetime.now().isoformat()
-                store_thumbnail(sheet_id, image_data, last_modified)
-                log.debug(f"Stored thumbnail for sheet {sheet_id} in cache")
+                    # Store in cache if we have a sheet ID
+                    if "id" in self.sheet_info:
+                        sheet_id = self.sheet_info["id"]
+                        last_modified = datetime.now().isoformat()
+                        store_thumbnail(sheet_id, image_data, last_modified)
+                        log.debug(f"Stored thumbnail for sheet {sheet_id} in cache")
+                else:
+                    log.error("Failed to load image data from network response")
+                    self.set_default_thumbnail()
+            except Exception as e:
+                log.error(f"Error processing thumbnail data: {e}")
+                self.set_default_thumbnail()
         else:
             log.error(f"Error loading thumbnail: {reply.errorString()}")
+            self.set_default_thumbnail()
 
         # Clean up
         reply.deleteLater()
 
-    def mousePressEvent(self, event):
-        """Handle mouse press events to select this sheet"""
+    def mousePressEvent(self, event) -> None:
+        """
+        Handle mouse press events to select this sheet.
+
+        Args:
+            event: Mouse event
+        """
         super().mousePressEvent(event)
-        self.setFrameShadow(QFrame.Sunken)
+        self.setFrameShadow(QFrame.Shadow.Sunken)
         if self.dialog:
             self.dialog.select_sheet(self.sheet_info)
 
-    def mouseReleaseEvent(self, event):
-        """Handle mouse release events"""
+    def mouseReleaseEvent(self, event) -> None:
+        """
+        Handle mouse release events.
+
+        Args:
+            event: Mouse event
+        """
         super().mouseReleaseEvent(event)
-        self.setFrameShadow(QFrame.Raised)
+        self.setFrameShadow(QFrame.Shadow.Raised)
 
 
 class SheetsSelectionDialog(QDialog):
-    """Dialog for selecting Google Sheets"""
+    """
+    Dialog for selecting Google Sheets.
 
-    def __init__(self, parent=None):
+    This dialog displays a grid of thumbnails for all Google Sheets in the user's Drive,
+    and allows the user to select one to view details and get information about it.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        """
+        Initialize the sheets selection dialog.
+
+        Args:
+            parent: Parent widget
+        """
         super().__init__(parent)
         self.setWindowTitle("Select Google Sheet")
         self.resize(1600, 900)
 
-        self.selected_sheet = None
-        self.sheets_list = []
+        self.selected_sheet: Optional[Dict[str, Any]] = None
+        self.sheets_list: List[Dict[str, Any]] = []
 
         # Main layout
         main_layout = QVBoxLayout(self)
 
         # Create splitter for thumbnails and details
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left side - Thumbnails
         thumbnails_widget = QWidget()
@@ -168,7 +231,7 @@ class SheetsSelectionDialog(QDialog):
 
         # Title for thumbnails section
         thumbnails_title = QLabel("Available Google Sheets")
-        thumbnails_title.setAlignment(Qt.AlignCenter)
+        thumbnails_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         thumbnails_layout.addWidget(thumbnails_title)
 
         # Scroll area for thumbnails
@@ -185,12 +248,12 @@ class SheetsSelectionDialog(QDialog):
 
         # Title for details section
         details_title = QLabel("Sheet Details")
-        details_title.setAlignment(Qt.AlignCenter)
+        details_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         details_layout.addWidget(details_title)
 
         # Details content
         self.details_content = QLabel("Select a sheet to view details")
-        self.details_content.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.details_content.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.details_content.setWordWrap(True)
         details_layout.addWidget(self.details_content)
 
@@ -219,8 +282,13 @@ class SheetsSelectionDialog(QDialog):
         # Load sheets
         self.load_sheets()
 
-    def load_sheets(self):
-        """Load Google Sheets from Drive"""
+    def load_sheets(self) -> None:
+        """
+        Load Google Sheets from Drive.
+
+        Fetches the list of Google Sheets from the user's Drive and displays them
+        in the grid. Shows an error message if authentication fails or an error occurs.
+        """
         try:
             # Get Drive service
             drive_service = AuthManager().create_drive_service()
@@ -230,6 +298,10 @@ class SheetsSelectionDialog(QDialog):
 
             # List sheets with more fields
             self.sheets_list = self.list_sheets_with_thumbnails(drive_service)
+            if self.sheets_list is None:
+                self.show_error("Failed to fetch sheets list. Please try again.")
+                self.sheets_list = []
+                return
 
             # Display sheets in grid
             self.display_sheets()
@@ -238,11 +310,24 @@ class SheetsSelectionDialog(QDialog):
             log.error(f"Error loading sheets: {e}")
             self.show_error(f"Error loading sheets: {str(e)}")
 
-    def list_sheets_with_thumbnails(self, service):
-        """List Google Sheets with thumbnail links and additional metadata"""
-        files = []
+    def list_sheets_with_thumbnails(self, service) -> Optional[List[Dict[str, Any]]]:
+        """
+        List Google Sheets with thumbnail links and additional metadata.
+
+        This method extends the basic list_sheets functionality by requesting
+        additional fields like thumbnailLink, webViewLink, etc.
+
+        Args:
+            service: Authenticated Google Drive API service
+
+        Returns:
+            List of dictionaries containing sheet information, or None if an error occurred
+        """
         try:
+            # Use the Drive API to list files with additional fields
             page_token = None
+            files = []
+
             while True:
                 response = (
                     service.files()
@@ -259,14 +344,20 @@ class SheetsSelectionDialog(QDialog):
                 if page_token is None:
                     break
 
+            log.debug(f"Found {len(files)} sheets with thumbnail information")
+            return files
+
         except HttpError as error:
             log.error(f"An error occurred fetching sheets list: {error}")
-            files = []
+            return None
 
-        return files
+    def display_sheets(self) -> None:
+        """
+        Display sheets in the grid layout.
 
-    def display_sheets(self):
-        """Display sheets in the grid layout"""
+        Clears any existing widgets in the grid and adds thumbnails for each sheet.
+        If no sheets are found, displays a message.
+        """
         # Clear existing items
         while self.grid_layout.count():
             item = self.grid_layout.takeAt(0)
@@ -275,7 +366,7 @@ class SheetsSelectionDialog(QDialog):
 
         if not self.sheets_list:
             no_sheets_label = QLabel("No Google Sheets found in your Drive")
-            no_sheets_label.setAlignment(Qt.AlignCenter)
+            no_sheets_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.grid_layout.addWidget(no_sheets_label, 0, 0)
             return
 
@@ -292,8 +383,16 @@ class SheetsSelectionDialog(QDialog):
                 col = 0
                 row += 1
 
-    def select_sheet(self, sheet_info):
-        """Handle sheet selection"""
+    def select_sheet(self, sheet_info: Dict[str, Any]) -> None:
+        """
+        Handle sheet selection.
+
+        Updates the UI to show details about the selected sheet and enables
+        the select button.
+
+        Args:
+            sheet_info: Dictionary containing information about the selected sheet
+        """
         self.selected_sheet = sheet_info
         self.select_button.setEnabled(True)
 
@@ -319,8 +418,13 @@ class SheetsSelectionDialog(QDialog):
 
         self.details_content.setText(details)
 
-    def print_sheet_info(self):
-        """Print information about the selected sheet to the log"""
+    def print_sheet_info(self) -> None:
+        """
+        Print information about the selected sheet to the log.
+
+        Logs details about the selected sheet and shows a confirmation message
+        in the details panel.
+        """
         if not self.selected_sheet:
             return
 
@@ -341,6 +445,11 @@ class SheetsSelectionDialog(QDialog):
             self.details_content.text() + "<br><br><b>Sheet information has been printed to the log.</b>"
         )
 
-    def show_error(self, message):
-        """Display error message in the dialog"""
+    def show_error(self, message: str) -> None:
+        """
+        Display error message in the dialog.
+
+        Args:
+            message: The error message to display
+        """
         self.details_content.setText(f"<span style='color: red;'>{message}</span>")

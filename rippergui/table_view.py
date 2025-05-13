@@ -1,4 +1,6 @@
 from decimal import Decimal, InvalidOperation
+from typing import Dict, List, Optional, Any, Union, Tuple, Set, Callable
+import logging
 
 from PySide6.QtCore import (
     Qt,
@@ -7,8 +9,9 @@ from PySide6.QtCore import (
     QSortFilterProxyModel,
     QDate,
     Slot,
-    Signal,  # Added Signal
+    Signal,
     QRegularExpression,
+    QObject,
 )
 from PySide6.QtWidgets import (
     QWidget,
@@ -20,12 +23,14 @@ from PySide6.QtWidgets import (
     QLabel,
     QDoubleSpinBox,
     QComboBox,
-    # QGroupBox, # No longer directly in main widget
     QGridLayout,
-    QPushButton,  # Added
-    QDialog,  # Added
-    QDialogButtonBox,  # Added
+    QPushButton,
+    QDialog,
+    QDialogButtonBox,
 )
+
+# Configure module logger
+log = logging.getLogger("ripper:table_view")
 
 # --- Sample Data (Simulating Tiller Spreadsheet Data) ---
 sample_transactions = [
@@ -113,20 +118,61 @@ sample_transactions = [
 
 
 class TransactionModel(QAbstractTableModel):
-    def __init__(self, data=None):
-        super().__init__()
-        self._data = data or []
-        # Define column order and names. Also used as keys for data dictionaries.
-        self.column_keys = ["ID", "Date", "Description", "Category", "Amount", "Account"]
-        self._headers = ["ID", "Date", "Description", "Category", "Amount", "Account"]
+    """
+    Model for displaying transaction data in a table view.
 
-    def rowCount(self, parent=QModelIndex()):
+    This model handles the display and sorting of transaction data, with support
+    for different data types (dates, decimal amounts, text) and alignment.
+    """
+
+    def __init__(self, data: Optional[List[Dict[str, Any]]] = None):
+        """
+        Initialize the transaction model.
+
+        Args:
+            data: List of dictionaries containing transaction data
+        """
+        super().__init__()
+        self._data: List[Dict[str, Any]] = data or []
+        # Define column order and names. Also used as keys for data dictionaries.
+        self.column_keys: List[str] = ["ID", "Date", "Description", "Category", "Amount", "Account"]
+        self._headers: List[str] = ["ID", "Date", "Description", "Category", "Amount", "Account"]
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        """
+        Return the number of rows in the model.
+
+        Args:
+            parent: Parent index (unused for list models)
+
+        Returns:
+            Number of rows (transactions)
+        """
         return len(self._data)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        """
+        Return the number of columns in the model.
+
+        Args:
+            parent: Parent index (unused for list models)
+
+        Returns:
+            Number of columns
+        """
         return len(self._headers)
 
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        """
+        Return data for the given index and role.
+
+        Args:
+            index: Model index to get data for
+            role: Data role (display, edit, alignment, etc.)
+
+        Returns:
+            Data for the given index and role, or None if not available
+        """
         if not index.isValid():
             return None
 
@@ -153,13 +199,31 @@ class TransactionModel(QAbstractTableModel):
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         return None
 
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        """
+        Return header data for the given section, orientation and role.
+
+        Args:
+            section: Column or row number
+            orientation: Horizontal or vertical header
+            role: Data role
+
+        Returns:
+            Header data, or None if not available
+        """
         if role == Qt.ItemDataRole.DisplayRole:
             if orientation == Qt.Orientation.Horizontal:
                 return self._headers[section]
         return None
 
-    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        """
+        Sort the model by the given column and order.
+
+        Args:
+            column: Column index to sort by
+            order: Sort order (ascending or descending)
+        """
         self.layoutAboutToBeChanged.emit()
         col_name = self._headers[column]
         try:
@@ -174,39 +238,87 @@ class TransactionModel(QAbstractTableModel):
                     key=lambda x: str(x.get(col_name, "")).lower(), reverse=(order == Qt.SortOrder.DescendingOrder)
                 )
         except Exception as e:
-            print(f"Error sorting by {col_name}: {e}")
+            log.error(f"Error sorting by {col_name}: {e}")
         self.layoutChanged.emit()
 
-    def setDataList(self, data):
+    def setDataList(self, data: List[Dict[str, Any]]) -> None:
+        """
+        Set a new data list for the model.
+
+        Args:
+            data: List of dictionaries containing transaction data
+        """
         self.beginResetModel()
         self._data = data
         self.endResetModel()
 
 
-# --- Custom SortFilterProxyModel (Unchanged from previous version) ---
 class TransactionSortFilterProxyModel(QSortFilterProxyModel):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._filters = {}
+    """
+    Custom sort/filter proxy model for transaction data.
 
-    def set_filter_value(self, column_index, value, header_name=None):  # Added header_name for clarity
+    This model provides advanced filtering capabilities for transaction data,
+    including text search, range filtering for amounts, and exact matching for accounts.
+    """
+
+    def __init__(self, parent: Optional[QObject] = None):
+        """
+        Initialize the proxy model.
+
+        Args:
+            parent: Parent object
+        """
+        super().__init__(parent)
+        self._filters: Dict[int, Dict[str, Any]] = {}
+
+    def set_filter_value(self, column_index: int, value: Any, header_name: Optional[str] = None) -> None:
+        """
+        Set a filter value for a specific column.
+
+        Args:
+            column_index: Index of the column to filter
+            value: Filter value (string, regex, or tuple for range filters)
+            header_name: Name of the column header (for type-specific filtering)
+        """
         if value is not None and value != "" and value != (None, None):  # Check for meaningful filter
             self._filters[column_index] = {"value": value, "header": header_name}
         elif column_index in self._filters:
             del self._filters[column_index]
         self.invalidateFilter()
 
-    def get_active_filters(self):
+    def get_active_filters(self) -> Dict[int, Dict[str, Any]]:
+        """
+        Get the currently active filters.
+
+        Returns:
+            Dictionary mapping column indices to filter information
+        """
         return self._filters
 
-    def clear_all_filters(self):
+    def clear_all_filters(self) -> bool:
+        """
+        Clear all active filters.
+
+        Returns:
+            True if filters were cleared, False if there were no filters
+        """
         if not self._filters:
             return False  # No filters to clear
         self._filters.clear()
         self.invalidateFilter()
         return True  # Filters were cleared
 
-    def filterAcceptsRow(self, source_row, source_parent):
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        """
+        Check if a row should be included in the filtered view.
+
+        Args:
+            source_row: Row index in the source model
+            source_parent: Parent index in the source model
+
+        Returns:
+            True if the row should be included, False otherwise
+        """
         if not self._filters:
             return True
 
@@ -218,7 +330,21 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
                 return False
         return True
 
-    def _check_row_against_filter(self, model, source_row, column_index, filter_value, header_name):
+    def _check_row_against_filter(self, model: QAbstractTableModel, source_row: int, 
+                                 column_index: int, filter_value: Any, header_name: str) -> bool:
+        """
+        Check if a specific cell matches the filter criteria.
+
+        Args:
+            model: Source model
+            source_row: Row index in the source model
+            column_index: Column index in the source model
+            filter_value: Filter value to check against
+            header_name: Name of the column header
+
+        Returns:
+            True if the cell matches the filter, False otherwise
+        """
         idx = model.index(source_row, column_index, QModelIndex())
         if not idx.isValid():
             return False
@@ -244,14 +370,24 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
                 return False
         return True
 
-    def lessThan(self, left, right):
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        """
+        Compare two items for sorting.
+
+        Args:
+            left: Index of the left item
+            right: Index of the right item
+
+        Returns:
+            True if the left item is less than the right item
+        """
         left_data = self.sourceModel().data(left, Qt.ItemDataRole.EditRole)
         right_data = self.sourceModel().data(right, Qt.ItemDataRole.EditRole)
 
         if left.column() == self.sourceModel()._headers.index("Amount"):
             try:
                 return Decimal(str(left_data)) < Decimal(str(right_data))
-            except (InvalidOperation, TypeError):  # Added TypeError for None comparison
+            except (InvalidOperation, TypeError):  # Handle None comparison
                 pass
         if left.column() == self.sourceModel()._headers.index("Date"):
             if isinstance(left_data, QDate) and isinstance(right_data, QDate):
@@ -269,16 +405,34 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
 
 # --- Filter Dialog ---
 class FilterDialog(QDialog):
+    """
+    Dialog for setting transaction filters.
+
+    This dialog allows the user to set filters for transaction data,
+    including text filters for description and category, account selection,
+    and amount range filters.
+    """
+
+    # Signal emitted when filters are applied
     filters_applied = Signal(dict)
 
-    def __init__(self, unique_accounts, current_filters=None, parent=None):
+    def __init__(self, unique_accounts: Set[str], current_filters: Optional[Dict[int, Dict[str, Any]]] = None, 
+                parent: Optional[QWidget] = None):
+        """
+        Initialize the filter dialog.
+
+        Args:
+            unique_accounts: Set of unique account names to populate the account filter
+            current_filters: Dictionary of currently active filters
+            parent: Parent widget
+        """
         super().__init__(parent)
         self.setWindowTitle("Set Transaction Filters")
         self.setMinimumWidth(400)
 
-        self._unique_accounts = ["All Accounts"] + sorted(list(unique_accounts))
-        self._current_filters = current_filters if current_filters else {}
-        self._source_model_headers = [
+        self._unique_accounts: List[str] = ["All Accounts"] + sorted(list(unique_accounts))
+        self._current_filters: Dict[int, Dict[str, Any]] = current_filters if current_filters else {}
+        self._source_model_headers: List[str] = [
             "ID",
             "Date",
             "Description",
@@ -343,8 +497,12 @@ class FilterDialog(QDialog):
 
         self.populate_fields()  # Populate with current filters
 
-    def populate_fields(self):
-        """Populate dialog fields with current_filters."""
+    def populate_fields(self) -> None:
+        """
+        Populate dialog fields with current filters.
+
+        Fills in the filter input fields with values from the currently active filters.
+        """
         desc_filter = self._current_filters.get(self._source_model_headers.index("Description"))
         if desc_filter and isinstance(desc_filter["value"], QRegularExpression):
             self.description_filter_input.setText(desc_filter["value"].pattern())
@@ -376,17 +534,26 @@ class FilterDialog(QDialog):
             self.amount_min_input.setValue(self.amount_min_input.minimum())
             self.amount_max_input.setValue(self.amount_max_input.maximum())
 
-    def reset_fields(self):
-        """Reset dialog fields to their default/empty state."""
+    def reset_fields(self) -> None:
+        """
+        Reset dialog fields to their default/empty state.
+
+        Clears all filter inputs and sets them back to their default values.
+        """
         self.description_filter_input.clear()
         self.category_filter_input.clear()
         self.account_filter_combo.setCurrentText("All Accounts")
         self.amount_min_input.setValue(self.amount_min_input.minimum())
         self.amount_max_input.setValue(self.amount_max_input.maximum())
 
-    def get_filters(self):
-        """Collect filter values from the dialog's input fields."""
-        filters = {}
+    def get_filters(self) -> Dict[str, Any]:
+        """
+        Collect filter values from the dialog's input fields.
+
+        Returns:
+            Dictionary mapping column names to filter values
+        """
+        filters: Dict[str, Any] = {}
 
         # Description
         desc_text = self.description_filter_input.text().strip()
@@ -420,22 +587,39 @@ class FilterDialog(QDialog):
 
         return filters
 
-    def apply_and_accept(self):
-        """Emit collected filters and accept the dialog."""
+    def apply_and_accept(self) -> None:
+        """
+        Emit collected filters and accept the dialog.
+
+        Collects filter values, emits the filters_applied signal, and closes the dialog.
+        """
         self.filters_applied.emit(self.get_filters())
         self.accept()
 
 
-# --- Main Application Window ---
 class TransactionTableViewWidget(QWidget):
-    def __init__(self, transactions_data, *, simulate=False):
+    """
+    Widget for displaying and filtering transaction data in a table view.
+
+    This widget provides a table view for transaction data with sorting and filtering
+    capabilities, along with controls for managing filters.
+    """
+
+    def __init__(self, transactions_data: Optional[List[Dict[str, Any]]] = None, *, simulate: bool = False):
+        """
+        Initialize the transaction table view widget.
+
+        Args:
+            transactions_data: List of dictionaries containing transaction data
+            simulate: If True and transactions_data is empty, use sample data
+        """
         super().__init__()
         self.setWindowTitle("Tiller Transaction Viewer")
         self.setGeometry(100, 100, 1000, 600)
 
         if not transactions_data and simulate:
             transactions_data = sample_transactions
-        self._unique_accounts = sorted(list(set(t.get("Account", "") for t in transactions_data if t.get("Account"))))
+        self._unique_accounts: List[str] = sorted(list(set(t.get("Account", "") for t in transactions_data if t.get("Account"))))
 
         layout = QVBoxLayout(self)
 
@@ -474,14 +658,25 @@ class TransactionTableViewWidget(QWidget):
             self.table_view.sortByColumn(date_col_index, Qt.SortOrder.DescendingOrder)
 
     @Slot()
-    def open_filter_dialog(self):
+    def open_filter_dialog(self) -> None:
+        """
+        Open the filter dialog to set transaction filters.
+
+        Shows a modal dialog where the user can set filters for the transaction data.
+        """
         current_proxy_filters = self.proxy_model.get_active_filters()
         dialog = FilterDialog(self._unique_accounts, current_proxy_filters, self)
         dialog.filters_applied.connect(self.apply_filters_from_dialog)
         dialog.exec()  # Show as modal
 
     @Slot(dict)
-    def apply_filters_from_dialog(self, new_filters_dict):
+    def apply_filters_from_dialog(self, new_filters_dict: Dict[str, Any]) -> None:
+        """
+        Apply filters from the filter dialog to the proxy model.
+
+        Args:
+            new_filters_dict: Dictionary mapping column names to filter values
+        """
         # First, clear any existing filters in the proxy model that are not in the new dict
         # This is important if a filter was previously set but now is cleared in the dialog
         all_column_indices = range(self.source_model.columnCount())
@@ -499,11 +694,16 @@ class TransactionTableViewWidget(QWidget):
                 col_idx = self.source_model._headers.index(header_name)
                 self.proxy_model.set_filter_value(col_idx, filter_value, header_name)
             except ValueError:
-                print(f"Warning: Header '{header_name}' not found in model headers.")
+                log.warning(f"Header '{header_name}' not found in model headers.")
 
     @Slot()
-    def clear_all_table_filters(self):
+    def clear_all_table_filters(self) -> None:
+        """
+        Clear all active filters from the table.
+
+        Removes all filters from the proxy model and updates the view.
+        """
         if self.proxy_model.clear_all_filters():
-            print("All filters cleared from table.")
+            log.debug("All filters cleared from table.")
         else:
-            print("No active filters to clear.")
+            log.debug("No active filters to clear.")

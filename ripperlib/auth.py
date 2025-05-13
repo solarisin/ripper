@@ -2,6 +2,7 @@ import enum
 import json
 import logging
 from json import JSONDecodeError
+from typing import Dict, List, Optional, Any, Tuple, Union, Type, cast
 
 import keyring
 from PySide6.QtCore import QObject, Signal
@@ -25,60 +26,119 @@ log = logging.getLogger("ripper:auth")
 
 
 class AuthState(enum.Enum):
+    """
+    Enumeration of possible authentication states.
+
+    States are ordered from least authenticated to most authenticated:
+    - NO_CLIENT: No OAuth client credentials are configured
+    - NOT_LOGGED_IN: OAuth client is configured but user is not logged in
+    - LOGGED_IN: User is fully authenticated
+    """
     NO_CLIENT = 0
     NOT_LOGGED_IN = 1
     LOGGED_IN = 2
 
-    def __lt__(self, other):
+    def __lt__(self, other: 'AuthState') -> bool:
+        """Compare if this state is less authenticated than another state."""
         if self.__class__ is other.__class__:
             return self.value < other.value
         return NotImplemented
 
-    def __gt__(self, other):
+    def __gt__(self, other: 'AuthState') -> bool:
+        """Compare if this state is more authenticated than another state."""
         if self.__class__ is other.__class__:
             return self.value > other.value
         return NotImplemented
 
 
 class AuthInfo:
-    def __init__(self, state: AuthState = AuthState.NO_CLIENT, info=None):
-        self._state = state
-        self._user_info = info
+    """
+    Container for authentication state and user information.
 
-    def auth_state(self):
+    This class holds the current authentication state and user information
+    and provides methods to access them.
+    """
+
+    def __init__(self, state: AuthState = AuthState.NO_CLIENT, info: Optional[Dict[str, Any]] = None):
+        """
+        Initialize with authentication state and user information.
+
+        Args:
+            state: The authentication state
+            info: Dictionary containing user information
+        """
+        self._state: AuthState = state
+        self._user_info: Optional[Dict[str, Any]] = info
+
+    def auth_state(self) -> AuthState:
+        """
+        Get the current authentication state.
+
+        Returns:
+            The current authentication state
+        """
         return self._state
 
-    def user_email(self):
+    def user_email(self) -> Optional[str]:
+        """
+        Get the user's email address if available.
+
+        Returns:
+            The user's email address, or None if not available
+        """
         if self._user_info is None:
             return None
         return self._user_info.get("email")
 
 
 class TokenStore:
-    """Manages token storage and retrieval through keyring"""
+    """
+    Manages token storage and retrieval through keyring.
+
+    This class handles the storage and retrieval of OAuth tokens and user information
+    using the system keyring.
+    """
 
     TOKEN_KEY = "ripper-app-auth-token"
     USERINFO_KEY = "ripper-app-auth-userinfo"
     DEFAULT_TOKEN_USER = "default-user"
 
     def __init__(self):
+        self._current_token: Optional[str] = None
+        self._current_userinfo: Optional[str] = None
+        self._token_user_id: str = self.DEFAULT_TOKEN_USER  # TODO: implement multi-user support
+
+    def invalidate(self) -> None:
+        """
+        Clear the current token and erase entry from keyring.
+        """
         self._current_token = None
         self._current_userinfo = None
-        self._token_user_id: str = self.DEFAULT_TOKEN_USER  # TODO multi-user support
+        try:
+            keyring.delete_password(self.TOKEN_KEY, self._token_user_id)
+        except PasswordDeleteError:
+            log.debug(f"No token to delete for user {self._token_user_id}")
 
-    def invalidate(self):
-        """Clear the current token and erase entry from keyring"""
-        self._current_token = None
-        self._current_userinfo = None
-        keyring.delete_password(self.TOKEN_KEY, self._token_user_id)
-        keyring.delete_password(self.USERINFO_KEY, self._token_user_id)
+        try:
+            keyring.delete_password(self.USERINFO_KEY, self._token_user_id)
+        except PasswordDeleteError:
+            log.debug(f"No user info to delete for user {self._token_user_id}")
 
-    def store(self, token, userinfo=None):
+    def store(self, token: Optional[str], userinfo: Optional[str] = None) -> None:
+        """
+        Store token and user info in keyring.
+
+        Args:
+            token: The OAuth token as a JSON string, or None to invalidate
+            userinfo: The user info as a JSON string, or None to remove user info
+        """
         if token is None:
             self.invalidate()
             return
+
         self._current_token = token
         keyring.set_password(self.TOKEN_KEY, self._token_user_id, token)
+
         if userinfo is not None:
             self._current_userinfo = userinfo
             keyring.set_password(self.USERINFO_KEY, self._token_user_id, userinfo)
@@ -91,49 +151,80 @@ class TokenStore:
 
         log.debug(f"Stored token for user {self._token_user_id}")
 
-    def load(self, force=False):
+    def load(self, force: bool = False) -> Tuple[str, Optional[str]]:
+        """
+        Load token and user info from keyring.
+
+        Args:
+            force: If True, always load from keyring even if already cached
+
+        Returns:
+            Tuple of (token, userinfo) where userinfo may be None
+
+        Raises:
+            ValueError: If no token is found in keyring
+        """
         if self._current_token is None or force:
             self._current_token = keyring.get_password(self.TOKEN_KEY, self._token_user_id)
             self._current_userinfo = keyring.get_password(self.USERINFO_KEY, self._token_user_id)
+
         if self._current_token is None:
             raise ValueError("No token found in keyring.")
+
         return self._current_token, self._current_userinfo
 
-    def get_credentials(self, scopes=None):
-        """Get OAuth2 credentials from stored token.
+    def get_credentials(self, scopes: Optional[List[str]] = None) -> Credentials:
+        """
+        Get OAuth2 credentials from stored token.
 
         Args:
-            scopes (list, optional): List of OAuth scopes to validate against stored token.
-                                   If None, uses default SCOPES. Defaults to None.
+            scopes: List of OAuth scopes to validate against stored token.
+                   If None, uses default SCOPES.
 
         Returns:
-            Credentials: Google OAuth2 credentials object created from stored token.
+            Google OAuth2 credentials object created from stored token.
 
         Raises:
             ValueError: If no token is found in keyring.
             SystemError: If required scopes are missing from stored token.
         """
-
         if scopes is None:
             scopes = SCOPES
+
         token, _ = self.load()
         token_json = json.loads(token)
-        if "scopes" not in token_json or any([s for s in scopes if s not in token_json["scopes"]]):
+
+        if "scopes" not in token_json or any(s for s in scopes if s not in token_json["scopes"]):
             raise SystemError("Required scopes are missing from token.")
+
         return Credentials.from_authorized_user_info(token_json)
 
-    def get_user_info(self):
-        """Get user info associated with stored token."""
+    def get_user_info(self) -> Optional[Dict[str, Any]]:
+        """
+        Get user info associated with stored token.
+
+        Returns:
+            Dictionary containing user information, or None if not available
+        """
         try:
             _, userinfo = self.load()
             if userinfo is None:
                 return None
+
             return json.loads(userinfo)
+
         except JSONDecodeError as e:
-            log.error(f"Stored user info json was malformed. {e}: {userinfo}")
+            stored_userinfo = self._current_userinfo or "None"
+            log.error(f"Stored user info json was malformed. {e}: {stored_userinfo}")
             self._current_userinfo = None
-            keyring.delete_password(self.USERINFO_KEY, self._token_user_id)
+
+            try:
+                keyring.delete_password(self.USERINFO_KEY, self._token_user_id)
+            except PasswordDeleteError:
+                pass
+
             return None
+
         except Exception as e:
             log.error(f"Failed to load stored user info: {repr(e)}")
             return None
@@ -255,6 +346,12 @@ class AuthManager(QObject):
         return stored_cred
 
     def acquire_new_credentials(self):
+        """
+        Start the OAuth flow to acquire a new token.
+
+        Returns:
+            Credentials object if successful, None otherwise
+        """
         log.debug("Starting OAuth flow to acquire new token")
         try:
             client_config = None
@@ -273,13 +370,14 @@ class AuthManager(QObject):
                 raise ValueError("OAuth client configuration is invalid.")
 
             # Start the user oauth flow using the client config and configured scopes
-            # TODO customize prompt and success oauth messages
+            # TODO: customize prompt and success oauth messages
             flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
 
             new_credentials = flow.run_local_server(port=0)
         except ValueError as e:
             log.error(f"OAuth flow failed with error: {e}")
-            self.authStateChanged.emit(AuthState.NO_CLIENT, None)
+            # Update auth state to NO_CLIENT
+            self.update_state(AuthState.NO_CLIENT)
             return None
 
         log.debug("New OAuth token successfully created")
@@ -342,21 +440,42 @@ class AuthManager(QObject):
         self.update_state(AuthState.LOGGED_IN, user_info)
         return credentials
 
-    # Service creation
+    # Service creation methods
 
     def create_sheets_service(self):
+        """
+        Create an authenticated Google Sheets API service.
+
+        Returns:
+            Google Sheets API service instance, or None if authentication fails
+        """
         cred = self.authorize()
         if not cred:
             return None
         return build("sheets", "v4", credentials=cred, cache_discovery=False)
 
     def create_drive_service(self):
+        """
+        Create an authenticated Google Drive API service.
+
+        Returns:
+            Google Drive API service instance, or None if authentication fails
+        """
         cred = self.authorize()
         if not cred:
             return None
         return build("drive", "v3", credentials=cred, cache_discovery=False)
 
     def create_userinfo_service(self, cred=None):
+        """
+        Create an authenticated Google OAuth2 userinfo API service.
+
+        Args:
+            cred: Optional credentials to use. If None, will call authorize()
+
+        Returns:
+            Google OAuth2 API service instance, or None if authentication fails
+        """
         if not cred:
             cred = self.authorize()
         if not cred:
