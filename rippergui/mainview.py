@@ -5,6 +5,7 @@ from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, QWidget, QGridLayout, QLabel, QDockWidget
 
 from rippergui.oauth_client_config_view import AuthView
+from rippergui.sheets_selection_view import SheetsSelectionDialog
 from ripperlib.auth import AuthManager, AuthState, AuthInfo
 
 log = logging.getLogger("ripper:mainview")
@@ -26,6 +27,7 @@ class MainView(QMainWindow):
         self._register_oauth_act = None
         self._authenticate_oauth_act = None
         self._new_source_act = None
+        self._select_sheet_act = None
         self._save_act = None
         self._print_act = None
         self._undo_act = None
@@ -42,7 +44,7 @@ class MainView(QMainWindow):
             | QMainWindow.DockOption.AnimatedDocks
             | QMainWindow.DockOption.AllowNestedDocks
         )
-        self.resize(QSize(640, 480))
+        self.resize(QSize(1200, 600))
 
         self.create_actions()
         self.create_menus()
@@ -62,6 +64,7 @@ class MainView(QMainWindow):
     def create_menus(self):
         self._file_menu = self.menuBar().addMenu("&File")
         self._file_menu.addAction(self._new_source_act)
+        self._file_menu.addAction(self._select_sheet_act)
         self._file_menu.addAction(self._save_act)
         self._file_menu.addAction(self._print_act)
         self._file_menu.addSeparator()
@@ -85,6 +88,7 @@ class MainView(QMainWindow):
     def create_tool_bars(self):
         self._file_tool_bar = self.addToolBar("File")
         self._file_tool_bar.addAction(self._new_source_act)
+        self._file_tool_bar.addAction(self._select_sheet_act)
         self._file_tool_bar.addAction(self._save_act)
         self._file_tool_bar.addAction(self._print_act)
 
@@ -142,6 +146,19 @@ class MainView(QMainWindow):
             triggered=self.new_source,
         )
 
+        # Select Google Sheet action
+        icon = QIcon.fromTheme("document-open", QIcon(":/res/new.png"))
+        self._select_sheet_act = QAction(
+            icon,
+            "Select &Google Sheet",
+            self,
+            shortcut=QKeySequence.StandardKey.Open,
+            statusTip="Select a Google Sheet from your Drive",
+            triggered=self.select_google_sheet,
+        )
+        # Initially disabled until user is logged in
+        self._select_sheet_act.setEnabled(False)
+
         icon = QIcon.fromTheme("document-save", QIcon(":/res/save.png"))
         self._save_act = QAction(
             icon,
@@ -192,14 +209,20 @@ class MainView(QMainWindow):
         # Get current auth state
         state = AuthManager().auth_info().auth_state()
         has_credentials = state != AuthState.NO_CLIENT
+        is_logged_in = state == AuthState.LOGGED_IN
 
         # Enable/disable the authenticate action based on whether credentials are available
         if self._authenticate_oauth_act:
             self._authenticate_oauth_act.setEnabled(has_credentials)
 
+        # Enable/disable the select sheet action based on whether user is logged in
+        if self._select_sheet_act:
+            self._select_sheet_act.setEnabled(is_logged_in)
+
         log.debug(
             f"OAuth client credentials {'found' if has_credentials else 'not found'}, "
-            f"authentication is {'enabled' if has_credentials else 'disabled'}"
+            f"authentication is {'enabled' if has_credentials else 'disabled'}, "
+            f"sheet selection is {'enabled' if is_logged_in else 'disabled'}"
         )
 
     def new_source(self):
@@ -243,6 +266,24 @@ class MainView(QMainWindow):
 
     def about(self):
         QMessageBox.about(self, "About ripper", "This is ripper")
+
+    def select_google_sheet(self):
+        """Open the Google Sheets selection dialog"""
+        log.debug("Select Google Sheet selected")
+
+        # Check if user is authenticated
+        auth_info = AuthManager().auth_info()
+        if auth_info.auth_state() != AuthState.LOGGED_IN:
+            QMessageBox.warning(
+                self,
+                "Authentication Required",
+                "You need to authenticate with Google before selecting a sheet. Please use the OAuth menu to authenticate.",
+            )
+            return
+
+        # Open the sheets selection dialog
+        dialog = SheetsSelectionDialog(self)
+        dialog.exec()
 
     # Slots #############################################################################
 
