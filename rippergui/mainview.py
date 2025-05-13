@@ -2,14 +2,25 @@ import logging
 from typing import Optional, Dict, Any, List, Union
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
+from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt, QFont
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QMainWindow, QMessageBox, QWidget, 
-    QGridLayout, QLabel, QDockWidget, QMenu, QToolBar, QStatusBar
+    QApplication,
+    QDialog,
+    QMainWindow,
+    QMessageBox,
+    QWidget,
+    QGridLayout,
+    QLabel,
+    QDockWidget,
+    QMenu,
+    QToolBar,
+    QStatusBar,
+    QToolTip,
 )
 
 from rippergui.oauth_client_config_view import AuthView
 from rippergui.sheets_selection_view import SheetsSelectionDialog
+from rippergui.globals import Fonts
 from ripperlib.auth import AuthManager, AuthState, AuthInfo
 
 log = logging.getLogger("ripper:mainview")
@@ -55,6 +66,9 @@ class MainView(QMainWindow):
 
         # Initialize dialog attributes
         self._auth_dialog: Optional[QDialog] = None
+
+        # Setup monospace font for tooltips
+        QToolTip.setFont(Fonts.get(Fonts.FontId.TOOLTIP))
 
         # Set up the main window
         self.setWindowTitle("ripper")
@@ -126,6 +140,7 @@ class MainView(QMainWindow):
         # Create a permanent widget for auth status
         self._auth_status_label = QLabel()
         self._auth_status_label.setMinimumWidth(200)
+        self._auth_status_label.setFont(Fonts.get(Fonts.FontId.TOOLTIP))
         self.statusBar().addPermanentWidget(self._auth_status_label)
 
         # Connect to auth state changed signal
@@ -224,27 +239,13 @@ class MainView(QMainWindow):
 
         # Quit action
         self._quit_act = QAction(
-            "&Quit", 
-            self, 
-            shortcut="Ctrl+Q", 
-            statusTip="Quit the application", 
-            triggered=self.close
+            "&Quit", self, shortcut="Ctrl+Q", statusTip="Quit the application", triggered=self.close
         )
 
         # About actions
-        self._about_act = QAction(
-            "&About", 
-            self, 
-            statusTip="About ripper", 
-            triggered=self.about
-        )
+        self._about_act = QAction("&About", self, statusTip="About ripper", triggered=self.about)
 
-        self._about_qt_act = QAction(
-            "About &Qt", 
-            self, 
-            statusTip="About Qt", 
-            triggered=QApplication.instance().aboutQt
-        )
+        self._about_qt_act = QAction("About &Qt", self, statusTip="About Qt", triggered=QApplication.instance().aboutQt)
 
     def register_oauth(self) -> None:
         """
@@ -267,17 +268,9 @@ class MainView(QMainWindow):
         cred = AuthManager().authorize()
 
         if cred:
-            QMessageBox.information(
-                self, 
-                "Authentication Successful", 
-                "Successfully authenticated with Google!"
-            )
+            QMessageBox.information(self, "Authentication Successful", "Successfully authenticated with Google!")
         else:
-            QMessageBox.warning(
-                self, 
-                "Authentication Failed", 
-                "Failed to authenticate with Google. Please try again."
-            )
+            QMessageBox.warning(self, "Authentication Failed", "Failed to authenticate with Google. Please try again.")
 
     def update_oauth_ui(self) -> None:
         """
@@ -380,11 +373,7 @@ class MainView(QMainWindow):
         """
         Show the about dialog with information about the application.
         """
-        QMessageBox.about(
-            self, 
-            "About ripper", 
-            "Ripper - A tool for extracting and analyzing data from Google Sheets"
-        )
+        QMessageBox.about(self, "About ripper", "Ripper - A tool for extracting and analyzing data from Google Sheets")
 
     def select_google_sheet(self) -> None:
         """
@@ -402,7 +391,7 @@ class MainView(QMainWindow):
                 self,
                 "Authentication Required",
                 "You need to authenticate with Google before selecting a sheet. "
-                "Please use the OAuth menu to authenticate."
+                "Please use the OAuth menu to authenticate.",
             )
             return
 

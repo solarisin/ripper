@@ -34,7 +34,12 @@ class SheetThumbnailWidget(QFrame):
     It loads the thumbnail from cache if available, or from the Google API if not.
     """
 
-    def __init__(self, sheet_info: Dict[str, Any], dialog: Optional['SheetsSelectionDialog'] = None, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        sheet_info: Dict[str, Any],
+        dialog: Optional["SheetsSelectionDialog"] = None,
+        parent: Optional[QWidget] = None,
+    ):
         """
         Initialize the thumbnail widget.
 
@@ -45,7 +50,7 @@ class SheetThumbnailWidget(QFrame):
         """
         super().__init__(parent)
         self.sheet_info: Dict[str, Any] = sheet_info
-        self.dialog: Optional['SheetsSelectionDialog'] = dialog
+        self.dialog: Optional["SheetsSelectionDialog"] = dialog
 
         # Configure frame appearance
         self.setFrameShape(QFrame.Shape.Box)
@@ -57,17 +62,42 @@ class SheetThumbnailWidget(QFrame):
         # Set up layout
         layout = QVBoxLayout(self)
 
+        # Sheet name - truncate long names and add tooltip
+        sheet_name = sheet_info.get("name", "Unknown")
+        sheet_created = sheet_info.get("createdTime")
+        sheet_modified = sheet_info.get("modifiedTime")
+
+        # Set some info about the sheet as the tooltip
+        tooltip = "{:9} {}\n{:9} {}\n{:9} {}".format(
+            "Name:", sheet_name, "Created:", sheet_created, "Modified:", sheet_modified
+        )
+
         # Thumbnail image
         self.thumbnail_label = QLabel()
         self.thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumbnail_label.setMinimumSize(180, 150)
         self.thumbnail_label.setMaximumSize(180, 150)
         self.thumbnail_label.setScaledContents(True)
+        self.thumbnail_label.setToolTip(tooltip)
 
-        # Sheet name
-        self.name_label = QLabel(sheet_info.get("name", "Unknown"))
+        # Create a QFontMetrics object to measure text width
+        font_metrics = self.fontMetrics()
+        # Get available width (slightly less than thumbnail width)
+        available_width = 170
+
+        # Check if the text needs to be elided
+        if font_metrics.horizontalAdvance(sheet_name) > available_width:
+            # Elide the text (add ... at the end)
+            elided_text = font_metrics.elidedText(sheet_name, Qt.TextElideMode.ElideMiddle, available_width)
+            sheet_name = elided_text
+
+        self.name_label = QLabel(sheet_name)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.name_label.setWordWrap(True)
+        self.name_label.setWordWrap(False)
+        self.name_label.setFixedWidth(180)
+        self.name_label.setMaximumHeight(30)
+        self.name_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.name_label.setToolTip(tooltip)
 
         # Loading indicator
         self.loading_label = QLabel("Loading...")
