@@ -3,12 +3,44 @@ import os
 import sqlite3
 from sqlite3 import Error
 from typing import Optional, Dict, List, Any
+from queue import Queue
+from threading import Lock
 
 log = logging.getLogger("ripper:database")
 
 # Flag to track if database path has been logged
 _db_path_logged = False
 
+# Connection pool
+class ConnectionPool:
+    def __init__(self, db_file_path: str, pool_size: int = 5):
+        self.db_file_path = db_file_path
+        self.pool_size = pool_size
+        self.pool = Queue(maxsize=pool_size)
+        self.lock = Lock()
+        self._initialize_pool()
+
+    def _initialize_pool(self):
+        for _ in range(self.pool_size):
+            conn = sqlite3.connect(self.db_file_path)
+            self.pool.put(conn)
+
+    def get_connection(self) -> sqlite3.Connection:
+        with self.lock:
+            return self.pool.get()
+
+    def release_connection(self, conn: sqlite3.Connection):
+        with self.lock:
+            self.pool.put(conn)
+
+    def close_all_connections(self):
+        while not self.pool.empty():
+            conn = self.pool.get()
+            conn.close()
+
+# Initialize connection pool
+_db_file_path = get_db_path()
+connection_pool = ConnectionPool(_db_file_path)
 
 def get_db_path(db_file_name: str = "ripper.db") -> str:
     """
@@ -97,6 +129,10 @@ def create_table(db_file_path: str) -> None:
                             last_modified TEXT NOT NULL
                         );"""
             )
+            # Add indexes on frequently queried columns
+            c.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_transactions_description ON transactions (description);")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions (category);")
             conn.commit()
         except Error as e:
             log.error(f"Error creating tables: {e}")
@@ -130,6 +166,38 @@ def insert_transaction(transaction: Dict[str, Any], db_file_path: Optional[str] 
             return True
         except Error as e:
             log.error(f"Error inserting transaction: {e}")
+            return False
+        finally:
+            conn.close()
+    return False
+
+
+def insert_transactions(transactions: List[Dict[str, Any]], db_file_path: Optional[str] = None) -> bool:
+    """
+    Insert multiple transactions into the database in a single transaction.
+
+    Args:
+        transactions: List of dictionaries containing transaction data with keys: date, description, amount, category
+        db_file_path: Path to the database file. If None, uses default path.
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if db_file_path is None:
+        db_file_path = get_db_path()
+    conn = create_connection(db_file_path)
+    if conn is not None:
+        try:
+            c = conn.cursor()
+            c.executemany(
+                """INSERT INTO transactions (date, description, amount, category)
+                         VALUES (?, ?, ?, ?)""",
+                [(t["date"], t["description"], t["amount"], t["category"]) for t in transactions],
+            )
+            conn.commit()
+            return True
+        except Error as e:
+            log.error(f"Error inserting transactions: {e}")
             return False
         finally:
             conn.close()
