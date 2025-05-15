@@ -1,0 +1,5 @@
+[flake8]
+extend-ignore = E203
+extend-exclude = .git, __pycache__, concept/
+max-complexity = 10
+max-line-length = 120

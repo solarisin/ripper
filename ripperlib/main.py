@@ -2,46 +2,69 @@ import importlib.metadata
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 import toml
 from PySide6.QtWidgets import QApplication
 
 from rippergui.mainview import MainView
 from ripperlib.auth import AuthManager
-from ripperlib.sheets_backend import list_sheets
 
+# Get the project root path
 project_path = Path(__file__).parent.parent.resolve()
 
+# Configure logger
+log = logging.getLogger("ripper:main")
 
-def get_version():
+
+def get_version() -> str:
+    """
+    Get the current version of the application.
+
+    First tries to get the version from the installed package metadata.
+    If that fails, reads it from the pyproject.toml file.
+
+    Returns:
+        The version string
+    """
     try:
-        version = importlib.metadata.version("ProjectName")
+        # Try to get version from package metadata (when installed)
+        version = importlib.metadata.version("ripper")
         return version
     except importlib.metadata.PackageNotFoundError:
-        pass
-    pyproject_toml = toml.load(str(project_path / "pyproject.toml"))
-    return pyproject_toml["project"]["version"]
+        # Fall back to reading from pyproject.toml
+        log.debug("Package not installed, reading version from pyproject.toml")
+        pyproject_toml = toml.load(str(project_path / "pyproject.toml"))
+        return pyproject_toml["project"]["version"]
 
 
-def test_service_creation():
-    drive_service = AuthManager().create_drive_service()
-    if not drive_service:
-        logging.error("No drive service")
-        return
-    logging.info("Drive service created")
+def configure_logging(level: Optional[int] = None) -> None:
+    """
+    Configure the application's logging.
 
-    sheets = list_sheets(drive_service)
+    Args:
+        level: The logging level to use. If None, uses DEBUG.
+    """
+    if level is None:
+        level = logging.DEBUG
 
-    sheets_service = AuthManager().create_sheets_service()
-    if not sheets_service:
-        logging.error("No sheets service")
-        return
-    logging.info("Sheets service created")
+    # Configure root logger
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    log.debug(f"Logging configured with level: {logging.getLevelName(level)}")
 
 
-def main_gui():
-    logging.info(f"Starting ripper v{get_version()}")
-    # test_service_creation()
+def main_gui() -> None:
+    """
+    Start the GUI application.
+
+    This is the main entry point for the GUI version of the application.
+    """
+    log.info(f"Starting ripper v{get_version()}")
+
     app = QApplication(sys.argv)
     main_view = MainView()
     AuthManager().check_stored_credentials()
@@ -50,6 +73,5 @@ def main_gui():
 
 
 if __name__ == "__main__":
-    # TODO add logging levels to configuration
-    logging.basicConfig(level=logging.DEBUG)
+    configure_logging()
     main_gui()
