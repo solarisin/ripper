@@ -38,10 +38,6 @@ class ConnectionPool:
             conn = self.pool.get()
             conn.close()
 
-# Initialize connection pool
-_db_file_path = get_db_path()
-connection_pool = ConnectionPool(_db_file_path)
-
 def get_db_path(db_file_name: str = "ripper.db") -> str:
     """
     Get the absolute path for the database file.
@@ -69,6 +65,8 @@ def get_db_path(db_file_name: str = "ripper.db") -> str:
     db_path = os.path.join(app_data_dir, db_file_name)
     return db_path
 
+# Initialize connection pool
+connection_pool = ConnectionPool(get_db_path())
 
 def create_connection(db_file_path: str) -> Optional[sqlite3.Connection]:
     """
