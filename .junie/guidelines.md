@@ -4,7 +4,13 @@ This document provides guidelines and information for developing and maintaining
 
 ## Project Overview
 
-Ripper is a GUI application for extracting and analyzing data from Google Sheets. It uses PySide6 (Qt for Python) for the UI and Google API for authentication and data access.
+Ripper is a GUI application for extracting and analyzing data from Google Sheets. It uses PySide6 (Qt for Python) for 
+the UI and Google API for authentication and data access.
+
+### Target Use Cases
+- Extract bank transaction data from a Tiller Google Sheet that is updated regularly with new transaction information.
+- This data is synchronized to a local database upon user request.
+- The local data can then be visualized using custom tables, graphs, charts and other methods.
 
 ## Build/Configuration Instructions
 
