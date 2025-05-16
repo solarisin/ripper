@@ -16,6 +16,10 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QFrame,
     QSplitter,
+    QGroupBox,
+    QFormLayout,
+    QLineEdit,
+    QCheckBox,
 )
 from googleapiclient.errors import HttpError
 
@@ -248,6 +252,8 @@ class SheetsSelectionDialog(QDialog):
 
         self.selected_sheet: Optional[Dict[str, Any]] = None
         self.sheets_list: List[Dict[str, Any]] = []
+        self.sheet_name: str = "Sheet1"  # Default sheet name
+        self.sheet_range: Optional[str] = None  # Default to None (entire table)
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -285,7 +291,33 @@ class SheetsSelectionDialog(QDialog):
         self.details_content = QLabel("Select a sheet to view details")
         self.details_content.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.details_content.setWordWrap(True)
+        self.details_text = ""
         details_layout.addWidget(self.details_content)
+
+        # Advanced Options section (collapsible)
+        self.advanced_options_checkbox = QCheckBox("Advanced Options")
+        self.advanced_options_checkbox.setChecked(False)  # Hidden by default
+        details_layout.addWidget(self.advanced_options_checkbox)
+
+        # Advanced Options group box
+        self.advanced_options_group = QGroupBox()
+        self.advanced_options_group.setVisible(False)  # Hidden by default
+        advanced_options_layout = QFormLayout(self.advanced_options_group)
+
+        # Sheet name input
+        self.sheet_name_input = QLineEdit(self.sheet_name)  # Default to Sheet1
+        self.sheet_name_input.setPlaceholderText("Required - Default: Sheet1")
+        advanced_options_layout.addRow("Sheet Name:", self.sheet_name_input)
+
+        # Sheet range input
+        self.sheet_range_input = QLineEdit()
+        self.sheet_range_input.setPlaceholderText("Optional - e.g., A1:Z100")
+        advanced_options_layout.addRow("Sheet Range:", self.sheet_range_input)
+
+        details_layout.addWidget(self.advanced_options_group)
+
+        # Connect checkbox to toggle advanced options visibility
+        self.advanced_options_checkbox.toggled.connect(self.toggle_advanced_options)
 
         # Add widgets to splitter
         splitter.addWidget(thumbnails_widget)
@@ -297,7 +329,7 @@ class SheetsSelectionDialog(QDialog):
         # Buttons
         buttons_layout = QHBoxLayout()
 
-        self.select_button = QPushButton("Print Sheet Info")
+        self.select_button = QPushButton("Select Sheet")
         self.select_button.setEnabled(False)
         self.select_button.clicked.connect(self.print_sheet_info)
 
@@ -446,34 +478,65 @@ class SheetsSelectionDialog(QDialog):
         if "webViewLink" in sheet_info:
             details += f"<b>Web Link:</b> <a href='{sheet_info['webViewLink']}'>{sheet_info['webViewLink']}</a><br>"
 
-        self.details_content.setText(details)
+        # Update sheet name in advanced options if not already modified by user
+        if self.sheet_name_input.text() == "Sheet1" and not self.sheet_name_input.isModified():
+            self.sheet_name_input.setText("Sheet1")
+            self.sheet_name_input.setModified(False)  # Reset modified state
+        self.details_text = details
+        self.details_content.setText(self.details_text)
 
     def print_sheet_info(self) -> None:
         """
-        Print information about the selected sheet to the log.
+        Process the selected sheet with advanced options.
 
-        Logs details about the selected sheet and shows a confirmation message
+        Gets the sheet name and range from the advanced options,
+        logs details about the selected sheet, and shows a confirmation message
         in the details panel.
         """
         if not self.selected_sheet:
             return
 
-        log.info("Selected Google Sheet Information:")
-        log.info(f"Name: {self.selected_sheet.get('name', 'Unknown')}")
-        log.info(f"ID: {self.selected_sheet.get('id', 'Unknown')}")
-        log.info("To use this sheet in your code, you need:")
-        log.info(f"  - Spreadsheet ID: {self.selected_sheet.get('id', 'Unknown')}")
-        log.info("  - Range: 'Sheet1!A1:Z1000' (adjust according to your needs)")
-        log.info("Example code:")
-        log.info(f"  spreadsheet_id = '{self.selected_sheet.get('id', 'Unknown')}'")
-        log.info("  range_name = 'Sheet1!A1:Z1000'")
-        log.info("  service = AuthManager().create_sheets_service()")
-        log.info("  data = read_data_from_spreadsheet(service, spreadsheet_id, range_name)")
+        # Get sheet name and range from advanced options
+        sheet_name = self.sheet_name_input.text().strip()
+        sheet_range = self.sheet_range_input.text().strip()
 
-        # Show confirmation to user
-        self.details_content.setText(
-            self.details_content.text() + "<br><br><b>Sheet information has been printed to the log.</b>"
-        )
+        # Validate sheet name (required)
+        if not sheet_name:
+            self.show_error("Sheet name is required. Please enter a sheet name in the Advanced Options.")
+            self.advanced_options_checkbox.setChecked(True)  # Show advanced options
+            self.sheet_name_input.setFocus()
+            return
+
+        # Store the values for later use
+        self.sheet_name = sheet_name
+        self.sheet_range = sheet_range if sheet_range else None
+
+        # Construct the range string
+        range_string = f"{sheet_name}"
+        if sheet_range:
+            range_string += f"!{sheet_range}"
+
+        log.info("Selected Google Sheet Information:")
+        log.info(f"Spreadsheet Name: {self.selected_sheet.get('name', 'Unknown')}")
+        log.info(f"ID: {self.selected_sheet.get('id', 'Unknown')}")
+        log.info(f"Worksheet Name: {sheet_name}")
+        log.info(f"Worksheet Range: {sheet_range if sheet_range else 'Entire table'}")
+
+        # Show confirmation to user with sheet name and range
+        confirmation = f"<br><br><b>Sheet information has been printed to the log.</b><br>"
+        confirmation += f"<b>Sheet Name:</b> {sheet_name}<br>"
+        confirmation += f"<b>Sheet Range:</b> {sheet_range if sheet_range else 'Entire table'}"
+        log.info(self.details_text + confirmation)
+        self.details_content.setText(self.details_text + confirmation)
+
+    def toggle_advanced_options(self, checked: bool) -> None:
+        """
+        Toggle the visibility of the advanced options section.
+
+        Args:
+            checked: Whether the checkbox is checked
+        """
+        self.advanced_options_group.setVisible(checked)
 
     def show_error(self, message: str) -> None:
         """
