@@ -1,14 +1,35 @@
 import logging
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterator, List, Optional, Set, Union, cast
 
-from PySide6.QtCore import (QAbstractTableModel, QDate, QModelIndex, QObject,
-                            QRegularExpression, QSortFilterProxyModel, Qt,
-                            Signal, Slot)
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox,
-                               QDoubleSpinBox, QGridLayout, QHBoxLayout,
-                               QHeaderView, QLabel, QLineEdit, QPushButton,
-                               QTableView, QVBoxLayout, QWidget)
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QDate,
+    QModelIndex,
+    QObject,
+    QPersistentModelIndex,
+    QRegularExpression,
+    QSortFilterProxyModel,
+    Qt,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import QStandardItemModel
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
 
 # Configure module logger
 log = logging.getLogger("ripper:table_view")
@@ -106,7 +127,7 @@ class TransactionModel(QAbstractTableModel):
     for different data types (dates, decimal amounts, text) and alignment.
     """
 
-    def __init__(self, data: Optional[List[Dict[str, Any]]] = None):
+    def __init__(self, data: Optional[List[Dict[str, Any]]] = None) -> None:
         """
         Initialize the transaction model.
 
@@ -114,12 +135,10 @@ class TransactionModel(QAbstractTableModel):
             data: List of dictionaries containing transaction data
         """
         super().__init__()
-        self._data: List[Dict[str, Any]] = data or []
-        # Define column order and names. Also used as keys for data dictionaries.
-        self.column_keys: List[str] = ["ID", "Date", "Description", "Category", "Amount", "Account"]
+        self._data: List[Dict[str, Any]] = data if data is not None else []
         self._headers: List[str] = ["ID", "Date", "Description", "Category", "Amount", "Account"]
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def rowCount(self, parent: Union[QModelIndex, QPersistentModelIndex] = QModelIndex()) -> int:
         """
         Return the number of rows in the model.
 
@@ -129,9 +148,11 @@ class TransactionModel(QAbstractTableModel):
         Returns:
             Number of rows (transactions)
         """
+        if parent.isValid():
+            return 0
         return len(self._data)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    def columnCount(self, parent: Union[QModelIndex, QPersistentModelIndex] = QModelIndex()) -> int:
         """
         Return the number of columns in the model.
 
@@ -141,9 +162,11 @@ class TransactionModel(QAbstractTableModel):
         Returns:
             Number of columns
         """
+        if parent.isValid():
+            return 0
         return len(self._headers)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+    def data(self, index: Union[QModelIndex, QPersistentModelIndex], role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         """
         Return data for the given index and role.
 
@@ -157,27 +180,29 @@ class TransactionModel(QAbstractTableModel):
         if not index.isValid():
             return None
 
-        row = index.row()
-        col_name = self._headers[index.column()]
-        item = self._data[row]
-
         if role == Qt.ItemDataRole.DisplayRole:
-            value = item.get(col_name)
-            if isinstance(value, QDate):
-                return value.toString("yyyy-MM-dd")
-            if isinstance(value, (float, Decimal)):
-                try:
-                    return f"{Decimal(value):.2f}"
-                except InvalidOperation:
-                    return str(value)  # Fallback if not a valid decimal
-            return str(value)
-        elif role == Qt.ItemDataRole.EditRole:
-            return item.get(col_name)
+            row = index.row()
+            col = index.column()
+            if 0 <= row < len(self._data) and 0 <= col < len(self._headers):
+                header = self._headers[col]
+                value = self._data[row].get(header)
+                if isinstance(value, QDate):
+                    return value.toString("yyyy-MM-dd")
+                if isinstance(value, (float, Decimal)):
+                    try:
+                        return f"{Decimal(value):.2f}"
+                    except:
+                        return str(value)
+                return str(value)
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            value = item.get(col_name)
-            if isinstance(value, (int, float, Decimal)):
-                return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            col = index.column()
+            if 0 <= col < len(self._headers):
+                header = self._headers[col]
+                value = self._data[index.row()].get(header)
+                if isinstance(value, (int, float, Decimal)):
+                    return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+
         return None
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
@@ -192,8 +217,8 @@ class TransactionModel(QAbstractTableModel):
         Returns:
             Header data, or None if not available
         """
-        if role == Qt.ItemDataRole.DisplayRole:
-            if orientation == Qt.Orientation.Horizontal:
+        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
+            if 0 <= section < len(self._headers):
                 return self._headers[section]
         return None
 
@@ -233,6 +258,12 @@ class TransactionModel(QAbstractTableModel):
         self._data = data
         self.endResetModel()
 
+    def get_headers(self) -> List[str]:
+        return self._headers
+
+    def get_data(self) -> List[Dict[str, Any]]:
+        return self._data
+
 
 class TransactionSortFilterProxyModel(QSortFilterProxyModel):
     """
@@ -242,7 +273,7 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
     including text search, range filtering for amounts, and exact matching for accounts.
     """
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, parent: Optional[QObject] = None) -> None:
         """
         Initialize the proxy model.
 
@@ -289,7 +320,7 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
         return True  # Filters were cleared
 
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+    def filterAcceptsRow(self, source_row: int, source_parent: Union[QModelIndex, QPersistentModelIndex]) -> bool:
         """
         Check if a row should be included in the filtered view.
 
@@ -303,11 +334,14 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
         if not self._filters:
             return True
 
-        model = self.sourceModel()
+        source_model = cast(TransactionModel, self.sourceModel())
+        if not isinstance(source_model, TransactionModel):
+            return False
+
         for column_index, filter_info in self._filters.items():
             filter_value = filter_info["value"]
             header_name = filter_info["header"]  # Get header name from stored info
-            if not self._check_row_against_filter(model, source_row, column_index, filter_value, header_name):
+            if not self._check_row_against_filter(source_model, source_row, column_index, filter_value, header_name):
                 return False
         return True
 
@@ -352,7 +386,9 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
                 return False
         return True
 
-    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+    def lessThan(
+        self, left: Union[QModelIndex, QPersistentModelIndex], right: Union[QModelIndex, QPersistentModelIndex]
+    ) -> bool:
         """
         Compare two items for sorting.
 

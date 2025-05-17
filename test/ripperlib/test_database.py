@@ -3,11 +3,21 @@ import unittest
 from sqlite3 import Error
 from unittest.mock import MagicMock, patch
 
-from ripperlib.database import (ConnectionPool, create_connection,
-                                create_table, get_db_path, get_thumbnail,
-                                init_database, insert_data_source,
-                                insert_transaction, insert_transactions,
-                                retrieve_transactions, store_thumbnail)
+from ripperlib.database import (
+    ConnectionPool,
+    create_connection,
+    create_table,
+    get_db_path,
+    get_thumbnail,
+    init_database,
+    insert_data_source,
+    insert_transaction,
+    insert_transactions,
+    retrieve_transactions,
+    store_thumbnail,
+)
+
+TEST_DB_PATH = "test/test.db"
 
 
 class TestConnectionPool(unittest.TestCase):
@@ -18,16 +28,16 @@ class TestConnectionPool(unittest.TestCase):
         """Test that the connection pool is initialized with the correct number of connections."""
         # Create a connection pool with a specific size
         pool_size = 3
-        pool = ConnectionPool("test.db", pool_size)
+        pool = ConnectionPool(TEST_DB_PATH, pool_size)
         self.assertEqual(pool.pool_size, pool_size)
-        self.assertEqual(pool.db_file_path, "test.db")
+        self.assertEqual(pool.db_file_path, TEST_DB_PATH)
 
         # Check that connect was called the correct number of times
         self.assertEqual(mock_connect.call_count, pool_size)
 
         # Check that all calls were with the correct database file
         for call_args in mock_connect.call_args_list:
-            self.assertEqual(call_args[0][0], "test.db")
+            self.assertEqual(call_args[0][0], TEST_DB_PATH)
 
     @patch("sqlite3.connect")
     def test_get_connection(self, mock_connect):
@@ -37,7 +47,7 @@ class TestConnectionPool(unittest.TestCase):
         mock_connect.return_value = mock_conn
 
         # Create a connection pool
-        pool = ConnectionPool("test.db")
+        pool = ConnectionPool(TEST_DB_PATH)
 
         # Get a connection
         conn = pool.get_connection()
@@ -53,7 +63,7 @@ class TestConnectionPool(unittest.TestCase):
         mock_connect.return_value = mock_conn
 
         # Create a connection pool
-        pool = ConnectionPool("test.db")
+        pool = ConnectionPool(TEST_DB_PATH)
 
         # Get a connection
         conn = pool.get_connection()
@@ -73,7 +83,7 @@ class TestConnectionPool(unittest.TestCase):
         mock_connect.side_effect = mock_conns
 
         # Create a connection pool
-        pool = ConnectionPool("test.db", 3)
+        pool = ConnectionPool(TEST_DB_PATH, 3)
 
         # Close all connections
         pool.close_all_connections()
@@ -96,10 +106,10 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_exists.return_value = True
 
         # Call get_db_path
-        result = get_db_path("test.db")
+        result = get_db_path(TEST_DB_PATH)
 
         # Check that the result is correct
-        expected_path = os.path.join("/app_data", "ripper", "test.db")
+        expected_path = os.path.join("/app_data", "ripper", TEST_DB_PATH)
         self.assertEqual(result, expected_path)
 
         # Check that makedirs was not called
@@ -115,10 +125,10 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_exists.return_value = False
 
         # Call get_db_path
-        result = get_db_path("test.db")
+        result = get_db_path(TEST_DB_PATH)
 
         # Check that the result is correct
-        expected_path = os.path.join("/app_data", "ripper", "test.db")
+        expected_path = os.path.join("/app_data", "ripper", TEST_DB_PATH)
         self.assertEqual(result, expected_path)
 
         # Check that makedirs was called with the correct path
@@ -137,10 +147,10 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_getcwd.return_value = "/current_dir"
 
         # Call get_db_path
-        result = get_db_path("test.db")
+        result = get_db_path(TEST_DB_PATH)
 
         # Check that the result is correct
-        expected_path = os.path.join("/current_dir", "test.db")
+        expected_path = os.path.join("/current_dir", TEST_DB_PATH)
         self.assertEqual(result, expected_path)
 
     @patch("sqlite3.connect")
@@ -151,13 +161,13 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_connect.return_value = mock_conn
 
         # Call create_connection
-        result = create_connection("test.db")
+        result = create_connection(TEST_DB_PATH)
 
         # Check that the result is the mock connection
         self.assertEqual(result, mock_conn)
 
         # Check that connect was called with the correct path
-        mock_connect.assert_called_once_with("test.db")
+        mock_connect.assert_called_once_with(TEST_DB_PATH)
 
     @patch("sqlite3.connect")
     def test_create_connection_error(self, mock_connect):
@@ -166,7 +176,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_connect.side_effect = Error("Connection error")
 
         # Call create_connection
-        result = create_connection("test.db")
+        result = create_connection(TEST_DB_PATH)
 
         # Check that the result is None
         self.assertIsNone(result)
@@ -181,10 +191,10 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_create_connection.return_value = mock_conn
 
         # Call create_table
-        create_table("test.db")
+        create_table(TEST_DB_PATH)
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
         # Check that cursor was called
         mock_conn.cursor.assert_called_once()
@@ -205,10 +215,10 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_create_connection.return_value = None
 
         # Call create_table
-        create_table("test.db")
+        create_table(TEST_DB_PATH)
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
     @patch("ripperlib.database.create_connection")
     def test_create_table_error(self, mock_create_connection):
@@ -221,7 +231,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_create_connection.return_value = mock_conn
 
         # Call create_table
-        create_table("test.db")
+        create_table(TEST_DB_PATH)
 
         # Check that close was called
         mock_conn.close.assert_called_once()
@@ -231,7 +241,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_insert_transaction_success(self, mock_create_connection, mock_get_db_path):
         """Test that insert_transaction inserts a transaction successfully."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -250,7 +260,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_get_db_path.assert_called_once()
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
         # Check that cursor was called
         mock_conn.cursor.assert_called_once()
@@ -273,7 +283,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_insert_transaction_no_connection(self, mock_create_connection, mock_get_db_path):
         """Test that insert_transaction returns False when no connection can be created."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_create_connection.return_value = None
 
         # Create a test transaction
@@ -290,7 +300,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_insert_transaction_error(self, mock_create_connection, mock_get_db_path):
         """Test that insert_transaction handles errors during insertion."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_cursor.execute.side_effect = Error("Insertion error")
@@ -314,7 +324,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_insert_transactions_success(self, mock_create_connection, mock_get_db_path):
         """Test that insert_transactions inserts multiple transactions successfully."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -336,7 +346,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_get_db_path.assert_called_once()
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
         # Check that cursor was called
         mock_conn.cursor.assert_called_once()
@@ -359,7 +369,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_retrieve_transactions_success(self, mock_create_connection, mock_get_db_path):
         """Test that retrieve_transactions retrieves transactions successfully."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_cursor.fetchall.return_value = [
@@ -383,7 +393,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_get_db_path.assert_called_once()
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
         # Check that cursor was called
         mock_conn.cursor.assert_called_once()
@@ -402,7 +412,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_retrieve_transactions_no_connection(self, mock_create_connection, mock_get_db_path):
         """Test that retrieve_transactions returns an empty list when no connection can be created."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_create_connection.return_value = None
 
         # Call retrieve_transactions
@@ -416,7 +426,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_retrieve_transactions_error(self, mock_create_connection, mock_get_db_path):
         """Test that retrieve_transactions handles errors during retrieval."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_cursor.execute.side_effect = Error("Retrieval error")
@@ -437,7 +447,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_insert_data_source_success(self, mock_create_connection, mock_get_db_path):
         """Test that insert_data_source inserts a data source successfully."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor
@@ -453,7 +463,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_get_db_path.assert_called_once()
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
         # Check that cursor was called
         mock_conn.cursor.assert_called_once()
@@ -476,7 +486,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_store_thumbnail_insert_success(self, mock_create_connection, mock_get_db_path):
         """Test that store_thumbnail inserts a new thumbnail successfully."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         # No existing thumbnail
@@ -494,7 +504,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_get_db_path.assert_called_once()
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
         # Check that cursor was called
         self.assertEqual(mock_conn.cursor.call_count, 1)
@@ -520,7 +530,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_store_thumbnail_update_success(self, mock_create_connection, mock_get_db_path):
         """Test that store_thumbnail updates an existing thumbnail successfully."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         # Existing thumbnail
@@ -538,7 +548,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_get_db_path.assert_called_once()
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
         # Check that cursor was called
         self.assertEqual(mock_conn.cursor.call_count, 1)
@@ -565,7 +575,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_get_thumbnail_success(self, mock_create_connection, mock_get_db_path):
         """Test that get_thumbnail retrieves a thumbnail successfully."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = (b"thumbnail_data", "2023-01-01")
@@ -583,7 +593,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_get_db_path.assert_called_once()
 
         # Check that create_connection was called with the correct path
-        mock_create_connection.assert_called_once_with("test.db")
+        mock_create_connection.assert_called_once_with(TEST_DB_PATH)
 
         # Check that cursor was called
         mock_conn.cursor.assert_called_once()
@@ -604,7 +614,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_get_thumbnail_not_found(self, mock_create_connection, mock_get_db_path):
         """Test that get_thumbnail returns None when the thumbnail is not found."""
         # Set up the mocks
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
@@ -622,7 +632,7 @@ class TestDatabaseFunctions(unittest.TestCase):
     def test_init_database(self, mock_get_db_path, mock_create_table):
         """Test that init_database calls create_table with the correct path."""
         # Set up the mock
-        mock_get_db_path.return_value = "test.db"
+        mock_get_db_path.return_value = TEST_DB_PATH
 
         # Call init_database
         init_database()
@@ -631,4 +641,4 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_get_db_path.assert_called_once()
 
         # Check that create_table was called with the correct path
-        mock_create_table.assert_called_once_with("test.db")
+        mock_create_table.assert_called_once_with(TEST_DB_PATH)

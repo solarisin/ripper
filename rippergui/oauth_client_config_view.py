@@ -1,11 +1,27 @@
+import json
+import logging
 import os
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QFileDialog, QFormLayout, QGroupBox,
-                               QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QRadioButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QVBoxLayout,
+    QWidget,
+)
+
 from ripperlib.auth import AuthManager
+
+log = logging.getLogger("ripper:oauth_client_config_view")
 
 
 class AuthView(QWidget):
@@ -17,7 +33,8 @@ class AuthView(QWidget):
     # Signal emitted when authentication is successful
     oauth_client_registered = Signal()  # Signal emitted when OAuth client is registered
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize the auth view."""
         super().__init__(parent)
         self.setup_ui()
         self.load_credentials()
@@ -29,7 +46,7 @@ class AuthView(QWidget):
         if client_id and client_secret:
             AuthManager().store_oauth_client_credentials(client_id, client_secret)
 
-    def load_credentials(self):
+    def load_credentials(self) -> None:
         """Load client ID and secret from AuthManager and populate fields"""
         client_id, client_secret = AuthManager().load_oauth_client_credentials()
         self.client_id_edit.setText(client_id or "")
@@ -168,3 +185,7 @@ class AuthView(QWidget):
 
             # Emit signal indicating successful registration
             self.oauth_client_registered.emit()
+
+    def _get_client_secret_path(self) -> str:
+        """Get the path to the client secret file."""
+        return os.path.join(os.environ.get("APPDATA", ""), "ripper", "client_secret.json")

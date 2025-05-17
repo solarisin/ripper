@@ -2,40 +2,50 @@ import logging
 import os
 import sqlite3
 from queue import Queue
-from sqlite3 import Error
+from sqlite3 import Connection, Cursor, Error, Row, connect
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypeVar, Union, cast, overload
 
 # Create a logger for the database module
 log = logging.getLogger("ripper:database")
 
 # Flag to track if database path has been logged
-_db_path_logged = False
+_db_path_logged: bool = False
+
+pool: Optional[Connection] = None
+
+T = TypeVar("T")
+
+# Type aliases for better readability
+QueryParams = Tuple[Any, ...]
+RowDict = Dict[str, Any]
+TransactionData = Dict[str, Union[str, float]]
 
 
 # Connection pool
 class ConnectionPool:
-    def __init__(self, db_file_path: str, pool_size: int = 5):
-        self.db_file_path = db_file_path
-        self.pool_size = pool_size
-        self.pool = Queue(maxsize=pool_size)
-        self.lock = Lock()
+    def __init__(self, db_file_path: str, pool_size: int = 5) -> None:
+        self.db_file_path: str = db_file_path
+        self.pool_size: int = pool_size
+        self.pool: Queue[Connection] = Queue(maxsize=pool_size)
+        self.lock: Lock = Lock()
         self._initialize_pool()
 
-    def _initialize_pool(self):
+    def _initialize_pool(self) -> None:
         for _ in range(self.pool_size):
             conn = sqlite3.connect(self.db_file_path)
+            conn.row_factory = Row
             self.pool.put(conn)
 
-    def get_connection(self) -> sqlite3.Connection:
+    def get_connection(self) -> Connection:
         with self.lock:
             return self.pool.get()
 
-    def release_connection(self, conn: sqlite3.Connection):
+    def release_connection(self, conn: Connection) -> None:
         with self.lock:
             self.pool.put(conn)
 
-    def close_all_connections(self):
+    def close_all_connections(self) -> None:
         while not self.pool.empty():
             conn = self.pool.get()
             conn.close()
@@ -73,7 +83,7 @@ def get_db_path(db_file_name: str = "ripper.db") -> str:
 connection_pool = ConnectionPool(get_db_path())
 
 
-def create_connection(db_file_path: str) -> Optional[sqlite3.Connection]:
+def create_connection(db_file_path: str) -> Optional[Connection]:
     """
     Create a database connection to the SQLite database specified by db_file_path.
 
@@ -84,9 +94,11 @@ def create_connection(db_file_path: str) -> Optional[sqlite3.Connection]:
         Connection object or None if connection fails
     """
     global _db_path_logged
-    conn = None
+    conn: Optional[Connection] = None
     try:
-        conn = sqlite3.connect(db_file_path)
+        conn = connect(db_file_path)
+        if conn is not None:
+            conn.row_factory = Row
         # Log the database path only on the first successful connection
         if not _db_path_logged:
             log.debug(f"Database path: {db_file_path}")
@@ -94,6 +106,27 @@ def create_connection(db_file_path: str) -> Optional[sqlite3.Connection]:
     except Error as e:
         log.error(f"Database connection error: {e}")
     return conn
+
+
+def execute_query(conn: Connection, query: str, params: Tuple[Any, ...] = ()) -> Optional[Cursor]:
+    """
+    Execute a SQL query with parameters.
+
+    Args:
+        conn: Database connection
+        query: SQL query string
+        params: Query parameters
+
+    Returns:
+        Cursor object or None if execution fails
+    """
+    try:
+        cursor: Cursor = conn.cursor()
+        cursor.execute(query, params)
+        return cursor
+    except Error as e:
+        log.error(f"Error executing query: {e}")
+        return None
 
 
 def create_table(db_file_path: str) -> None:
@@ -143,7 +176,7 @@ def create_table(db_file_path: str) -> None:
             conn.close()
 
 
-def insert_transaction(transaction: Dict[str, Any], db_file_path: Optional[str] = None) -> bool:
+def insert_transaction(transaction: TransactionData, db_file_path: Optional[str] = None) -> bool:
     """
     Insert a transaction into the database.
 
@@ -159,14 +192,16 @@ def insert_transaction(transaction: Dict[str, Any], db_file_path: Optional[str] 
     conn = create_connection(db_file_path)
     if conn is not None:
         try:
-            c = conn.cursor()
-            c.execute(
+            cursor = execute_query(
+                conn,
                 """INSERT INTO transactions (date, description, amount, category)
                          VALUES (?, ?, ?, ?)""",
                 (transaction["date"], transaction["description"], transaction["amount"], transaction["category"]),
             )
-            conn.commit()
-            return True
+            if cursor is not None:
+                conn.commit()
+                return True
+            return False
         except Error as e:
             log.error(f"Error inserting transaction: {e}")
             return False
@@ -175,7 +210,7 @@ def insert_transaction(transaction: Dict[str, Any], db_file_path: Optional[str] 
     return False
 
 
-def insert_transactions(transactions: List[Dict[str, Any]], db_file_path: Optional[str] = None) -> bool:
+def insert_transactions(transactions: List[TransactionData], db_file_path: Optional[str] = None) -> bool:
     """
     Insert multiple transactions into the database in a single transaction.
 
@@ -207,7 +242,7 @@ def insert_transactions(transactions: List[Dict[str, Any]], db_file_path: Option
     return False
 
 
-def retrieve_transactions(db_file_path: Optional[str] = None) -> List[Dict[str, Any]]:
+def retrieve_transactions(db_file_path: Optional[str] = None) -> List[TransactionData]:
     """
     Retrieve all transactions from the database.
 
@@ -220,14 +255,16 @@ def retrieve_transactions(db_file_path: Optional[str] = None) -> List[Dict[str, 
     if db_file_path is None:
         db_file_path = get_db_path()
     conn = create_connection(db_file_path)
-    transactions = []
+    transactions: List[TransactionData] = []
     if conn is not None:
         try:
             c = conn.cursor()
             c.execute("SELECT * FROM transactions")
             rows = c.fetchall()
             for row in rows:
-                transaction = {"date": row[1], "description": row[2], "amount": row[3], "category": row[4]}
+                transaction = cast(
+                    TransactionData, {"date": row[1], "description": row[2], "amount": row[3], "category": row[4]}
+                )
                 transactions.append(transaction)
         except Error as e:
             log.error(f"Error retrieving transactions: {e}")
@@ -351,10 +388,40 @@ def get_thumbnail(sheet_id: str, db_file_path: Optional[str] = None) -> Optional
     return None
 
 
-def init_database():
+def init_database() -> None:
     """Initialize the database by creating necessary tables."""
     create_table(get_db_path())
 
 
 # Initialize database when module is imported
 init_database()
+
+
+def init_db() -> None:
+    """Initialize the database connection."""
+    global pool
+    pool = connect(":memory:", check_same_thread=False)
+    if pool:
+        pool.row_factory = Row
+
+
+def get_db() -> Connection:
+    """Get the database connection."""
+    if pool is None:
+        init_db()
+    if pool is None:
+        raise RuntimeError("Failed to initialize database connection")
+    return pool
+
+
+def close_db() -> None:
+    """Close the database connection."""
+    global pool
+    if pool is not None:
+        pool.close()
+        pool = None
+
+
+def _initialize_database() -> None:
+    """Initialize the database schema."""
+    # ... existing code ...

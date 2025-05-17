@@ -33,6 +33,15 @@ flake8 = "^7.2.0"
 flake8-pyproject = "^1.2.3"
 black = "^25.1.0"
 isort = "^6.0.1"
+types-requests = "^2.32.0.20250515"
+mypy = "^1.15.0"
+monkeytype = "^23.3.0"
+beartype = "^0.20.2"
+typing-extensions = "^4.13.2"
+types-toml = "^0.10.8.20240310"
+google-auth-stubs = "^0.3.0"
+google-api-python-client-stubs = "^1.29.0"
+types-oauthlib = "^3.2.0.20250516"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
@@ -53,3 +62,21 @@ extend-ignore = ["E203"]
 extend-exclude = [".git",  "__pycache__", "concept/", ".venv/", "res/"]
 max-complexity = 10
 max-line-length = 120
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+exclude = [
+    'test/',  # Temporarily exclude tests until we add type hints to main code
+]

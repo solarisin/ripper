@@ -7,3 +7,6 @@ venv/
 .coverage
 coverage.xml
 **/.pytest_cache/
+monkeytype.sqlite3
+.mypy_cache/
+test/test.db

@@ -1,14 +1,18 @@
 import enum
 import json
 import logging
+import os
 from json import JSONDecodeError
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Type, Union, cast
+from unittest.mock import MagicMock
 
 import keyring
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import Resource
+from googleapiclient.discovery import Resource as GoogleApiResource
 from googleapiclient.discovery import build
 from keyring.errors import PasswordDeleteError
 from PySide6.QtCore import QObject, Signal
@@ -23,6 +27,24 @@ SCOPES = [
 ]
 
 log = logging.getLogger("ripper:auth")
+
+
+# Protocol classes for Google API services
+class SheetsService(Protocol):
+    def spreadsheets(self) -> Any: ...
+    def values(self) -> Any: ...
+    def get(self, spreadsheetId: str) -> Any: ...
+
+
+class DriveService(Protocol):
+    def files(self) -> Any: ...
+    def get(self, fileId: str) -> Any: ...
+    def list(self, **kwargs: Any) -> Any: ...
+
+
+class UserInfoService(Protocol):
+    def userinfo(self) -> Any: ...
+    def get(self) -> Any: ...
 
 
 class AuthState(enum.Enum):
@@ -104,7 +126,7 @@ class TokenStore:
     USERINFO_KEY = "ripper-app-auth-userinfo"
     DEFAULT_TOKEN_USER = "default-user"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._current_token: Optional[str] = None
         self._current_userinfo: Optional[str] = None
         self._token_user_id: str = self.DEFAULT_TOKEN_USER  # TODO: implement multi-user support
@@ -236,29 +258,82 @@ class AuthManager(QObject):
 
     authStateChanged = Signal(AuthInfo)  # Signal emitted when auth state changes
 
-    _instance = None
+    _initialized: bool = False
+    _instance: Optional["AuthManager"] = None
 
-    def __new__(cls):
+    def __new__(cls: Type["AuthManager"]) -> "AuthManager":
+        """Create or return the singleton instance."""
         if cls._instance is None:
             cls._instance = super(AuthManager, cls).__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        """Initialize the auth manager."""
         if self._initialized:
             return
         super().__init__(parent)
         self._current_auth_info = AuthInfo(AuthState.NO_CLIENT)
         self._initialized = True
-        self._credentials = None
+        self._credentials: Optional[Credentials] = None
         self._token_store = TokenStore()
+        self._sheets_service: Optional[SheetsService] = None
+        self._drive_service: Optional[DriveService] = None
+        self._oauth2_service: Optional[UserInfoService] = None
+        self._user_email: str = ""
+        self._load_credentials()
 
-    def has_oauth_client_credentials(self):
+    def _load_credentials(self) -> None:
+        """Load credentials from the token file."""
+        token_path = self._get_token_path()
+        if os.path.exists(token_path):
+            try:
+                creds = cast(Credentials, Credentials.from_authorized_user_file(token_path, SCOPES))
+                if creds and not creds.expired:
+                    self._credentials = creds
+                    self._update_user_info()
+            except Exception as e:
+                log.error(f"Error loading credentials: {e}")
+                self._credentials = None
+
+    def _save_credentials(self) -> None:
+        """Save credentials to the token file."""
+        if self._credentials:
+            token_path = self._get_token_path()
+            token_dir = os.path.dirname(token_path)
+            if not os.path.exists(token_dir):
+                os.makedirs(token_dir)
+            cred_data = json.loads(self._credentials.to_json())
+            with open(token_path, "w") as token:
+                json.dump(cred_data, token)
+
+    def _update_user_info(self) -> None:
+        """Update user information using the OAuth2 API."""
+        if not self._credentials:
+            return
+
+        try:
+            service = cast(UserInfoService, build("oauth2", "v2", credentials=self._credentials))
+            user_info = cast(Dict[str, Any], service.userinfo().get().execute())
+            self._user_email = user_info.get("email", "")
+            self.authStateChanged.emit(self.auth_info())
+        except Exception as e:
+            log.error(f"Error getting user info: {e}")
+
+    def _get_token_path(self) -> str:
+        """Get the path to the token file."""
+        return os.path.join(os.environ.get("APPDATA", ""), "ripper", "token.json")
+
+    def _get_client_secret_path(self) -> str:
+        """Get the path to the client secret file."""
+        return os.path.join(os.environ.get("APPDATA", ""), "ripper", "client_secret.json")
+
+    def has_oauth_client_credentials(self) -> bool:
         """Check if we have OAuth client credentials stored"""
         client_id, client_secret = self.load_oauth_client_credentials()
         return client_id is not None and client_secret is not None
 
-    def load_oauth_client_credentials(self):
+    def load_oauth_client_credentials(self) -> Tuple[Optional[str], Optional[str]]:
         """Load client ID and secret from keyring"""
         oauth_client_credentials = keyring.get_password(OAUTH_CLIENT_KEY, OAUTH_CLIENT_USER)
         client_id = None
@@ -270,7 +345,7 @@ class AuthManager(QObject):
             self.update_state(AuthState.NOT_LOGGED_IN, override=False)
         return client_id, client_secret
 
-    def store_oauth_client_credentials(self, client_id, client_secret):
+    def store_oauth_client_credentials(self, client_id: str, client_secret: str) -> None:
         """Store client ID and secret in keyring"""
         if not client_id or not client_secret:
             return
@@ -279,21 +354,24 @@ class AuthManager(QObject):
         keyring.set_password(OAUTH_CLIENT_KEY, OAUTH_CLIENT_USER, json.dumps(oauth_client_credentials))
 
     @staticmethod
-    def oauth_client_credentials_from_json(client_secret_json_path):
+    def oauth_client_credentials_from_json(client_secret_json_path: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract client credentials from a JSON file."""
         with open(client_secret_json_path, "r") as f:
             client_data = json.load(f)
         client_id = None
         client_secret = None
-        # Extract client ID and secret from the file
         if "installed" in client_data:
             client_id = client_data["installed"].get("client_id")
             client_secret = client_data["installed"].get("client_secret")
         return client_id, client_secret
 
-    def auth_info(self):
+    def auth_info(self) -> AuthInfo:
+        """Get the current authentication info."""
         return self._current_auth_info
 
-    def update_state(self, new_state: AuthState, user_info=None, *, override=True):
+    def update_state(
+        self, new_state: AuthState, user_info: Optional[Dict[str, Any]] = None, *, override: bool = True
+    ) -> None:
         """Update auth state and emit signal"""
         current_state = self._current_auth_info.auth_state()
         log.debug(f"Called update_state - current: {current_state} new: {new_state} override: {override}")
@@ -306,16 +384,36 @@ class AuthManager(QObject):
             self._current_auth_info = AuthInfo(new_state, user_info)
             self.authStateChanged.emit(self._current_auth_info)
 
-    def retrieve_user_info(self, cred):
-        userinfo = None
+    def retrieve_user_info(self, cred: Credentials) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve user info using the provided credentials.
+
+        Args:
+            cred: OAuth2 credentials
+
+        Returns:
+            Dictionary containing user information, or None if retrieval fails
+        """
         try:
-            user_info_service = self.create_userinfo_service(cred)
-            userinfo = user_info_service.userinfo().get().execute()
+            user_info_service = cast(UserInfoService, build("oauth2", "v2", credentials=cred))
+            if user_info_service:
+                result = cast(Dict[str, Any], user_info_service.userinfo().get().execute())
+                return result
+            return None
         except RefreshError as e:
             log.error(f"Failed to get user info: {e}")
-        return userinfo
+            return None
 
-    def refresh_token(self, expired_cred):
+    def refresh_token(self, expired_cred: Credentials) -> Optional[Credentials]:
+        """
+        Attempt to refresh expired credentials.
+
+        Args:
+            expired_cred: Expired credentials to refresh
+
+        Returns:
+            Refreshed credentials if successful, None otherwise
+        """
         if expired_cred.refresh_token:
             try:
                 expired_cred.refresh(Request())
@@ -331,22 +429,28 @@ class AuthManager(QObject):
         self._token_store.invalidate()
         return None
 
-    def attempt_load_stored_token(self):
+    def attempt_load_stored_token(self) -> Optional[Credentials]:
+        """
+        Attempt to load and validate stored token.
+
+        Returns:
+            Valid credentials if successful, None otherwise
+        """
         try:
             stored_cred = self._token_store.get_credentials()
             log.debug("Found existing token")
             if stored_cred.expired:
                 log.debug("Existing token is expired, attempting refresh")
                 stored_cred = self.refresh_token(stored_cred)
+            return stored_cred
         except ValueError as e:
             log.error(f"No token found in keyring: {e}")
-            stored_cred = None
+            return None
         except SystemError as e:
             log.error(f"Existing token is invalid, please re-authorize: {e}")
-            stored_cred = None
-        return stored_cred
+            return None
 
-    def acquire_new_credentials(self):
+    def acquire_new_credentials(self) -> Optional[Credentials]:
         """
         Start the OAuth flow to acquire a new token.
 
@@ -371,20 +475,18 @@ class AuthManager(QObject):
                 raise ValueError("OAuth client configuration is invalid.")
 
             # Start the user oauth flow using the client config and configured scopes
-            # TODO: customize prompt and success oauth messages
             flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+            creds = cast(Credentials, flow.run_local_server(port=0))
+            return creds
 
-            new_credentials = flow.run_local_server(port=0)
         except ValueError as e:
             log.error(f"OAuth flow failed with error: {e}")
             # Update auth state to NO_CLIENT
             self.update_state(AuthState.NO_CLIENT)
             return None
 
-        log.debug("New OAuth token successfully created")
-        return new_credentials
-
-    def check_stored_credentials(self):
+    def check_stored_credentials(self) -> None:
+        """Check and update state based on stored credentials."""
         log.debug("Updating state based on stored credentials")
         if self._current_auth_info.auth_state() == AuthState.NO_CLIENT:
             if not self.has_oauth_client_credentials():
@@ -404,7 +506,17 @@ class AuthManager(QObject):
         else:
             self.update_state(AuthState.NOT_LOGGED_IN)
 
-    def authorize(self, *, force=False, silent=False):
+    def authorize(self, *, force: bool = False, silent: bool = False) -> Optional[Credentials]:
+        """
+        Attempt to authorize with Google OAuth.
+
+        Args:
+            force: If True, force re-authentication even if credentials exist
+            silent: If True, suppress user interaction
+
+        Returns:
+            Credentials object if successful, None otherwise
+        """
         log.debug("Attempting to authorize")
 
         # First, check if we have previously successfully authenticated and return cached credentials if so
@@ -416,15 +528,15 @@ class AuthManager(QObject):
         # No cached credentials, attempt to load from storage unless force is true. Otherwise,
         #  re-authenticate by starting the OAuth flow.
         user_info = None
-        credentials = None
+        credentials: Optional[Credentials] = None
         if not force:
             credentials = self.attempt_load_stored_token()
         if not credentials:
             credentials = self.acquire_new_credentials()
-            user_info = self.retrieve_user_info(credentials)
-
-            # Store the new credentials token and userinfo
-            self._token_store.store(credentials.to_json(), json.dumps(user_info))
+            if credentials:
+                user_info = self.retrieve_user_info(credentials)
+                # Store the new credentials token and userinfo
+                self._token_store.store(credentials.to_json(), json.dumps(user_info) if user_info else None)
         else:
             log.debug("Previous token found and successfully authorized.")
 
@@ -437,13 +549,15 @@ class AuthManager(QObject):
         #  loaded credentials from storage and don't have user info yet.
         if user_info is None:
             user_info = self.retrieve_user_info(credentials)
-        self._credentials = credentials
+
+        # We know credentials is not None here because we checked above
+        self._credentials = cast(Credentials, credentials)
         self.update_state(AuthState.LOGGED_IN, user_info)
         return credentials
 
     # Service creation methods
 
-    def create_sheets_service(self):
+    def create_sheets_service(self) -> Optional[SheetsService]:
         """
         Create an authenticated Google Sheets API service.
 
@@ -453,9 +567,10 @@ class AuthManager(QObject):
         cred = self.authorize()
         if not cred:
             return None
-        return build("sheets", "v4", credentials=cred, cache_discovery=False)
+        service: GoogleApiResource = build("sheets", "v4", credentials=cred)
+        return cast(SheetsService, service)
 
-    def create_drive_service(self):
+    def create_drive_service(self) -> Optional[DriveService]:
         """
         Create an authenticated Google Drive API service.
 
@@ -465,9 +580,10 @@ class AuthManager(QObject):
         cred = self.authorize()
         if not cred:
             return None
-        return build("drive", "v3", credentials=cred, cache_discovery=False)
+        service: GoogleApiResource = build("drive", "v3", credentials=cred)
+        return cast(DriveService, service)
 
-    def create_userinfo_service(self, cred=None):
+    def create_userinfo_service(self, cred: Optional[Credentials] = None) -> Optional[UserInfoService]:
         """
         Create an authenticated Google OAuth2 userinfo API service.
 
@@ -481,4 +597,17 @@ class AuthManager(QObject):
             cred = self.authorize()
         if not cred:
             return None
-        return build("oauth2", "v2", credentials=cred, cache_discovery=False)
+        service: GoogleApiResource = build("oauth2", "v2", credentials=cred)
+        return cast(UserInfoService, service)
+
+    def get_sheets_service(self) -> Optional[SheetsService]:
+        """Get the Google Sheets service."""
+        return self._sheets_service
+
+    def get_drive_service(self) -> Optional[DriveService]:
+        """Get the Google Drive service."""
+        return self._drive_service
+
+    def get_oauth2_service(self) -> Optional[UserInfoService]:
+        """Get the OAuth2 service."""
+        return self._oauth2_service

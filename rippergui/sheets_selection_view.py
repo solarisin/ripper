@@ -1,18 +1,33 @@
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, cast
 
 from googleapiclient.errors import HttpError
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtNetwork import (QNetworkAccessManager, QNetworkReply,
-                               QNetworkRequest)
-from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QFrame,
-                               QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-                               QLineEdit, QPushButton, QScrollArea, QSplitter,
-                               QVBoxLayout, QWidget)
+from PySide6.QtCore import QObject, QSize, Qt, QUrl, Signal, Slot
+from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
+
 from ripperlib.auth import AuthManager
 from ripperlib.database import get_thumbnail, store_thumbnail
+from ripperlib.sheets_backend import list_sheets
 
 log = logging.getLogger("ripper:sheets_selection_view")
 
@@ -226,7 +241,7 @@ class SheetsSelectionDialog(QDialog):
     and allows the user to select one to view details and get information about it.
     """
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         """
         Initialize the sheets selection dialog.
 
@@ -235,7 +250,8 @@ class SheetsSelectionDialog(QDialog):
         """
         super().__init__(parent)
         self.setWindowTitle("Select Google Sheet")
-        self.resize(1600, 900)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(400)
 
         self.selected_sheet: Optional[Dict[str, Any]] = None
         self.sheets_list: List[Dict[str, Any]] = []
@@ -262,6 +278,9 @@ class SheetsSelectionDialog(QDialog):
         scroll_area.setWidgetResizable(True)
         scroll_content = QWidget()
         self.grid_layout = QGridLayout(scroll_content)
+        self.sheets_list = QListWidget()
+        self.sheets_list.setIconSize(QSize(120, 80))
+        self.sheets_list.itemDoubleClicked.connect(self.on_sheet_selected)
         scroll_area.setWidget(scroll_content)
         thumbnails_layout.addWidget(scroll_area)
 
@@ -534,3 +553,16 @@ class SheetsSelectionDialog(QDialog):
             message: The error message to display
         """
         self.details_content.setText(f"<span style='color: red;'>{message}</span>")
+
+    @Slot()
+    def on_sheet_selected(self) -> None:
+        """Handle sheet selection."""
+        current_item = self.sheets_list.currentItem()
+        if not current_item:
+            return
+
+        sheet_data = current_item.data(Qt.ItemDataRole.UserRole)
+        if not sheet_data:
+            return
+
+        self.accept()

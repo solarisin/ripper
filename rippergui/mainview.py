@@ -1,16 +1,26 @@
 import logging
-from typing import Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, cast
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QCoreApplication, QObject, QSize
 from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
-from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QGridLayout,
-                               QLabel, QMainWindow, QMenu, QMessageBox,
-                               QToolBar, QToolTip, QWidget)
-from ripperlib.auth import AuthInfo, AuthManager, AuthState
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDockWidget,
+    QGridLayout,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QToolBar,
+    QToolTip,
+    QWidget,
+)
 
-from rippergui.globals import Fonts
+from rippergui.globals import FontId, fonts
 from rippergui.oauth_client_config_view import AuthView
 from rippergui.sheets_selection_view import SheetsSelectionDialog
+from ripperlib.auth import AuthInfo, AuthManager, AuthState
 
 log = logging.getLogger("ripper:mainview")
 
@@ -23,41 +33,104 @@ class MainView(QMainWindow):
     It also manages the authentication state and UI updates.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the main window and set up the UI."""
         super().__init__()
 
         # Initialize menu attributes
-        self._file_menu: Optional[QMenu] = None
-        self._edit_menu: Optional[QMenu] = None
-        self._view_menu: Optional[QMenu] = None
-        self._oauth_menu: Optional[QMenu] = None
-        self._help_menu: Optional[QMenu] = None
+        self._file_menu = QMenu("&File", self)
+        self._edit_menu = QMenu("&Edit", self)
+        self._view_menu = QMenu("&View", self)
+        self._oauth_menu = QMenu("&OAuth", self)
+        self._help_menu = QMenu("&Help", self)
 
         # Initialize toolbar attributes
-        self._file_tool_bar: Optional[QToolBar] = None
-        self._edit_tool_bar: Optional[QToolBar] = None
+        self._file_tool_bar = QToolBar("File", self)
+        self._edit_tool_bar = QToolBar("Edit", self)
 
         # Initialize action attributes
-        self._register_oauth_act: Optional[QAction] = None
-        self._authenticate_oauth_act: Optional[QAction] = None
-        self._new_source_act: Optional[QAction] = None
-        self._select_sheet_act: Optional[QAction] = None
-        self._save_act: Optional[QAction] = None
-        self._print_act: Optional[QAction] = None
-        self._undo_act: Optional[QAction] = None
-        self._quit_act: Optional[QAction] = None
-        self._about_act: Optional[QAction] = None
-        self._about_qt_act: Optional[QAction] = None
+        self._register_oauth_act = QAction(parent=self)
+        self._register_oauth_act.setIcon(QIcon.fromTheme("document-new"))
+        self._register_oauth_act.setText("Register/Update OAuth Client")
+        self._register_oauth_act.setStatusTip("Register or update the target Google OAuth Client")
+        self._register_oauth_act.triggered.connect(self.register_oauth)
+
+        self._authenticate_oauth_act = QAction(parent=self)
+        self._authenticate_oauth_act.setIcon(QIcon.fromTheme("dialog-password"))
+        self._authenticate_oauth_act.setText("Authenticate")
+        self._authenticate_oauth_act.setStatusTip("Start Google OAuth authentication flow")
+        self._authenticate_oauth_act.triggered.connect(self.authenticate_oauth)
+        self._authenticate_oauth_act.setEnabled(False)
+
+        self._new_source_act = QAction(parent=self)
+        self._new_source_act.setIcon(QIcon.fromTheme("document-new"))
+        self._new_source_act.setText("&New Source")
+        self._new_source_act.setShortcut(QKeySequence.StandardKey.New)
+        self._new_source_act.setStatusTip("Import a new source sheet")
+        self._new_source_act.triggered.connect(self.new_source)
+
+        self._select_sheet_act = QAction(parent=self)
+        self._select_sheet_act.setIcon(QIcon.fromTheme("document-open"))
+        self._select_sheet_act.setText("Select &Google Sheet")
+        self._select_sheet_act.setShortcut(QKeySequence.StandardKey.Open)
+        self._select_sheet_act.setStatusTip("Select a Google Sheet from your Drive")
+        self._select_sheet_act.triggered.connect(self.select_google_sheet)
+        self._select_sheet_act.setEnabled(False)
+
+        self._save_act = QAction(parent=self)
+        self._save_act.setIcon(QIcon.fromTheme("document-save"))
+        self._save_act.setText("&Save...")
+        self._save_act.setShortcut(QKeySequence.StandardKey.Save)
+        self._save_act.setStatusTip("Save the current spreadsheet")
+        self._save_act.triggered.connect(self.save)
+
+        self._print_act = QAction(parent=self)
+        self._print_act.setIcon(QIcon.fromTheme("document-print"))
+        self._print_act.setText("&Print...")
+        self._print_act.setShortcut(QKeySequence.StandardKey.Print)
+        self._print_act.setStatusTip("Print the current view")
+        self._print_act.triggered.connect(self.print_document)
+
+        self._undo_act = QAction(parent=self)
+        self._undo_act.setIcon(QIcon.fromTheme("edit-undo"))
+        self._undo_act.setText("&Undo")
+        self._undo_act.setShortcut(QKeySequence.StandardKey.Undo)
+        self._undo_act.setStatusTip("Undo the last editing action")
+        self._undo_act.triggered.connect(self.undo)
+
+        self._quit_act = QAction(parent=self)
+        self._quit_act.setText("&Quit")
+        self._quit_act.setShortcut("Ctrl+Q")
+        self._quit_act.setStatusTip("Quit the application")
+        self._quit_act.triggered.connect(self.close)
+
+        self._about_act = QAction(parent=self)
+        self._about_act.setText("&About")
+        self._about_act.setStatusTip("About ripper")
+        self._about_act.triggered.connect(self.about)
+
+        app = QApplication.instance()
+        if app:
+            self._about_qt_act = QAction(parent=self)
+            self._about_qt_act.setText("About &Qt")
+            self._about_qt_act.setStatusTip("About Qt")
+            self._about_qt_act.triggered.connect(app.aboutQt)
+        else:
+            self._about_qt_act = QAction(parent=self)
+            self._about_qt_act.setText("About &Qt")
+            self._about_qt_act.setStatusTip("About Qt")
+            self._about_qt_act.setEnabled(False)
 
         # Initialize status bar attributes
-        self._auth_status_label: Optional[QLabel] = None
+        self._auth_status_label = QLabel(self)
+        self._auth_status_label.setMinimumWidth(200)
+        self._auth_status_label.setFont(fonts.get(FontId.TOOLTIP))
 
         # Initialize dialog attributes
         self._auth_dialog: Optional[QDialog] = None
 
         # Setup monospace font for tooltips
-        QToolTip.setFont(Fonts.get(Fonts.FontId.TOOLTIP))
+        QToolTip.setFont(fonts.get(FontId.TOOLTIP))
 
         # Set up the main window
         self.setWindowTitle("ripper")
@@ -69,7 +142,6 @@ class MainView(QMainWindow):
         self.resize(QSize(1200, 600))
 
         # Create UI elements
-        self.create_actions()
         self.create_menus()
         self.create_tool_bars()
         self.create_status_bar()
@@ -84,8 +156,8 @@ class MainView(QMainWindow):
         # Check if OAuth client is configured and update UI accordingly
         self.update_oauth_ui()
 
-    def create_menus(self):
-        self._file_menu = self.menuBar().addMenu("&File")
+    def create_menus(self) -> None:
+        self.menuBar().addMenu(self._file_menu)
         self._file_menu.addAction(self._new_source_act)
         self._file_menu.addAction(self._select_sheet_act)
         self._file_menu.addAction(self._save_act)
@@ -93,29 +165,29 @@ class MainView(QMainWindow):
         self._file_menu.addSeparator()
         self._file_menu.addAction(self._quit_act)
 
-        self._edit_menu = self.menuBar().addMenu("&Edit")
+        self.menuBar().addMenu(self._edit_menu)
         self._edit_menu.addAction(self._undo_act)
 
-        self._view_menu = self.menuBar().addMenu("&View")
+        self.menuBar().addMenu(self._view_menu)
 
-        self._oauth_menu = self.menuBar().addMenu("&OAuth")
+        self.menuBar().addMenu(self._oauth_menu)
         self._oauth_menu.addAction(self._register_oauth_act)
         self._oauth_menu.addAction(self._authenticate_oauth_act)
 
         self.menuBar().addSeparator()
 
-        self._help_menu = self.menuBar().addMenu("&Help")
+        self.menuBar().addMenu(self._help_menu)
         self._help_menu.addAction(self._about_act)
         self._help_menu.addAction(self._about_qt_act)
 
-    def create_tool_bars(self):
-        self._file_tool_bar = self.addToolBar("File")
+    def create_tool_bars(self) -> None:
+        self.addToolBar(self._file_tool_bar)
         self._file_tool_bar.addAction(self._new_source_act)
         self._file_tool_bar.addAction(self._select_sheet_act)
         self._file_tool_bar.addAction(self._save_act)
         self._file_tool_bar.addAction(self._print_act)
 
-        self._edit_tool_bar = self.addToolBar("Edit")
+        self.addToolBar(self._edit_tool_bar)
         self._edit_tool_bar.addAction(self._undo_act)
 
     def create_status_bar(self) -> None:
@@ -127,9 +199,6 @@ class MainView(QMainWindow):
         self.statusBar().showMessage("Ready")
 
         # Create a permanent widget for auth status
-        self._auth_status_label = QLabel()
-        self._auth_status_label.setMinimumWidth(200)
-        self._auth_status_label.setFont(Fonts.get(Fonts.FontId.TOOLTIP))
         self.statusBar().addPermanentWidget(self._auth_status_label)
 
         # Connect to auth state changed signal
@@ -139,102 +208,6 @@ class MainView(QMainWindow):
         self.update_auth_status(AuthManager().auth_info())
 
     # Actions ###########################################################################
-
-    def create_actions(self) -> None:
-        """
-        Create all the actions used in the application.
-
-        Sets up actions for menus and toolbars with appropriate icons, shortcuts,
-        and connections to handler methods.
-        """
-        # OAuth actions
-        icon = QIcon.fromTheme("document-new", QIcon(":/res/new.png"))  # TODO: add google oauth-specific icon
-        self._register_oauth_act = QAction(
-            icon,
-            "Register/Update OAuth Client",
-            self,
-            statusTip="Register or update the target Google OAuth Client",
-            triggered=self.register_oauth,
-        )
-
-        # Authenticate action
-        icon = QIcon.fromTheme("dialog-password", QIcon(":/res/new.png"))
-        self._authenticate_oauth_act = QAction(
-            icon,
-            "Authenticate",
-            self,
-            statusTip="Start Google OAuth authentication flow",
-            triggered=self.authenticate_oauth,
-        )
-        # Initially disabled until client is configured
-        self._authenticate_oauth_act.setEnabled(False)
-
-        # New source action
-        icon = QIcon.fromTheme("document-new", QIcon(":/res/new.png"))
-        self._new_source_act = QAction(
-            icon,
-            "&New Source",
-            self,
-            shortcut=QKeySequence.StandardKey.New,
-            statusTip="Import a new source sheet",
-            triggered=self.new_source,
-        )
-
-        # Select Google Sheet action
-        icon = QIcon.fromTheme("document-open", QIcon(":/res/new.png"))
-        self._select_sheet_act = QAction(
-            icon,
-            "Select &Google Sheet",
-            self,
-            shortcut=QKeySequence.StandardKey.Open,
-            statusTip="Select a Google Sheet from your Drive",
-            triggered=self.select_google_sheet,
-        )
-        # Initially disabled until user is logged in
-        self._select_sheet_act.setEnabled(False)
-
-        # Save action
-        icon = QIcon.fromTheme("document-save", QIcon(":/res/save.png"))
-        self._save_act = QAction(
-            icon,
-            "&Save...",
-            self,
-            shortcut=QKeySequence.StandardKey.Save,
-            statusTip="Save the current spreadsheet",
-            triggered=self.save,
-        )
-
-        # Print action
-        icon = QIcon.fromTheme("document-print", QIcon(":/res/print.png"))
-        self._print_act = QAction(
-            icon,
-            "&Print...",
-            self,
-            shortcut=QKeySequence.StandardKey.Print,
-            statusTip="Print the current view",
-            triggered=self.print_document,
-        )
-
-        # Undo action
-        icon = QIcon.fromTheme("edit-undo", QIcon(":/res/undo.png"))
-        self._undo_act = QAction(
-            icon,
-            "&Undo",
-            self,
-            shortcut=QKeySequence.StandardKey.Undo,
-            statusTip="Undo the last editing action",
-            triggered=self.undo,
-        )
-
-        # Quit action
-        self._quit_act = QAction(
-            "&Quit", self, shortcut="Ctrl+Q", statusTip="Quit the application", triggered=self.close
-        )
-
-        # About actions
-        self._about_act = QAction("&About", self, statusTip="About ripper", triggered=self.about)
-
-        self._about_qt_act = QAction("About &Qt", self, statusTip="About Qt", triggered=QApplication.instance().aboutQt)
 
     def register_oauth(self) -> None:
         """
@@ -428,3 +401,103 @@ class MainView(QMainWindow):
         # Update UI to enable options only available after an OAuth client is configured
         self.update_oauth_ui()
         log.info("OAuth client registration successful")
+
+    def _create_action(
+        self,
+        text: str,
+        parent: Optional[QWidget] = None,
+        icon: Optional[QIcon] = None,
+        shortcut: Optional[Union[QKeySequence, QKeySequence.StandardKey, str]] = None,
+        status_tip: Optional[str] = None,
+        triggered: Optional[Callable[[], Any]] = None,
+        checkable: bool = False,
+        checked: bool = False,
+    ) -> QAction:
+        """Create a QAction with the given parameters."""
+        action = QAction(text, parent or self)
+        if icon:
+            action.setIcon(icon)
+        if shortcut:
+            action.setShortcut(shortcut)
+        if status_tip:
+            action.setStatusTip(status_tip)
+        if triggered:
+            action.triggered.connect(triggered)
+        if checkable:
+            action.setCheckable(True)
+            action.setChecked(checked)
+        return action
+
+    def _setup_actions(self) -> None:
+        """Set up the actions for the main window."""
+        # File menu actions
+        self.new_action: QAction = self._create_action(
+            "New",
+            icon=QIcon.fromTheme("document-new"),
+            shortcut=QKeySequence.StandardKey.New,
+            status_tip="Create a new file",
+            triggered=self.new_file,
+        )
+
+        self.open_action: QAction = self._create_action(
+            "Open",
+            icon=QIcon.fromTheme("document-open"),
+            shortcut=QKeySequence.StandardKey.Open,
+            status_tip="Open an existing file",
+            triggered=self.open_file,
+        )
+
+        self.save_action: QAction = self._create_action(
+            "Save",
+            icon=QIcon.fromTheme("document-save"),
+            shortcut=QKeySequence.StandardKey.Save,
+            status_tip="Save the current file",
+            triggered=self.save_file,
+        )
+
+        self.save_as_action: QAction = self._create_action(
+            "Save As...",
+            icon=QIcon.fromTheme("document-save-as"),
+            shortcut=QKeySequence.StandardKey.SaveAs,
+            status_tip="Save the current file under a new name",
+            triggered=self.save_file_as,
+        )
+
+        self.exit_action: QAction = self._create_action(
+            "Exit", shortcut=QKeySequence.StandardKey.Quit, status_tip="Exit the application", triggered=self.close
+        )
+
+        # Help menu actions
+        self.about_action: QAction = self._create_action(
+            "About", status_tip="Show the application's About box", triggered=self.about
+        )
+
+        app = cast(QApplication, QApplication.instance())
+        if app:
+            self.about_qt_action: QAction = self._create_action(
+                "About Qt", status_tip="Show the Qt library's About box", triggered=lambda: QApplication.aboutQt()
+            )
+        else:
+            self.about_qt_action: QAction = self._create_action(
+                "About Qt", status_tip="Show the Qt library's About box", triggered=lambda: None
+            )
+
+    def new_file(self) -> None:
+        """Create a new file."""
+        pass
+
+    def open_file(self) -> None:
+        """Open an existing file."""
+        pass
+
+    def save_file(self) -> None:
+        """Save the current file."""
+        pass
+
+    def save_file_as(self) -> None:
+        """Save the current file under a new name."""
+        pass
+
+    def about(self) -> None:
+        """Show the application's About box."""
+        QMessageBox.about(self, "About", "Ripper Application")

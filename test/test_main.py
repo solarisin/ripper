@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ripperlib.main import configure_logging, get_version
+from main import configure_logging, get_version
 
 
 class TestMain(unittest.TestCase):
@@ -80,12 +80,12 @@ class TestMain(unittest.TestCase):
         self.assertEqual(kwargs["datefmt"], "%Y-%m-%d %H:%M:%S")
 
     @pytest.mark.qt
-    @patch("ripperlib.main.QApplication")
-    @patch("ripperlib.main.MainView")
-    @patch("ripperlib.main.AuthManager")
+    @patch("main.QApplication")
+    @patch("main.MainView")
+    @patch("main.AuthManager")
     @patch("sys.exit")
-    def test_main_gui(self, mock_sys_exit, mock_auth_manager, mock_main_view, mock_qapp):
-        """Test that main_gui initializes the application correctly."""
+    def test_main(self, mock_sys_exit, mock_auth_manager, mock_main_view, mock_qapp):
+        """Test that main initializes the application correctly."""
         # Set up mocks
         mock_app_instance = MagicMock()
         mock_qapp.return_value = mock_app_instance
@@ -97,10 +97,10 @@ class TestMain(unittest.TestCase):
         mock_auth_manager.return_value = mock_auth_manager_instance
 
         # Import main_gui function (it's not imported at the top level to avoid circular imports)
-        from ripperlib.main import main_gui
+        from main import main
 
-        # Call main_gui
-        main_gui()
+        # Call main
+        main()
 
         # Check that QApplication was created
         mock_qapp.assert_called_once_with(sys.argv)
