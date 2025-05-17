@@ -1,6 +1,6 @@
 import logging
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Optional, Set, Union, cast
+from typing import Any, Dict, List, Optional, Set, cast
 
 from PySide6.QtCore import (
     QAbstractTableModel,
@@ -137,9 +137,10 @@ class TransactionModel(QAbstractTableModel):
         self._data: List[Dict[str, Any]] = data if data is not None else []
         self._headers: List[str] = ["ID", "Date", "Description", "Category", "Amount", "Account"]
 
-    def rowCount(self, parent: Union[QModelIndex, QPersistentModelIndex] = QModelIndex()) -> int:
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         """
         Return the number of rows in the model.
+        This method is called by Qt to determine the number of rows to display in the view.
 
         Args:
             parent: Parent index (unused for list models)
@@ -151,9 +152,10 @@ class TransactionModel(QAbstractTableModel):
             return 0
         return len(self._data)
 
-    def columnCount(self, parent: Union[QModelIndex, QPersistentModelIndex] = QModelIndex()) -> int:
+    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         """
         Return the number of columns in the model.
+        This method is called by Qt to determine the number of columns to display in the view.
 
         Args:
             parent: Parent index (unused for list models)
@@ -165,7 +167,18 @@ class TransactionModel(QAbstractTableModel):
             return 0
         return len(self._headers)
 
-    def data(self, index: Union[QModelIndex, QPersistentModelIndex], role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        """
+        Return the data for a given index and role.
+        This method is called by Qt to retrieve the data to display or edit in the view.
+
+        Args:
+            index: The model index for which data is requested
+            role: The role for which data is requested (display, edit, alignment, etc.)
+
+        Returns:
+            The data to be displayed or used by the view
+        """
         if not index.isValid():
             return None
         row = index.row()
@@ -187,7 +200,7 @@ class TransactionModel(QAbstractTableModel):
             return str(value)
         return None
 
-    def _format_decimal(self, value: float) -> str:
+    def _format_decimal(self, value: float | Decimal) -> str:
         try:
             return f"{Decimal(value):.2f}"
         except Exception:
@@ -204,6 +217,7 @@ class TransactionModel(QAbstractTableModel):
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         """
         Return header data for the given section, orientation and role.
+        This method is called by Qt to retrieve the header labels for the table.
 
         Args:
             section: Column or row number
@@ -221,6 +235,7 @@ class TransactionModel(QAbstractTableModel):
     def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
         """
         Sort the model by the given column and order.
+        This method is called by Qt when the user clicks a column header to sort the table.
 
         Args:
             column: Column index to sort by
@@ -242,23 +257,6 @@ class TransactionModel(QAbstractTableModel):
         except Exception as e:
             log.error(f"Error sorting by {col_name}: {e}")
         self.layoutChanged.emit()
-
-    def setDataList(self, data: List[Dict[str, Any]]) -> None:
-        """
-        Set a new data list for the model.
-
-        Args:
-            data: List of dictionaries containing transaction data
-        """
-        self.beginResetModel()
-        self._data = data
-        self.endResetModel()
-
-    def get_headers(self) -> List[str]:
-        return self._headers
-
-    def get_data(self) -> List[Dict[str, Any]]:
-        return self._data
 
 
 class TransactionSortFilterProxyModel(QSortFilterProxyModel):
@@ -316,9 +314,10 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
         return True  # Filters were cleared
 
-    def filterAcceptsRow(self, source_row: int, source_parent: Union[QModelIndex, QPersistentModelIndex]) -> bool:
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex | QPersistentModelIndex) -> bool:
         """
-        Check if a row should be included in the filtered view.
+        Determine whether the given row in the source model should be included in the filtered model.
+        This method is called by Qt's filtering mechanism for each row.
 
         Args:
             source_row: Row index in the source model
@@ -385,45 +384,57 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
                 return False
         return True
 
-    def lessThan(
-        self, left: Union[QModelIndex, QPersistentModelIndex], right: Union[QModelIndex, QPersistentModelIndex]
-    ) -> bool:
-        source_model = self.sourceModel()
-        if not hasattr(source_model, "_headers"):
-            return False
-        return self._compare_items(source_model, left, right)
+    def lessThan(self, left: QModelIndex | QPersistentModelIndex, right: QModelIndex | QPersistentModelIndex) -> bool:
+        """
+        Compare two items in the model for sorting purposes.
+        This method is called by Qt's sorting mechanism to determine the order of rows.
 
-    def _compare_items(self, source_model, left, right) -> bool:
+        Args:
+            left: The left model index to compare
+            right: The right model index to compare
+
+        Returns:
+            True if the left item is less than the right item, False otherwise
+        """
+        source_model = self.sourceModel()
+        if not isinstance(source_model, TransactionModel):
+            raise ValueError("Source model is not a TransactionModel")
+        return self._compare_items_lessthan(source_model, left, right)
+
+    def _compare_items_lessthan(
+        self,
+        source_model: TransactionModel,
+        left: QModelIndex | QPersistentModelIndex,
+        right: QModelIndex | QPersistentModelIndex,
+    ) -> bool:
         left_data = source_model.data(left, Qt.ItemDataRole.EditRole)
         right_data = source_model.data(right, Qt.ItemDataRole.EditRole)
+
+        # First check each side for None, if either is None, we can evaluate the comparison now
+        if left_data is None or right_data is None:
+            if left_data is None and right_data is not None:
+                return True
+            return False
+
+        # Based on the column index, we can determine the type of data we are comparing
         col = left.column()
-        headers = source_model._headers
-        if col == headers.index("Amount"):
+        if col == source_model._headers.index("Amount"):
             return self._compare_decimal(left_data, right_data)
-        if col == headers.index("Date"):
+        if col == source_model._headers.index("Date"):
             return self._compare_dates(left_data, right_data)
         return self._compare_strings(left_data, right_data)
 
-    def _compare_decimal(self, left_data, right_data) -> bool:
+    def _compare_decimal(self, left_data: float | Decimal, right_data: float | Decimal) -> bool:
         try:
             return Decimal(str(left_data)) < Decimal(str(right_data))
         except (InvalidOperation, TypeError):
             return False
 
-    def _compare_dates(self, left_data, right_data) -> bool:
-        if isinstance(left_data, QDate) and isinstance(right_data, QDate):
-            return left_data < right_data
-        return False
+    def _compare_dates(self, left_data: QDate, right_data: QDate) -> bool:
+        return left_data < right_data
 
-    def _compare_strings(self, left_data, right_data) -> bool:
-        try:
-            return str(left_data).lower() < str(right_data).lower()
-        except TypeError:
-            if left_data is None and right_data is not None:
-                return True
-            if left_data is not None and right_data is None:
-                return False
-            return False
+    def _compare_strings(self, left_data: str, right_data: str) -> bool:
+        return left_data.lower() < right_data.lower()
 
 
 # --- Filter Dialog ---

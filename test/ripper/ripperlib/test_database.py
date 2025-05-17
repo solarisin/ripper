@@ -3,7 +3,7 @@ import unittest
 from sqlite3 import Error
 from unittest.mock import MagicMock, patch
 
-from ripperlib.database import (
+from ripper.ripperlib.database import (
     ConnectionPool,
     create_connection,
     create_table,

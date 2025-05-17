@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ripperlib.auth import AuthManager
-from ripperlib.database import get_thumbnail, store_thumbnail
+from ripper.ripperlib.auth import AuthManager
+from ripper.ripperlib.database import get_thumbnail, store_thumbnail
 
 log = logging.getLogger("ripper:sheets_selection_view")
 

@@ -12,6 +12,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import build
 from keyring.errors import PasswordDeleteError
 from PySide6.QtCore import QObject, Signal
+from typing_extensions import runtime_checkable
 
 OAUTH_CLIENT_KEY = "ripper-oauth-client"
 OAUTH_CLIENT_USER = "default-user"
@@ -26,18 +27,21 @@ log = logging.getLogger("ripper:auth")
 
 
 # Protocol classes for Google API services
+@runtime_checkable
 class SheetsService(Protocol):
     def spreadsheets(self) -> Any: ...
     def values(self) -> Any: ...
     def get(self, spreadsheetId: str) -> Any: ...
 
 
+@runtime_checkable
 class DriveService(Protocol):
     def files(self) -> Any: ...
     def get(self, fileId: str) -> Any: ...
     def list(self, **kwargs: Any) -> Any: ...
 
 
+@runtime_checkable
 class UserInfoService(Protocol):
     def userinfo(self) -> Any: ...
     def get(self) -> Any: ...

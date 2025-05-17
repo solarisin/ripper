@@ -89,7 +89,7 @@ Example test:
 import unittest
 from unittest.mock import MagicMock
 
-from ripperlib.sheets_backend import list_sheets
+from ripper.ripperlib.sheets_backend import list_sheets
 
 class TestSheetsBackend(unittest.TestCase):
     def test_list_sheets_success(self):
@@ -123,7 +123,7 @@ For testing GUI components, use the `pytest-qt` plugin:
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
-from rippergui.mainview import MainView
+from ripper.rippergui.mainview import MainView
 
 def test_main_view_initialization(qtbot):
     # Create the widget
