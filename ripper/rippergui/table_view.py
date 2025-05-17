@@ -187,6 +187,11 @@ class TransactionModel(QAbstractTableModel):
             return self._get_display_data(row, col)
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return self._get_alignment(col, row)
+        elif role == Qt.ItemDataRole.EditRole:
+            if 0 <= row < len(self._data) and 0 <= col < len(self._headers):
+                header = self._headers[col]
+                return self._data[row].get(header)
+            return None
         return None
 
     def _get_display_data(self, row: int, col: int) -> Any:
