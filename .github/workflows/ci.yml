@@ -43,6 +43,7 @@ jobs:
     - name: Install dependencies
       run: |
         poetry install --with dev
+        poetry remove pytest-qt # remove pytest-qt to avoid INTERNALERROR
 
     - name: Lint code
       run: |
