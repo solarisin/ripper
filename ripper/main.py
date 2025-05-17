@@ -9,8 +9,8 @@ import click
 import toml
 from PySide6.QtWidgets import QApplication
 
-from rippergui.mainview import MainView
-from ripperlib.auth import AuthManager
+from ripper.rippergui.mainview import MainView
+from ripper.ripperlib.auth import AuthManager
 
 # Get the project root path
 project_path = Path(__file__).parent.parent.resolve()

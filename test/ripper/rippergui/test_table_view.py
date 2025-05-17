@@ -4,10 +4,13 @@ from decimal import Decimal
 import pytest
 from PySide6.QtCore import QDate, QRegularExpression, Qt
 
-from rippergui.table_view import (FilterDialog, TransactionModel,
-                                  TransactionSortFilterProxyModel,
-                                  TransactionTableViewWidget,
-                                  sample_transactions)
+from ripper.rippergui.table_view import (
+    FilterDialog,
+    TransactionModel,
+    TransactionSortFilterProxyModel,
+    TransactionTableViewWidget,
+    sample_transactions,
+)
 
 
 @pytest.mark.qt

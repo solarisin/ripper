@@ -6,8 +6,15 @@ from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from keyring.errors import PasswordDeleteError
 
-from ripperlib.auth import (OAUTH_CLIENT_KEY, OAUTH_CLIENT_USER, SCOPES,
-                            AuthInfo, AuthManager, AuthState, TokenStore)
+from ripper.ripperlib.auth import (
+    OAUTH_CLIENT_KEY,
+    OAUTH_CLIENT_USER,
+    SCOPES,
+    AuthInfo,
+    AuthManager,
+    AuthState,
+    TokenStore,
+)
 
 
 class TestAuthState(unittest.TestCase):
@@ -153,7 +160,7 @@ class TestTokenStore(unittest.TestCase):
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "client_id": "test_client_id",
                 "client_secret": "test_client_secret",
-                "scopes": SCOPES,  # Use the actual SCOPES from ripperlib.auth
+                "scopes": SCOPES,  # Use the actual SCOPES from ripper.ripperlib.auth
             }
         )
         mock_get_password.side_effect = [token_with_scopes, None]

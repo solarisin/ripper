@@ -1,7 +1,6 @@
 from enum import Enum, auto
-from typing import Dict, Optional, Union
+from typing import Dict, Optional
 
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 
@@ -32,11 +31,11 @@ class FontManager:
             }
         return cls._instance
 
-    def get(self, font_id: FontId) -> Union[QFont, str]:
+    def get(self, font_id: FontId) -> str:
         """Get a font."""
         if font_id in self._fonts:
             return self._fonts[font_id]
-        return QApplication.font()
+        return QApplication.font().family()
 
     def set(self, font_id: FontId, font: str) -> None:
         """Set a font."""
@@ -45,10 +44,3 @@ class FontManager:
 
 # Global font manager instance
 fonts = FontManager()
-
-
-def get_font(font_id: FontId) -> Union[QFont, str]:
-    """Get a font by ID."""
-    if font_id in fonts._fonts:
-        return fonts._fonts[font_id]
-    return QApplication.font()

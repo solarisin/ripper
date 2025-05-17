@@ -81,5 +81,5 @@ exclude = [
     'test/',  # Temporarily exclude tests until we add type hints to main code
 ]
 files = [
-    "main.py",
+    "ripper/main.py",
 ]

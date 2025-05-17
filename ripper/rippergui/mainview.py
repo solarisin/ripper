@@ -17,10 +17,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rippergui.globals import FontId, fonts
-from rippergui.oauth_client_config_view import AuthView
-from rippergui.sheets_selection_view import SheetsSelectionDialog
-from ripperlib.auth import AuthInfo, AuthManager, AuthState
+from ripper.rippergui.globals import FontId, fonts
+from ripper.rippergui.oauth_client_config_view import AuthView
+from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
+from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
 
 log = logging.getLogger("ripper:mainview")
 
@@ -268,7 +268,7 @@ class MainView(QMainWindow):
         """
         log.debug("New source selected")
 
-        from rippergui import table_view
+        from ripper.rippergui import table_view
 
         table_widget = table_view.TransactionTableViewWidget(None, simulate=True)
 

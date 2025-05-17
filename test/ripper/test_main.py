@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from main import configure_logging, get_version
+from ripper.main import configure_logging, get_version
 
 
 class TestMain(unittest.TestCase):
@@ -97,7 +97,7 @@ class TestMain(unittest.TestCase):
         mock_auth_manager.return_value = mock_auth_manager_instance
 
         # Import main_gui function (it's not imported at the top level to avoid circular imports)
-        from main import main
+        from ripper.main import main
 
         # Call main
         main()

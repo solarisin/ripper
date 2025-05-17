@@ -4,7 +4,7 @@ import sqlite3
 from queue import Queue
 from sqlite3 import Connection, Cursor, Error, Row, connect
 from threading import Lock
-from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, cast
 
 # Create a logger for the database module
 log = logging.getLogger("ripper:database")
@@ -19,7 +19,7 @@ T = TypeVar("T")
 # Type aliases for better readability
 QueryParams = Tuple[Any, ...]
 RowDict = Dict[str, Any]
-TransactionData = Dict[str, Union[str, float]]
+TransactionData = Dict[str, str | float]
 
 
 # Connection pool

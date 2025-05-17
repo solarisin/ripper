@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from googleapiclient.errors import HttpError
 from PySide6.QtCore import QSize, Qt, QUrl, Slot
@@ -24,8 +24,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ripperlib.auth import AuthManager
-from ripperlib.database import get_thumbnail, store_thumbnail
+from ripper.ripperlib.auth import AuthManager
+from ripper.ripperlib.database import get_thumbnail, store_thumbnail
 
 log = logging.getLogger("ripper:sheets_selection_view")
 
@@ -41,7 +41,6 @@ class SheetThumbnailWidget(QFrame):
     def __init__(
         self,
         sheet_info: Dict[str, Any],
-        dialog: Optional["SheetsSelectionDialog"] = None,
         parent: Optional[QWidget] = None,
     ):
         """
@@ -54,7 +53,7 @@ class SheetThumbnailWidget(QFrame):
         """
         super().__init__(parent)
         self.sheet_info: Dict[str, Any] = sheet_info
-        self.dialog: Optional["SheetsSelectionDialog"] = dialog
+        self.dialog: Optional[SheetsSelectionDialog] = cast(SheetsSelectionDialog, parent)
 
         # Configure frame appearance
         self.setFrameShape(QFrame.Shape.Box)
@@ -441,7 +440,7 @@ class SheetsSelectionDialog(QDialog):
         max_cols = 3  # Number of columns in the grid
 
         for sheet in self.sheets_list:
-            thumbnail = SheetThumbnailWidget(sheet, dialog=self)
+            thumbnail = SheetThumbnailWidget(sheet, parent=self)
             self.grid_layout.addWidget(thumbnail, row, col)
 
             col += 1

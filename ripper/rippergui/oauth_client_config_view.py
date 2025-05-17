@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ripperlib.auth import AuthManager
+from ripper.ripperlib.auth import AuthManager
 
 log = logging.getLogger("ripper:oauth_client_config_view")
 
@@ -118,8 +118,8 @@ class AuthView(QWidget):
         main_layout.addWidget(self.manual_group)
 
         # Connect radio buttons to update UI
-        self.file_radio.toggled.connect(self.update_ui)
-        self.manual_radio.toggled.connect(self.update_ui)
+        self.file_radio.toggled.connect(lambda: self.update_ui())
+        self.manual_radio.toggled.connect(lambda: self.update_ui())
 
         # Initial UI update
         self.update_ui()
