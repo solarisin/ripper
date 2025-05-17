@@ -12,6 +12,7 @@ from rippergui.table_view import (
 )
 
 
+@pytest.mark.qt
 class TestTransactionModel(unittest.TestCase):
     """Test cases for the TransactionModel class."""
 
@@ -155,6 +156,7 @@ class TestTransactionModel(unittest.TestCase):
         self.assertEqual(self.model.data(self.model.index(0, 0)), "t3")
 
 
+@pytest.mark.qt
 class TestTransactionSortFilterProxyModel(unittest.TestCase):
     """Test cases for the TransactionSortFilterProxyModel class."""
 

@@ -50,7 +50,7 @@ jobs:
 
     - name: Run tests
       run: | 
-        poetry run pytest -m qt
+        poetry run pytest -m "not qt"
 
     - name: Upload coverage report
       uses: actions/upload-artifact@v4

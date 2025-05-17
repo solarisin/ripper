@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import importlib.metadata
 import logging
 import sys
+import pytest
 from ripperlib.main import get_version, configure_logging
 
 
@@ -76,6 +77,7 @@ class TestMain(unittest.TestCase):
         self.assertEqual(kwargs["format"], "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         self.assertEqual(kwargs["datefmt"], "%Y-%m-%d %H:%M:%S")
 
+    @pytest.mark.qt
     @patch("ripperlib.main.QApplication")
     @patch("ripperlib.main.MainView")
     @patch("ripperlib.main.AuthManager")
