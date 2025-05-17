@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Set, cast
 
 from googleapiclient.errors import HttpError
 from PySide6.QtCore import QObject, QSize, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtGui import QIcon, QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -210,7 +210,7 @@ class SheetThumbnailWidget(QFrame):
         # Clean up
         reply.deleteLater()
 
-    def mousePressEvent(self, event) -> None:
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         """
         Handle mouse press events to select this sheet.
 
@@ -222,7 +222,7 @@ class SheetThumbnailWidget(QFrame):
         if self.dialog:
             self.dialog.select_sheet(self.sheet_info)
 
-    def mouseReleaseEvent(self, event) -> None:
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """
         Handle mouse release events.
 
@@ -278,9 +278,9 @@ class SheetsSelectionDialog(QDialog):
         scroll_area.setWidgetResizable(True)
         scroll_content = QWidget()
         self.grid_layout = QGridLayout(scroll_content)
-        self.sheets_list = QListWidget()
-        self.sheets_list.setIconSize(QSize(120, 80))
-        self.sheets_list.itemDoubleClicked.connect(self.on_sheet_selected)
+        self.sheets_list_widget = QListWidget()
+        self.sheets_list_widget.setIconSize(QSize(120, 80))
+        self.sheets_list_widget.itemDoubleClicked.connect(self.on_sheet_selected)
         scroll_area.setWidget(scroll_content)
         thumbnails_layout.addWidget(scroll_area)
 
@@ -365,10 +365,9 @@ class SheetsSelectionDialog(QDialog):
                 return
 
             # List sheets with more fields
-            self.sheets_list = self.list_sheets_with_thumbnails(drive_service)
-            if self.sheets_list is None:
+            self.sheets_list = self.list_sheets_with_thumbnails(drive_service) or []
+            if not self.sheets_list:
                 self.show_error("Failed to fetch sheets list. Please try again.")
-                self.sheets_list = []
                 return
 
             # Display sheets in grid
@@ -378,7 +377,7 @@ class SheetsSelectionDialog(QDialog):
             log.error(f"Error loading sheets: {e}")
             self.show_error(f"Error loading sheets: {str(e)}")
 
-    def list_sheets_with_thumbnails(self, service) -> Optional[List[Dict[str, Any]]]:
+    def list_sheets_with_thumbnails(self, service: Any) -> Optional[List[Dict[str, Any]]]:
         """
         List Google Sheets with thumbnail links and additional metadata.
 
@@ -557,7 +556,7 @@ class SheetsSelectionDialog(QDialog):
     @Slot()
     def on_sheet_selected(self) -> None:
         """Handle sheet selection."""
-        current_item = self.sheets_list.currentItem()
+        current_item = self.sheets_list_widget.currentItem()
         if not current_item:
             return
 

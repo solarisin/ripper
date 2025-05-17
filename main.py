@@ -32,12 +32,12 @@ def get_version() -> str:
     try:
         # Try to get version from package metadata (when installed)
         version = importlib.metadata.version("ripper")
-        return version
+        return str(version)
     except importlib.metadata.PackageNotFoundError:
         # Fall back to reading from pyproject.toml
         log.debug("Package not installed, reading version from pyproject.toml")
         pyproject_toml = toml.load(str(project_path / "pyproject.toml"))
-        return pyproject_toml["project"]["version"]
+        return str(pyproject_toml["project"]["version"])
 
 
 def configure_logging(level: Optional[int] = None) -> None:

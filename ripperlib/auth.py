@@ -10,7 +10,7 @@ import keyring
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import Resource
 from googleapiclient.discovery import Resource as GoogleApiResource
 from googleapiclient.discovery import build
@@ -198,18 +198,13 @@ class TokenStore:
 
     def get_credentials(self, scopes: Optional[List[str]] = None) -> Credentials:
         """
-        Get OAuth2 credentials from stored token.
+        Get credentials from the stored token.
 
         Args:
-            scopes: List of OAuth scopes to validate against stored token.
-                   If None, uses default SCOPES.
+            scopes: List of scopes to use (optional)
 
         Returns:
-            Google OAuth2 credentials object created from stored token.
-
-        Raises:
-            ValueError: If no token is found in keyring.
-            SystemError: If required scopes are missing from stored token.
+            Credentials object
         """
         if scopes is None:
             scopes = SCOPES
@@ -220,36 +215,20 @@ class TokenStore:
         if "scopes" not in token_json or any(s for s in scopes if s not in token_json["scopes"]):
             raise SystemError("Required scopes are missing from token.")
 
-        return Credentials.from_authorized_user_info(token_json)
+        return cast(Credentials, Credentials.from_authorized_user_info(token_json, scopes))
 
     def get_user_info(self) -> Optional[Dict[str, Any]]:
         """
-        Get user info associated with stored token.
+        Get user info from the stored user info JSON.
 
         Returns:
-            Dictionary containing user information, or None if not available
+            Dictionary of user info, or None if not available
         """
-        try:
-            _, userinfo = self.load()
-            if userinfo is None:
-                return None
-
-            return json.loads(userinfo)
-
-        except JSONDecodeError as e:
-            stored_userinfo = self._current_userinfo or "None"
-            log.error(f"Stored user info json was malformed. {e}: {stored_userinfo}")
-            self._current_userinfo = None
-
-            try:
-                keyring.delete_password(self.USERINFO_KEY, self._token_user_id)
-            except PasswordDeleteError:
-                pass
-
+        if self._current_userinfo is None:
             return None
-
-        except Exception as e:
-            log.error(f"Failed to load stored user info: {repr(e)}")
+        try:
+            return cast(Dict[str, Any], json.loads(self._current_userinfo))
+        except Exception:
             return None
 
 
@@ -399,7 +378,7 @@ class AuthManager(QObject):
             Dictionary containing user information, or None if retrieval fails
         """
         try:
-            user_info_service = cast(UserInfoService, build("oauth2", "v2", credentials=cred))
+            user_info_service = build("oauth2", "v2", credentials=cred)
             if user_info_service:
                 result = cast(Dict[str, Any], user_info_service.userinfo().get().execute())
                 return result
@@ -441,9 +420,9 @@ class AuthManager(QObject):
             Valid credentials if successful, None otherwise
         """
         try:
-            stored_cred = self._token_store.get_credentials()
+            stored_cred: Optional[Credentials] = self._token_store.get_credentials()
             log.debug("Found existing token")
-            if stored_cred.expired:
+            if stored_cred and stored_cred.expired:
                 log.debug("Existing token is expired, attempting refresh")
                 stored_cred = self.refresh_token(stored_cred)
             return stored_cred
@@ -522,15 +501,9 @@ class AuthManager(QObject):
             Credentials object if successful, None otherwise
         """
         log.debug("Attempting to authorize")
-
-        # First, check if we have previously successfully authenticated and return cached credentials if so
-        #  unless force is True, in which case we will re-authenticate regardless of cached credentials.
         if self._credentials and not force:
             log.debug("Using cached credentials")
             return self._credentials
-
-        # No cached credentials, attempt to load from storage unless force is true. Otherwise,
-        #  re-authenticate by starting the OAuth flow.
         user_info = None
         credentials: Optional[Credentials] = None
         if not force:
@@ -539,23 +512,16 @@ class AuthManager(QObject):
             credentials = self.acquire_new_credentials()
             if credentials:
                 user_info = self.retrieve_user_info(credentials)
-                # Store the new credentials token and userinfo
                 self._token_store.store(credentials.to_json(), json.dumps(user_info) if user_info else None)
         else:
             log.debug("Previous token found and successfully authorized.")
-
         if not credentials:
             log.debug("Failed to authorize")
             self.update_state(AuthState.NOT_LOGGED_IN)
             return None
-
-        # If we are here and still don't have any user_info, we probably have just
-        #  loaded credentials from storage and don't have user info yet.
         if user_info is None:
             user_info = self.retrieve_user_info(credentials)
-
-        # We know credentials is not None here because we checked above
-        self._credentials = cast(Credentials, credentials)
+        self._credentials = credentials
         self.update_state(AuthState.LOGGED_IN, user_info)
         return credentials
 

@@ -39,7 +39,7 @@ class AuthView(QWidget):
         self.setup_ui()
         self.load_credentials()
 
-    def store_credentials(self, client_id=None, client_secret=None):
+    def store_credentials(self, client_id: Optional[str] = None, client_secret: Optional[str] = None) -> None:
         """Store client ID and secret in AuthManager"""
         client_id = client_id or self.client_id_edit.text()
         client_secret = client_secret or self.client_secret_edit.text()
@@ -56,7 +56,7 @@ class AuthView(QWidget):
         if client_id and client_secret:
             self.manual_radio.setChecked(True)
 
-    def setup_ui(self):
+    def setup_ui(self) -> None:
         # Main layout
         main_layout = QVBoxLayout(self)
 
@@ -133,12 +133,12 @@ class AuthView(QWidget):
         # Set layout
         self.setLayout(main_layout)
 
-    def update_ui(self):
+    def update_ui(self) -> None:
         """Update UI based on selected option"""
         self.file_group.setEnabled(self.file_radio.isChecked())
         self.manual_group.setEnabled(self.manual_radio.isChecked())
 
-    def browse_file(self):
+    def browse_file(self) -> None:
         """Open file dialog to select client_secret.json file"""
 
         file_path, _ = QFileDialog.getOpenFileName(
@@ -148,7 +148,7 @@ class AuthView(QWidget):
         if file_path:
             self.file_path_edit.setText(file_path)
 
-    def register_client(self):
+    def register_client(self) -> None:
         """Process oauth client registry based on selected method"""
         if self.file_radio.isChecked():
             # File selection method

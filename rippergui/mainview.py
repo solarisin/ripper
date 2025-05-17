@@ -114,7 +114,7 @@ class MainView(QMainWindow):
             self._about_qt_act = QAction(parent=self)
             self._about_qt_act.setText("About &Qt")
             self._about_qt_act.setStatusTip("About Qt")
-            self._about_qt_act.triggered.connect(app.aboutQt)
+            self._about_qt_act.triggered.connect(lambda: QMessageBox.aboutQt(self))
         else:
             self._about_qt_act = QAction(parent=self)
             self._about_qt_act.setText("About &Qt")
@@ -401,103 +401,3 @@ class MainView(QMainWindow):
         # Update UI to enable options only available after an OAuth client is configured
         self.update_oauth_ui()
         log.info("OAuth client registration successful")
-
-    def _create_action(
-        self,
-        text: str,
-        parent: Optional[QWidget] = None,
-        icon: Optional[QIcon] = None,
-        shortcut: Optional[Union[QKeySequence, QKeySequence.StandardKey, str]] = None,
-        status_tip: Optional[str] = None,
-        triggered: Optional[Callable[[], Any]] = None,
-        checkable: bool = False,
-        checked: bool = False,
-    ) -> QAction:
-        """Create a QAction with the given parameters."""
-        action = QAction(text, parent or self)
-        if icon:
-            action.setIcon(icon)
-        if shortcut:
-            action.setShortcut(shortcut)
-        if status_tip:
-            action.setStatusTip(status_tip)
-        if triggered:
-            action.triggered.connect(triggered)
-        if checkable:
-            action.setCheckable(True)
-            action.setChecked(checked)
-        return action
-
-    def _setup_actions(self) -> None:
-        """Set up the actions for the main window."""
-        # File menu actions
-        self.new_action: QAction = self._create_action(
-            "New",
-            icon=QIcon.fromTheme("document-new"),
-            shortcut=QKeySequence.StandardKey.New,
-            status_tip="Create a new file",
-            triggered=self.new_file,
-        )
-
-        self.open_action: QAction = self._create_action(
-            "Open",
-            icon=QIcon.fromTheme("document-open"),
-            shortcut=QKeySequence.StandardKey.Open,
-            status_tip="Open an existing file",
-            triggered=self.open_file,
-        )
-
-        self.save_action: QAction = self._create_action(
-            "Save",
-            icon=QIcon.fromTheme("document-save"),
-            shortcut=QKeySequence.StandardKey.Save,
-            status_tip="Save the current file",
-            triggered=self.save_file,
-        )
-
-        self.save_as_action: QAction = self._create_action(
-            "Save As...",
-            icon=QIcon.fromTheme("document-save-as"),
-            shortcut=QKeySequence.StandardKey.SaveAs,
-            status_tip="Save the current file under a new name",
-            triggered=self.save_file_as,
-        )
-
-        self.exit_action: QAction = self._create_action(
-            "Exit", shortcut=QKeySequence.StandardKey.Quit, status_tip="Exit the application", triggered=self.close
-        )
-
-        # Help menu actions
-        self.about_action: QAction = self._create_action(
-            "About", status_tip="Show the application's About box", triggered=self.about
-        )
-
-        app = cast(QApplication, QApplication.instance())
-        if app:
-            self.about_qt_action: QAction = self._create_action(
-                "About Qt", status_tip="Show the Qt library's About box", triggered=lambda: QApplication.aboutQt()
-            )
-        else:
-            self.about_qt_action: QAction = self._create_action(
-                "About Qt", status_tip="Show the Qt library's About box", triggered=lambda: None
-            )
-
-    def new_file(self) -> None:
-        """Create a new file."""
-        pass
-
-    def open_file(self) -> None:
-        """Open an existing file."""
-        pass
-
-    def save_file(self) -> None:
-        """Save the current file."""
-        pass
-
-    def save_file_as(self) -> None:
-        """Save the current file under a new name."""
-        pass
-
-    def about(self) -> None:
-        """Show the application's About box."""
-        QMessageBox.about(self, "About", "Ripper Application")

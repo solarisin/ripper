@@ -334,14 +334,17 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
         if not self._filters:
             return True
 
-        source_model = cast(TransactionModel, self.sourceModel())
-        if not isinstance(source_model, TransactionModel):
+        source_model = self.sourceModel()
+        if not hasattr(source_model, "_headers"):
             return False
-
+        # Cast to QAbstractTableModel for type checking
+        source_model_table = cast(QAbstractTableModel, source_model)
         for column_index, filter_info in self._filters.items():
             filter_value = filter_info["value"]
             header_name = filter_info["header"]  # Get header name from stored info
-            if not self._check_row_against_filter(source_model, source_row, column_index, filter_value, header_name):
+            if not self._check_row_against_filter(
+                source_model_table, source_row, column_index, filter_value, header_name
+            ):
                 return False
         return True
 
@@ -399,15 +402,19 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
         Returns:
             True if the left item is less than the right item
         """
-        left_data = self.sourceModel().data(left, Qt.ItemDataRole.EditRole)
-        right_data = self.sourceModel().data(right, Qt.ItemDataRole.EditRole)
+        source_model = self.sourceModel()
+        # Only TransactionModel has _headers
+        if not hasattr(source_model, "_headers"):
+            return False
+        left_data = source_model.data(left, Qt.ItemDataRole.EditRole)
+        right_data = source_model.data(right, Qt.ItemDataRole.EditRole)
 
-        if left.column() == self.sourceModel()._headers.index("Amount"):
+        if left.column() == source_model._headers.index("Amount"):
             try:
                 return Decimal(str(left_data)) < Decimal(str(right_data))
             except (InvalidOperation, TypeError):  # Handle None comparison
-                pass
-        if left.column() == self.sourceModel()._headers.index("Date"):
+                return False
+        if left.column() == source_model._headers.index("Date"):
             if isinstance(left_data, QDate) and isinstance(right_data, QDate):
                 return left_data < right_data
 
@@ -641,6 +648,8 @@ class TransactionTableViewWidget(QWidget):
 
         if not transactions_data and simulate:
             transactions_data = sample_transactions
+        if transactions_data is None:
+            transactions_data = []
         self._unique_accounts: List[str] = sorted(
             list(set(t.get("Account", "") for t in transactions_data if t.get("Account")))
         )
@@ -689,7 +698,7 @@ class TransactionTableViewWidget(QWidget):
         Shows a modal dialog where the user can set filters for the transaction data.
         """
         current_proxy_filters = self.proxy_model.get_active_filters()
-        dialog = FilterDialog(self._unique_accounts, current_proxy_filters, self)
+        dialog = FilterDialog(set(self._unique_accounts), current_proxy_filters, self)
         dialog.filters_applied.connect(self.apply_filters_from_dialog)
         dialog.exec()  # Show as modal
 
