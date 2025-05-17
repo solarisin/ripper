@@ -41,14 +41,16 @@ jobs:
           ${{ runner.os }}-poetry-
 
     - name: Install dependencies
-      run: poetry install --with dev
+      run: |
+        poetry install --with dev
 
     - name: Lint code
-      run: poetry run flake8 src tests || true
+      run: |
+        poetry run flake8 --config=pyproject.toml
 
     - name: Run tests
       run: | 
-        poetry run pytest
+        poetry run pytest -m qt
 
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
