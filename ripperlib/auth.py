@@ -1,16 +1,17 @@
 import enum
 import json
 import logging
-import keyring
 from json import JSONDecodeError
-from typing import Dict, List, Optional, Any, Tuple
-from PySide6.QtCore import QObject, Signal
+from typing import Any, Dict, List, Optional, Tuple
+
+import keyring
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from keyring.errors import PasswordDeleteError
+from PySide6.QtCore import QObject, Signal
 
 OAUTH_CLIENT_KEY = "ripper-oauth-client"
 OAUTH_CLIENT_USER = "default-user"

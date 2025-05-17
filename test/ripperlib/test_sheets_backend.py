@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import MagicMock
+
 from googleapiclient.errors import HttpError
+
 from ripperlib.sheets_backend import list_sheets, read_data_from_spreadsheet
 
 

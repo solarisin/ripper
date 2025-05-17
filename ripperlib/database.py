@@ -1,10 +1,10 @@
 import logging
 import os
 import sqlite3
-from sqlite3 import Error
-from typing import Optional, Dict, List, Any
 from queue import Queue
+from sqlite3 import Error
 from threading import Lock
+from typing import Any, Dict, List, Optional
 
 # Create a logger for the database module
 log = logging.getLogger("ripper:database")

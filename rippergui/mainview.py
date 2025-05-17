@@ -3,24 +3,14 @@ from typing import Optional
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
-from PySide6.QtWidgets import (
-    QApplication,
-    QDialog,
-    QMainWindow,
-    QMessageBox,
-    QWidget,
-    QGridLayout,
-    QLabel,
-    QDockWidget,
-    QMenu,
-    QToolBar,
-    QToolTip,
-)
+from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QGridLayout,
+                               QLabel, QMainWindow, QMenu, QMessageBox,
+                               QToolBar, QToolTip, QWidget)
+from ripperlib.auth import AuthInfo, AuthManager, AuthState
 
+from rippergui.globals import Fonts
 from rippergui.oauth_client_config_view import AuthView
 from rippergui.sheets_selection_view import SheetsSelectionDialog
-from rippergui.globals import Fonts
-from ripperlib.auth import AuthManager, AuthState, AuthInfo
 
 log = logging.getLogger("ripper:mainview")
 

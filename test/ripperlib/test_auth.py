@@ -1,12 +1,13 @@
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-import json
-from keyring.errors import PasswordDeleteError
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
+from keyring.errors import PasswordDeleteError
 
-from ripperlib.auth import AuthState, AuthInfo, TokenStore, AuthManager, OAUTH_CLIENT_KEY, OAUTH_CLIENT_USER, SCOPES
+from ripperlib.auth import (OAUTH_CLIENT_KEY, OAUTH_CLIENT_USER, SCOPES,
+                            AuthInfo, AuthManager, AuthState, TokenStore)
 
 
 class TestAuthState(unittest.TestCase):

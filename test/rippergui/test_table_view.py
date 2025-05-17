@@ -1,15 +1,13 @@
 import unittest
 from decimal import Decimal
-import pytest
-from PySide6.QtCore import Qt, QDate, QRegularExpression
 
-from rippergui.table_view import (
-    TransactionModel,
-    TransactionSortFilterProxyModel,
-    FilterDialog,
-    TransactionTableViewWidget,
-    sample_transactions,
-)
+import pytest
+from PySide6.QtCore import QDate, QRegularExpression, Qt
+
+from rippergui.table_view import (FilterDialog, TransactionModel,
+                                  TransactionSortFilterProxyModel,
+                                  TransactionTableViewWidget,
+                                  sample_transactions)
 
 
 @pytest.mark.qt

@@ -50,7 +50,7 @@ jobs:
         poetry run flake8 --config=pyproject.toml
 
     - name: Run tests
-      run: | 
+      run: | # ignore any test files that import a Qt GUI library
         poetry run pytest -m "not qt" --ignore=test/rippergui/test_table_view.py --ignore=test/ripperlib/test_main.py
 
     - name: Upload coverage report

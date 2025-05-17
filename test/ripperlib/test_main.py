@@ -1,10 +1,12 @@
-import unittest
-from unittest.mock import MagicMock, patch
 import importlib.metadata
 import logging
 import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
 import pytest
-from ripperlib.main import get_version, configure_logging
+
+from ripperlib.main import configure_logging, get_version
 
 
 class TestMain(unittest.TestCase):

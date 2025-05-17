@@ -1,21 +1,10 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QFileDialog,
-    QRadioButton,
-    QGroupBox,
-    QFormLayout,
-    QMessageBox,
-)
-
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QFileDialog, QFormLayout, QGroupBox,
+                               QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+                               QPushButton, QRadioButton, QVBoxLayout, QWidget)
 from ripperlib.auth import AuthManager
 
 

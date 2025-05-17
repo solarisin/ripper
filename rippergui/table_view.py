@@ -1,33 +1,14 @@
-from decimal import Decimal, InvalidOperation
-from typing import Dict, List, Optional, Any, Set
 import logging
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, List, Optional, Set
 
-from PySide6.QtCore import (
-    Qt,
-    QAbstractTableModel,
-    QModelIndex,
-    QSortFilterProxyModel,
-    QDate,
-    Slot,
-    Signal,
-    QRegularExpression,
-    QObject,
-)
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QTableView,
-    QLineEdit,
-    QHeaderView,
-    QLabel,
-    QDoubleSpinBox,
-    QComboBox,
-    QGridLayout,
-    QPushButton,
-    QDialog,
-    QDialogButtonBox,
-)
+from PySide6.QtCore import (QAbstractTableModel, QDate, QModelIndex, QObject,
+                            QRegularExpression, QSortFilterProxyModel, Qt,
+                            Signal, Slot)
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox,
+                               QDoubleSpinBox, QGridLayout, QHBoxLayout,
+                               QHeaderView, QLabel, QLineEdit, QPushButton,
+                               QTableView, QVBoxLayout, QWidget)
 
 # Configure module logger
 log = logging.getLogger("ripper:table_view")

@@ -1,22 +1,13 @@
-import unittest
-from unittest.mock import MagicMock, patch
 import os
+import unittest
 from sqlite3 import Error
+from unittest.mock import MagicMock, patch
 
-
-from ripperlib.database import (
-    get_db_path,
-    create_connection,
-    create_table,
-    insert_transaction,
-    insert_transactions,
-    retrieve_transactions,
-    insert_data_source,
-    store_thumbnail,
-    get_thumbnail,
-    init_database,
-    ConnectionPool,
-)
+from ripperlib.database import (ConnectionPool, create_connection,
+                                create_table, get_db_path, get_thumbnail,
+                                init_database, insert_data_source,
+                                insert_transaction, insert_transactions,
+                                retrieve_transactions, store_thumbnail)
 
 
 class TestConnectionPool(unittest.TestCase):

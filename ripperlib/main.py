@@ -1,11 +1,13 @@
 import importlib.metadata
 import logging
 import sys
-import toml
 from pathlib import Path
 from typing import Optional
+
+import toml
 from PySide6.QtWidgets import QApplication
 from rippergui.mainview import MainView
+
 from ripperlib.auth import AuthManager
 
 # Get the project root path
