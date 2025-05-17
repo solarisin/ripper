@@ -1,10 +1,8 @@
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 import os
-import sqlite3
 from sqlite3 import Error
 
-import pytest
 
 from ripperlib.database import (
     get_db_path,
@@ -17,19 +15,21 @@ from ripperlib.database import (
     store_thumbnail,
     get_thumbnail,
     init_database,
-    ConnectionPool
+    ConnectionPool,
 )
 
 
 class TestConnectionPool(unittest.TestCase):
     """Test cases for the ConnectionPool class."""
 
-    @patch('sqlite3.connect')
+    @patch("sqlite3.connect")
     def test_initialize_pool(self, mock_connect):
         """Test that the connection pool is initialized with the correct number of connections."""
         # Create a connection pool with a specific size
         pool_size = 3
         pool = ConnectionPool("test.db", pool_size)
+        self.assertEqual(pool.pool_size, pool_size)
+        self.assertEqual(pool.db_file_path, "test.db")
 
         # Check that connect was called the correct number of times
         self.assertEqual(mock_connect.call_count, pool_size)
@@ -38,7 +38,7 @@ class TestConnectionPool(unittest.TestCase):
         for call_args in mock_connect.call_args_list:
             self.assertEqual(call_args[0][0], "test.db")
 
-    @patch('sqlite3.connect')
+    @patch("sqlite3.connect")
     def test_get_connection(self, mock_connect):
         """Test that get_connection returns a connection from the pool."""
         # Create a mock connection
@@ -54,7 +54,7 @@ class TestConnectionPool(unittest.TestCase):
         # Check that the connection is the mock connection
         self.assertEqual(conn, mock_conn)
 
-    @patch('sqlite3.connect')
+    @patch("sqlite3.connect")
     def test_release_connection(self, mock_connect):
         """Test that release_connection returns a connection to the pool."""
         # Create a mock connection
@@ -74,7 +74,7 @@ class TestConnectionPool(unittest.TestCase):
         conn2 = pool.get_connection()
         self.assertEqual(conn2, mock_conn)
 
-    @patch('sqlite3.connect')
+    @patch("sqlite3.connect")
     def test_close_all_connections(self, mock_connect):
         """Test that close_all_connections closes all connections in the pool."""
         # Create mock connections
@@ -95,9 +95,9 @@ class TestConnectionPool(unittest.TestCase):
 class TestDatabaseFunctions(unittest.TestCase):
     """Test cases for the database functions."""
 
-    @patch('os.environ.get')
-    @patch('os.path.exists')
-    @patch('os.makedirs')
+    @patch("os.environ.get")
+    @patch("os.path.exists")
+    @patch("os.makedirs")
     def test_get_db_path_existing_dir(self, mock_makedirs, mock_exists, mock_environ_get):
         """Test that get_db_path returns the correct path when the directory exists."""
         # Set up the mocks
@@ -114,9 +114,9 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that makedirs was not called
         mock_makedirs.assert_not_called()
 
-    @patch('os.environ.get')
-    @patch('os.path.exists')
-    @patch('os.makedirs')
+    @patch("os.environ.get")
+    @patch("os.path.exists")
+    @patch("os.makedirs")
     def test_get_db_path_create_dir(self, mock_makedirs, mock_exists, mock_environ_get):
         """Test that get_db_path creates the directory when it doesn't exist."""
         # Set up the mocks
@@ -133,10 +133,10 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that makedirs was called with the correct path
         mock_makedirs.assert_called_once_with(os.path.join("/app_data", "ripper"))
 
-    @patch('os.environ.get')
-    @patch('os.path.exists')
-    @patch('os.makedirs')
-    @patch('os.getcwd')
+    @patch("os.environ.get")
+    @patch("os.path.exists")
+    @patch("os.makedirs")
+    @patch("os.getcwd")
     def test_get_db_path_makedirs_error(self, mock_getcwd, mock_makedirs, mock_exists, mock_environ_get):
         """Test that get_db_path falls back to the current directory when makedirs fails."""
         # Set up the mocks
@@ -152,7 +152,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         expected_path = os.path.join("/current_dir", "test.db")
         self.assertEqual(result, expected_path)
 
-    @patch('sqlite3.connect')
+    @patch("sqlite3.connect")
     def test_create_connection_success(self, mock_connect):
         """Test that create_connection returns a connection when successful."""
         # Set up the mock
@@ -168,7 +168,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that connect was called with the correct path
         mock_connect.assert_called_once_with("test.db")
 
-    @patch('sqlite3.connect')
+    @patch("sqlite3.connect")
     def test_create_connection_error(self, mock_connect):
         """Test that create_connection returns None when an error occurs."""
         # Set up the mock to raise an error
@@ -180,7 +180,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that the result is None
         self.assertIsNone(result)
 
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.create_connection")
     def test_create_table(self, mock_create_connection):
         """Test that create_table creates the necessary tables."""
         # Set up the mock connection and cursor
@@ -207,7 +207,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.create_connection")
     def test_create_table_no_connection(self, mock_create_connection):
         """Test that create_table handles the case when no connection can be created."""
         # Set up the mock to return None
@@ -219,7 +219,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that create_connection was called with the correct path
         mock_create_connection.assert_called_once_with("test.db")
 
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.create_connection")
     def test_create_table_error(self, mock_create_connection):
         """Test that create_table handles errors during table creation."""
         # Set up the mock connection and cursor
@@ -235,8 +235,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_insert_transaction_success(self, mock_create_connection, mock_get_db_path):
         """Test that insert_transaction inserts a transaction successfully."""
         # Set up the mocks
@@ -247,12 +247,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_create_connection.return_value = mock_conn
 
         # Create a test transaction
-        transaction = {
-            "date": "2023-01-01",
-            "description": "Test Transaction",
-            "amount": 100.0,
-            "category": "Test"
-        }
+        transaction = {"date": "2023-01-01", "description": "Test Transaction", "amount": 100.0, "category": "Test"}
 
         # Call insert_transaction
         result = insert_transaction(transaction)
@@ -273,7 +268,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_cursor.execute.assert_called_once_with(
             """INSERT INTO transactions (date, description, amount, category)
                          VALUES (?, ?, ?, ?)""",
-            ("2023-01-01", "Test Transaction", 100.0, "Test")
+            ("2023-01-01", "Test Transaction", 100.0, "Test"),
         )
 
         # Check that commit was called
@@ -282,8 +277,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_insert_transaction_no_connection(self, mock_create_connection, mock_get_db_path):
         """Test that insert_transaction returns False when no connection can be created."""
         # Set up the mocks
@@ -291,12 +286,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_create_connection.return_value = None
 
         # Create a test transaction
-        transaction = {
-            "date": "2023-01-01",
-            "description": "Test Transaction",
-            "amount": 100.0,
-            "category": "Test"
-        }
+        transaction = {"date": "2023-01-01", "description": "Test Transaction", "amount": 100.0, "category": "Test"}
 
         # Call insert_transaction
         result = insert_transaction(transaction)
@@ -304,8 +294,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that the result is False
         self.assertFalse(result)
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_insert_transaction_error(self, mock_create_connection, mock_get_db_path):
         """Test that insert_transaction handles errors during insertion."""
         # Set up the mocks
@@ -317,12 +307,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_create_connection.return_value = mock_conn
 
         # Create a test transaction
-        transaction = {
-            "date": "2023-01-01",
-            "description": "Test Transaction",
-            "amount": 100.0,
-            "category": "Test"
-        }
+        transaction = {"date": "2023-01-01", "description": "Test Transaction", "amount": 100.0, "category": "Test"}
 
         # Call insert_transaction
         result = insert_transaction(transaction)
@@ -333,8 +318,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_insert_transactions_success(self, mock_create_connection, mock_get_db_path):
         """Test that insert_transactions inserts multiple transactions successfully."""
         # Set up the mocks
@@ -346,18 +331,8 @@ class TestDatabaseFunctions(unittest.TestCase):
 
         # Create test transactions
         transactions = [
-            {
-                "date": "2023-01-01",
-                "description": "Test Transaction 1",
-                "amount": 100.0,
-                "category": "Test"
-            },
-            {
-                "date": "2023-01-02",
-                "description": "Test Transaction 2",
-                "amount": 200.0,
-                "category": "Test"
-            }
+            {"date": "2023-01-01", "description": "Test Transaction 1", "amount": 100.0, "category": "Test"},
+            {"date": "2023-01-02", "description": "Test Transaction 2", "amount": 200.0, "category": "Test"},
         ]
 
         # Call insert_transactions
@@ -379,10 +354,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_cursor.executemany.assert_called_once_with(
             """INSERT INTO transactions (date, description, amount, category)
                          VALUES (?, ?, ?, ?)""",
-            [
-                ("2023-01-01", "Test Transaction 1", 100.0, "Test"),
-                ("2023-01-02", "Test Transaction 2", 200.0, "Test")
-            ]
+            [("2023-01-01", "Test Transaction 1", 100.0, "Test"), ("2023-01-02", "Test Transaction 2", 200.0, "Test")],
         )
 
         # Check that commit was called
@@ -391,8 +363,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_retrieve_transactions_success(self, mock_create_connection, mock_get_db_path):
         """Test that retrieve_transactions retrieves transactions successfully."""
         # Set up the mocks
@@ -401,7 +373,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_cursor = MagicMock()
         mock_cursor.fetchall.return_value = [
             (1, "2023-01-01", "Test Transaction 1", 100.0, "Test"),
-            (2, "2023-01-02", "Test Transaction 2", 200.0, "Test")
+            (2, "2023-01-02", "Test Transaction 2", 200.0, "Test"),
         ]
         mock_conn.cursor.return_value = mock_cursor
         mock_create_connection.return_value = mock_conn
@@ -412,7 +384,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that the result contains the expected transactions
         expected_transactions = [
             {"date": "2023-01-01", "description": "Test Transaction 1", "amount": 100.0, "category": "Test"},
-            {"date": "2023-01-02", "description": "Test Transaction 2", "amount": 200.0, "category": "Test"}
+            {"date": "2023-01-02", "description": "Test Transaction 2", "amount": 200.0, "category": "Test"},
         ]
         self.assertEqual(result, expected_transactions)
 
@@ -434,8 +406,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_retrieve_transactions_no_connection(self, mock_create_connection, mock_get_db_path):
         """Test that retrieve_transactions returns an empty list when no connection can be created."""
         # Set up the mocks
@@ -448,8 +420,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that the result is an empty list
         self.assertEqual(result, [])
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_retrieve_transactions_error(self, mock_create_connection, mock_get_db_path):
         """Test that retrieve_transactions handles errors during retrieval."""
         # Set up the mocks
@@ -469,8 +441,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_insert_data_source_success(self, mock_create_connection, mock_get_db_path):
         """Test that insert_data_source inserts a data source successfully."""
         # Set up the mocks
@@ -499,7 +471,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_cursor.execute.assert_called_once_with(
             """INSERT INTO data_sources (source_name, spreadsheet_id, sheet_name, cell_range)
                    VALUES (?, ?, ?, ?)""",
-            ("Test Source", "test_id", "Sheet1", "A1:Z100")
+            ("Test Source", "test_id", "Sheet1", "A1:Z100"),
         )
 
         # Check that commit was called
@@ -508,8 +480,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_store_thumbnail_insert_success(self, mock_create_connection, mock_get_db_path):
         """Test that store_thumbnail inserts a new thumbnail successfully."""
         # Set up the mocks
@@ -543,7 +515,7 @@ class TestDatabaseFunctions(unittest.TestCase):
         mock_cursor.execute.assert_any_call(
             """INSERT INTO sheet_thumbnails (sheet_id, thumbnail_data, last_modified)
                        VALUES (?, ?, ?)""",
-            ("test_id", b"thumbnail_data", "2023-01-01")
+            ("test_id", b"thumbnail_data", "2023-01-01"),
         )
 
         # Check that commit was called
@@ -552,8 +524,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_store_thumbnail_update_success(self, mock_create_connection, mock_get_db_path):
         """Test that store_thumbnail updates an existing thumbnail successfully."""
         # Set up the mocks
@@ -585,10 +557,10 @@ class TestDatabaseFunctions(unittest.TestCase):
 
         # Check that execute was called with the correct SQL and parameters for update
         mock_cursor.execute.assert_any_call(
-            """UPDATE sheet_thumbnails 
+            """UPDATE sheet_thumbnails
                        SET thumbnail_data = ?, last_modified = ?
                        WHERE sheet_id = ?""",
-            (b"thumbnail_data", "2023-01-01", "test_id")
+            (b"thumbnail_data", "2023-01-01", "test_id"),
         )
 
         # Check that commit was called
@@ -597,8 +569,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_get_thumbnail_success(self, mock_create_connection, mock_get_db_path):
         """Test that get_thumbnail retrieves a thumbnail successfully."""
         # Set up the mocks
@@ -636,8 +608,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that close was called
         mock_conn.close.assert_called_once()
 
-    @patch('ripperlib.database.get_db_path')
-    @patch('ripperlib.database.create_connection')
+    @patch("ripperlib.database.get_db_path")
+    @patch("ripperlib.database.create_connection")
     def test_get_thumbnail_not_found(self, mock_create_connection, mock_get_db_path):
         """Test that get_thumbnail returns None when the thumbnail is not found."""
         # Set up the mocks
@@ -654,8 +626,8 @@ class TestDatabaseFunctions(unittest.TestCase):
         # Check that the result is None
         self.assertIsNone(result)
 
-    @patch('ripperlib.database.create_table')
-    @patch('ripperlib.database.get_db_path')
+    @patch("ripperlib.database.create_table")
+    @patch("ripperlib.database.get_db_path")
     def test_init_database(self, mock_get_db_path, mock_create_table):
         """Test that init_database calls create_table with the correct path."""
         # Set up the mock

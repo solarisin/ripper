@@ -1,6 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional, Union
-
+from typing import List, Dict, Any, Optional
 from googleapiclient.errors import HttpError
 
 # Configure module logger

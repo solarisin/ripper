@@ -1,10 +1,9 @@
 import enum
 import json
 import logging
-from json import JSONDecodeError
-from typing import Dict, List, Optional, Any, Tuple, Union, Type, cast
-
 import keyring
+from json import JSONDecodeError
+from typing import Dict, List, Optional, Any, Tuple
 from PySide6.QtCore import QObject, Signal
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -34,17 +33,18 @@ class AuthState(enum.Enum):
     - NOT_LOGGED_IN: OAuth client is configured but user is not logged in
     - LOGGED_IN: User is fully authenticated
     """
+
     NO_CLIENT = 0
     NOT_LOGGED_IN = 1
     LOGGED_IN = 2
 
-    def __lt__(self, other: 'AuthState') -> bool:
+    def __lt__(self, other: "AuthState") -> bool:
         """Compare if this state is less authenticated than another state."""
         if self.__class__ is other.__class__:
             return self.value < other.value
         return NotImplemented
 
-    def __gt__(self, other: 'AuthState') -> bool:
+    def __gt__(self, other: "AuthState") -> bool:
         """Compare if this state is more authenticated than another state."""
         if self.__class__ is other.__class__:
             return self.value > other.value

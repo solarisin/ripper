@@ -1,16 +1,14 @@
 import unittest
-from unittest.mock import MagicMock, patch
 from decimal import Decimal
 import pytest
-from PySide6.QtCore import Qt, QDate, QModelIndex, QRegularExpression
-from PySide6.QtTest import QTest
+from PySide6.QtCore import Qt, QDate, QRegularExpression
 
 from rippergui.table_view import (
     TransactionModel,
     TransactionSortFilterProxyModel,
     FilterDialog,
     TransactionTableViewWidget,
-    sample_transactions
+    sample_transactions,
 )
 
 
@@ -26,7 +24,7 @@ class TestTransactionModel(unittest.TestCase):
                 "Description": "Test Transaction 1",
                 "Category": "Test Category",
                 "Amount": -50.25,
-                "Account": "Test Account"
+                "Account": "Test Account",
             },
             {
                 "ID": "t2",
@@ -34,8 +32,8 @@ class TestTransactionModel(unittest.TestCase):
                 "Description": "Test Transaction 2",
                 "Category": "Another Category",
                 "Amount": 100.50,
-                "Account": "Another Account"
-            }
+                "Account": "Another Account",
+            },
         ]
         self.model = TransactionModel(self.test_data)
 
@@ -149,7 +147,7 @@ class TestTransactionModel(unittest.TestCase):
                 "Description": "New Transaction",
                 "Category": "New Category",
                 "Amount": 75.00,
-                "Account": "New Account"
+                "Account": "New Account",
             }
         ]
         self.model.setDataList(new_data)
@@ -169,7 +167,7 @@ class TestTransactionSortFilterProxyModel(unittest.TestCase):
                 "Description": "Coffee Shop",
                 "Category": "Food & Drink",
                 "Amount": -5.75,
-                "Account": "Checking"
+                "Account": "Checking",
             },
             {
                 "ID": "t2",
@@ -177,7 +175,7 @@ class TestTransactionSortFilterProxyModel(unittest.TestCase):
                 "Description": "Grocery Store",
                 "Category": "Groceries",
                 "Amount": -75.20,
-                "Account": "Credit Card"
+                "Account": "Credit Card",
             },
             {
                 "ID": "t3",
@@ -185,8 +183,8 @@ class TestTransactionSortFilterProxyModel(unittest.TestCase):
                 "Description": "Salary Deposit",
                 "Category": "Income",
                 "Amount": 2500.00,
-                "Account": "Checking"
-            }
+                "Account": "Checking",
+            },
         ]
         self.source_model = TransactionModel(self.test_data)
         self.proxy_model = TransactionSortFilterProxyModel()

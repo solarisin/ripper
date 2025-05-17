@@ -1,5 +1,9 @@
 .vscode/
 **/__pycache__/
 venv/
+.venv/
 **/ripper.db
 **/client_secret*.json
+.coverage
+coverage.xml
+**/.pytest_cache/

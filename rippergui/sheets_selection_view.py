@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Dict, List, Optional, Any
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QPixmap, QImage
@@ -25,7 +25,6 @@ from googleapiclient.errors import HttpError
 
 from ripperlib.auth import AuthManager
 from ripperlib.database import get_thumbnail, store_thumbnail
-from ripperlib.sheets_backend import list_sheets
 
 log = logging.getLogger("ripper:sheets_selection_view")
 
@@ -396,7 +395,8 @@ class SheetsSelectionDialog(QDialog):
                     .list(
                         q="mimeType='application/vnd.google-apps.spreadsheet'",
                         spaces="drive",
-                        fields="nextPageToken, files(id, name, thumbnailLink, webViewLink, createdTime, modifiedTime, owners, size, shared)",
+                        fields="nextPageToken, files(id, name, thumbnailLink, webViewLink, createdTime, modifiedTime, \
+                            owners, size, shared)",
                         pageToken=page_token,
                     )
                     .execute()
@@ -523,7 +523,7 @@ class SheetsSelectionDialog(QDialog):
         log.info(f"Worksheet Range: {sheet_range if sheet_range else 'Entire table'}")
 
         # Show confirmation to user with sheet name and range
-        confirmation = f"<br><br><b>Sheet information has been printed to the log.</b><br>"
+        confirmation = "<br><br><b>Sheet information has been printed to the log.</b><br>"
         confirmation += f"<b>Sheet Name:</b> {sheet_name}<br>"
         confirmation += f"<b>Sheet Range:</b> {sheet_range if sheet_range else 'Entire table'}"
         log.info(self.details_text + confirmation)

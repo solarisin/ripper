@@ -1,9 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-import pytest
 import json
-import keyring
 from keyring.errors import PasswordDeleteError
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
@@ -45,10 +43,12 @@ class TestTokenStore(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.token_store = TokenStore()
-        self.mock_token = json.dumps({"access_token": "test_token", "scopes": ["https://www.googleapis.com/auth/spreadsheets"]})
+        self.mock_token = json.dumps(
+            {"access_token": "test_token", "scopes": ["https://www.googleapis.com/auth/spreadsheets"]}
+        )
         self.mock_userinfo = json.dumps({"email": "test@example.com"})
 
-    @patch('keyring.delete_password')
+    @patch("keyring.delete_password")
     def test_invalidate(self, mock_delete_password):
         """Test that invalidate clears the current token and removes it from keyring."""
         # Set up the token store with a token
@@ -65,7 +65,7 @@ class TestTokenStore(unittest.TestCase):
         # Check that delete_password was called twice (once for token, once for userinfo)
         self.assertEqual(mock_delete_password.call_count, 2)
 
-    @patch('keyring.delete_password')
+    @patch("keyring.delete_password")
     def test_invalidate_handles_password_delete_error(self, mock_delete_password):
         """Test that invalidate handles PasswordDeleteError gracefully."""
         # Set up the token store with a token
@@ -85,7 +85,7 @@ class TestTokenStore(unittest.TestCase):
         # Check that delete_password was called twice (once for token, once for userinfo)
         self.assertEqual(mock_delete_password.call_count, 2)
 
-    @patch('keyring.set_password')
+    @patch("keyring.set_password")
     def test_store(self, mock_set_password):
         """Test that store saves the token and userinfo to keyring."""
         # Call store with token and userinfo
@@ -98,8 +98,8 @@ class TestTokenStore(unittest.TestCase):
         # Check that set_password was called twice (once for token, once for userinfo)
         self.assertEqual(mock_set_password.call_count, 2)
 
-    @patch('keyring.set_password')
-    @patch('keyring.delete_password')
+    @patch("keyring.set_password")
+    @patch("keyring.delete_password")
     def test_store_with_none_userinfo(self, mock_delete_password, mock_set_password):
         """Test that store handles None userinfo correctly."""
         # Call store with token but no userinfo
@@ -115,7 +115,7 @@ class TestTokenStore(unittest.TestCase):
         # Check that delete_password was called once (for userinfo)
         mock_delete_password.assert_called_once()
 
-    @patch('keyring.get_password')
+    @patch("keyring.get_password")
     def test_load(self, mock_get_password):
         """Test that load retrieves the token and userinfo from keyring."""
         # Set up the mock to return token and userinfo
@@ -131,7 +131,7 @@ class TestTokenStore(unittest.TestCase):
         # Check that get_password was called twice (once for token, once for userinfo)
         self.assertEqual(mock_get_password.call_count, 2)
 
-    @patch('keyring.get_password')
+    @patch("keyring.get_password")
     def test_load_no_token(self, mock_get_password):
         """Test that load raises ValueError when no token is found."""
         # Set up the mock to return None for token
@@ -141,48 +141,54 @@ class TestTokenStore(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.token_store.load()
 
-    @patch('keyring.get_password')
+    @patch("keyring.get_password")
     def test_get_credentials(self, mock_get_password):
         """Test that get_credentials returns a Credentials object from the stored token."""
         # Set up the mock to return a token with scopes
-        token_with_scopes = json.dumps({
-            "access_token": "test_token",
-            "refresh_token": "test_refresh",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "client_id": "test_client_id",
-            "client_secret": "test_client_secret",
-            "scopes": SCOPES  # Use the actual SCOPES from ripperlib.auth
-        })
+        token_with_scopes = json.dumps(
+            {
+                "access_token": "test_token",
+                "refresh_token": "test_refresh",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_id": "test_client_id",
+                "client_secret": "test_client_secret",
+                "scopes": SCOPES,  # Use the actual SCOPES from ripperlib.auth
+            }
+        )
         mock_get_password.side_effect = [token_with_scopes, None]
 
         # Call get_credentials
-        with patch('google.oauth2.credentials.Credentials.from_authorized_user_info') as mock_from_info:
+        with patch("google.oauth2.credentials.Credentials.from_authorized_user_info") as mock_from_info:
             mock_from_info.return_value = MagicMock(spec=Credentials)
             creds = self.token_store.get_credentials()
+            self.assertIsNotNone(creds)
+            self.assertIsInstance(creds, Credentials)
 
             # Check that from_authorized_user_info was called with the token data
             mock_from_info.assert_called_once()
             args = mock_from_info.call_args[0][0]
             self.assertEqual(args["access_token"], "test_token")
 
-    @patch('keyring.get_password')
+    @patch("keyring.get_password")
     def test_get_credentials_missing_scopes(self, mock_get_password):
         """Test that get_credentials raises SystemError when required scopes are missing."""
         # Set up the mock to return a token without scopes
-        token_without_scopes = json.dumps({
-            "access_token": "test_token",
-            "refresh_token": "test_refresh",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "client_id": "test_client_id",
-            "client_secret": "test_client_secret"
-        })
+        token_without_scopes = json.dumps(
+            {
+                "access_token": "test_token",
+                "refresh_token": "test_refresh",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_id": "test_client_id",
+                "client_secret": "test_client_secret",
+            }
+        )
         mock_get_password.side_effect = [token_without_scopes, None]
 
         # Call get_credentials and check that it raises SystemError
         with self.assertRaises(SystemError):
             self.token_store.get_credentials()
 
-    @patch('keyring.get_password')
+    @patch("keyring.get_password")
     def test_get_user_info(self, mock_get_password):
         """Test that get_user_info returns the user info from keyring."""
         # Set up the mock to return token and userinfo
@@ -201,8 +207,8 @@ class TestAuthManager(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Create a fresh AuthManager for each test
-        with patch.object(AuthManager, '_instance', None):
-            with patch.object(AuthManager, '__init__', return_value=None):
+        with patch.object(AuthManager, "_instance", None):
+            with patch.object(AuthManager, "__init__", return_value=None):
                 self.auth_manager = AuthManager()
                 self.auth_manager._current_auth_info = AuthInfo(AuthState.NO_CLIENT)
                 self.auth_manager._initialized = True
@@ -211,7 +217,7 @@ class TestAuthManager(unittest.TestCase):
                 # Create a mock for the signal to prevent "Signal source has been deleted" errors
                 self.auth_manager.authStateChanged = MagicMock()
 
-    @patch('keyring.get_password')
+    @patch("keyring.get_password")
     def test_has_oauth_client_credentials(self, mock_get_password):
         """Test that has_oauth_client_credentials returns True when credentials are available."""
         # Set up the mock to return credentials
@@ -226,7 +232,7 @@ class TestAuthManager(unittest.TestCase):
         # Check that get_password was called with the correct arguments
         mock_get_password.assert_called_once_with(OAUTH_CLIENT_KEY, OAUTH_CLIENT_USER)
 
-    @patch('keyring.get_password')
+    @patch("keyring.get_password")
     def test_has_oauth_client_credentials_no_credentials(self, mock_get_password):
         """Test that has_oauth_client_credentials returns False when no credentials are available."""
         # Set up the mock to return None
@@ -238,7 +244,7 @@ class TestAuthManager(unittest.TestCase):
         # Check that it returns False
         self.assertFalse(result)
 
-    @patch('keyring.get_password')
+    @patch("keyring.get_password")
     def test_load_oauth_client_credentials(self, mock_get_password):
         """Test that load_oauth_client_credentials returns the client ID and secret from keyring."""
         # Set up the mock to return credentials
@@ -251,7 +257,7 @@ class TestAuthManager(unittest.TestCase):
         self.assertEqual(client_id, "test_id")
         self.assertEqual(client_secret, "test_secret")
 
-    @patch('keyring.set_password')
+    @patch("keyring.set_password")
     def test_store_oauth_client_credentials(self, mock_set_password):
         """Test that store_oauth_client_credentials saves the credentials to keyring."""
         # Call store_oauth_client_credentials
@@ -315,7 +321,7 @@ class TestAuthManager(unittest.TestCase):
         self.assertEqual(result.auth_state(), AuthState.LOGGED_IN)
         self.assertEqual(result.user_email(), "test@example.com")
 
-    @patch('ripperlib.auth.AuthManager.create_userinfo_service')
+    @patch("ripperlib.auth.AuthManager.create_userinfo_service")
     def test_retrieve_user_info(self, mock_create_service):
         """Test that retrieve_user_info gets user info from the userinfo service."""
         # Set up the mock service
@@ -337,7 +343,7 @@ class TestAuthManager(unittest.TestCase):
         mock_service.userinfo.return_value.get.assert_called_once()
         mock_userinfo.assert_called_once()
 
-    @patch('ripperlib.auth.AuthManager.create_userinfo_service')
+    @patch("ripperlib.auth.AuthManager.create_userinfo_service")
     def test_retrieve_user_info_error(self, mock_create_service):
         """Test that retrieve_user_info handles errors gracefully."""
         # Set up the mock service to raise an error
@@ -424,7 +430,7 @@ class TestAuthManager(unittest.TestCase):
 
         # Set up refresh_token to return a refreshed credential
         refreshed_cred = MagicMock()
-        with patch.object(self.auth_manager, 'refresh_token', return_value=refreshed_cred):
+        with patch.object(self.auth_manager, "refresh_token", return_value=refreshed_cred):
             # Call attempt_load_stored_token
             result = self.auth_manager.attempt_load_stored_token()
 
@@ -453,8 +459,8 @@ class TestAuthManager(unittest.TestCase):
         # Check that it returns None
         self.assertIsNone(result)
 
-    @patch('ripperlib.auth.AuthManager.load_oauth_client_credentials')
-    @patch('google_auth_oauthlib.flow.InstalledAppFlow.from_client_config')
+    @patch("ripperlib.auth.AuthManager.load_oauth_client_credentials")
+    @patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_config")
     def test_acquire_new_credentials_success(self, mock_flow, mock_load_creds):
         """Test that acquire_new_credentials gets new credentials successfully."""
         # Set up the mock to return client credentials
@@ -477,7 +483,7 @@ class TestAuthManager(unittest.TestCase):
         self.assertEqual(client_config["installed"]["client_id"], "test_id")
         self.assertEqual(client_config["installed"]["client_secret"], "test_secret")
 
-    @patch('ripperlib.auth.AuthManager.load_oauth_client_credentials')
+    @patch("ripperlib.auth.AuthManager.load_oauth_client_credentials")
     def test_acquire_new_credentials_no_client_config(self, mock_load_creds):
         """Test that acquire_new_credentials handles the case when no client config is available."""
         # Set up the mock to return no client credentials
@@ -498,7 +504,7 @@ class TestAuthManager(unittest.TestCase):
         self.auth_manager._current_auth_info = AuthInfo(AuthState.NO_CLIENT)
 
         # Set up has_oauth_client_credentials to return False
-        with patch.object(self.auth_manager, 'has_oauth_client_credentials', return_value=False):
+        with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=False):
             # Call check_stored_credentials
             self.auth_manager.check_stored_credentials()
 
@@ -511,10 +517,10 @@ class TestAuthManager(unittest.TestCase):
         self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
 
         # Set up has_oauth_client_credentials to return True
-        with patch.object(self.auth_manager, 'has_oauth_client_credentials', return_value=True):
+        with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=True):
             # Set up attempt_load_stored_token to return a valid credential
             mock_cred = MagicMock()
-            with patch.object(self.auth_manager, 'attempt_load_stored_token', return_value=mock_cred):
+            with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=mock_cred):
                 # Set up token_store.get_user_info to return user info
                 user_info = {"email": "test@example.com"}
                 self.auth_manager._token_store.get_user_info.return_value = user_info
@@ -532,9 +538,9 @@ class TestAuthManager(unittest.TestCase):
         self.auth_manager._current_auth_info = AuthInfo(AuthState.NO_CLIENT)
 
         # Set up has_oauth_client_credentials to return True
-        with patch.object(self.auth_manager, 'has_oauth_client_credentials', return_value=True):
+        with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=True):
             # Set up attempt_load_stored_token to return None
-            with patch.object(self.auth_manager, 'attempt_load_stored_token', return_value=None):
+            with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=None):
                 # Call check_stored_credentials
                 self.auth_manager.check_stored_credentials()
 
@@ -675,8 +681,8 @@ class TestAuthManager(unittest.TestCase):
         # Mock the build function
         mock_service = MagicMock()
 
-        with patch.object(self.auth_manager, 'authorize', return_value=mock_cred):
-            with patch('ripperlib.auth.build', return_value=mock_service) as mock_build:
+        with patch.object(self.auth_manager, "authorize", return_value=mock_cred):
+            with patch("ripperlib.auth.build", return_value=mock_service) as mock_build:
                 # Call create_sheets_service
                 result = self.auth_manager.create_sheets_service()
 
@@ -694,8 +700,8 @@ class TestAuthManager(unittest.TestCase):
         # Mock the build function
         mock_service = MagicMock()
 
-        with patch.object(self.auth_manager, 'authorize', return_value=mock_cred):
-            with patch('ripperlib.auth.build', return_value=mock_service) as mock_build:
+        with patch.object(self.auth_manager, "authorize", return_value=mock_cred):
+            with patch("ripperlib.auth.build", return_value=mock_service) as mock_build:
                 # Call create_drive_service
                 result = self.auth_manager.create_drive_service()
 
@@ -713,7 +719,7 @@ class TestAuthManager(unittest.TestCase):
         # Mock the build function
         mock_service = MagicMock()
 
-        with patch('ripperlib.auth.build', return_value=mock_service) as mock_build:
+        with patch("ripperlib.auth.build", return_value=mock_service) as mock_build:
             # Call create_userinfo_service with credentials
             result = self.auth_manager.create_userinfo_service(mock_cred)
 
@@ -731,8 +737,8 @@ class TestAuthManager(unittest.TestCase):
         # Mock the build function
         mock_service = MagicMock()
 
-        with patch.object(self.auth_manager, 'authorize', return_value=mock_cred):
-            with patch('ripperlib.auth.build', return_value=mock_service) as mock_build:
+        with patch.object(self.auth_manager, "authorize", return_value=mock_cred):
+            with patch("ripperlib.auth.build", return_value=mock_service) as mock_build:
                 # Call create_userinfo_service without credentials
                 result = self.auth_manager.create_userinfo_service()
 
@@ -745,8 +751,8 @@ class TestAuthManager(unittest.TestCase):
     def test_create_userinfo_service_auth_failure(self):
         """Test that create_userinfo_service returns None when authorization fails."""
         # Set up authorize to return None
-        with patch.object(self.auth_manager, 'authorize', return_value=None):
-            with patch('ripperlib.auth.build') as mock_build:
+        with patch.object(self.auth_manager, "authorize", return_value=None):
+            with patch("ripperlib.auth.build") as mock_build:
                 # Call create_userinfo_service
                 result = self.auth_manager.create_userinfo_service()
 

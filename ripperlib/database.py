@@ -6,10 +6,12 @@ from typing import Optional, Dict, List, Any
 from queue import Queue
 from threading import Lock
 
+# Create a logger for the database module
 log = logging.getLogger("ripper:database")
 
 # Flag to track if database path has been logged
 _db_path_logged = False
+
 
 # Connection pool
 class ConnectionPool:
@@ -38,6 +40,7 @@ class ConnectionPool:
             conn = self.pool.get()
             conn.close()
 
+
 def get_db_path(db_file_name: str = "ripper.db") -> str:
     """
     Get the absolute path for the database file.
@@ -65,8 +68,10 @@ def get_db_path(db_file_name: str = "ripper.db") -> str:
     db_path = os.path.join(app_data_dir, db_file_name)
     return db_path
 
+
 # Initialize connection pool
 connection_pool = ConnectionPool(get_db_path())
+
 
 def create_connection(db_file_path: str) -> Optional[sqlite3.Connection]:
     """
@@ -294,7 +299,7 @@ def store_thumbnail(
             if c.fetchone():
                 # Update existing thumbnail
                 c.execute(
-                    """UPDATE sheet_thumbnails 
+                    """UPDATE sheet_thumbnails
                        SET thumbnail_data = ?, last_modified = ?
                        WHERE sheet_id = ?""",
                     (thumbnail_data, last_modified, sheet_id),

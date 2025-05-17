@@ -1,8 +1,8 @@
 import logging
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt, QFont
+from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QMenu,
     QToolBar,
-    QStatusBar,
     QToolTip,
 )
 

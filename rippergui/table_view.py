@@ -1,5 +1,5 @@
 from decimal import Decimal, InvalidOperation
-from typing import Dict, List, Optional, Any, Union, Tuple, Set, Callable
+from typing import Dict, List, Optional, Any, Set
 import logging
 
 from PySide6.QtCore import (
@@ -330,8 +330,9 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
                 return False
         return True
 
-    def _check_row_against_filter(self, model: QAbstractTableModel, source_row: int, 
-                                 column_index: int, filter_value: Any, header_name: str) -> bool:
+    def _check_row_against_filter(
+        self, model: QAbstractTableModel, source_row: int, column_index: int, filter_value: Any, header_name: str
+    ) -> bool:
         """
         Check if a specific cell matches the filter criteria.
 
@@ -416,8 +417,12 @@ class FilterDialog(QDialog):
     # Signal emitted when filters are applied
     filters_applied = Signal(dict)
 
-    def __init__(self, unique_accounts: Set[str], current_filters: Optional[Dict[int, Dict[str, Any]]] = None, 
-                parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        unique_accounts: Set[str],
+        current_filters: Optional[Dict[int, Dict[str, Any]]] = None,
+        parent: Optional[QWidget] = None,
+    ):
         """
         Initialize the filter dialog.
 
@@ -619,7 +624,9 @@ class TransactionTableViewWidget(QWidget):
 
         if not transactions_data and simulate:
             transactions_data = sample_transactions
-        self._unique_accounts: List[str] = sorted(list(set(t.get("Account", "") for t in transactions_data if t.get("Account"))))
+        self._unique_accounts: List[str] = sorted(
+            list(set(t.get("Account", "") for t in transactions_data if t.get("Account")))
+        )
 
         layout = QVBoxLayout(self)
 
