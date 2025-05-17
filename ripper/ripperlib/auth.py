@@ -9,7 +9,7 @@ from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
-from googleapiclient.discovery import build
+from googleapiclient.discovery import Resource, build
 from keyring.errors import PasswordDeleteError
 from PySide6.QtCore import QObject, Signal
 from typing_extensions import runtime_checkable
@@ -458,6 +458,7 @@ class AuthManager(QObject):
                 raise ValueError("OAuth client configuration is invalid.")
 
             # Start the user oauth flow using the client config and configured scopes
+            # TODO: application locks up if client credentials are invalid
             flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
             creds = cast(Credentials, flow.run_local_server(port=0))
             return creds
@@ -527,7 +528,7 @@ class AuthManager(QObject):
 
     # Service creation methods
 
-    def create_sheets_service(self) -> Optional[SheetsService]:
+    def create_sheets_service(self) -> Optional[Resource]:
         """
         Create an authenticated Google Sheets API service.
 
@@ -538,9 +539,9 @@ class AuthManager(QObject):
         if not cred:
             return None
         service = build("sheets", "v4", credentials=cred)
-        return cast(SheetsService, service)
+        return cast(Resource, service)
 
-    def create_drive_service(self) -> Optional[DriveService]:
+    def create_drive_service(self) -> Optional[Resource]:
         """
         Create an authenticated Google Drive API service.
 
@@ -551,9 +552,9 @@ class AuthManager(QObject):
         if not cred:
             return None
         service = build("drive", "v3", credentials=cred)
-        return cast(DriveService, service)
+        return cast(Resource, service)
 
-    def create_userinfo_service(self, cred: Optional[Credentials] = None) -> Optional[UserInfoService]:
+    def create_userinfo_service(self, cred: Optional[Credentials] = None) -> Optional[Resource]:
         """
         Create an authenticated Google OAuth2 userinfo API service.
 
@@ -568,16 +569,4 @@ class AuthManager(QObject):
         if not cred:
             return None
         service = build("oauth2", "v2", credentials=cred)
-        return cast(UserInfoService, service)
-
-    def get_sheets_service(self) -> Optional[SheetsService]:
-        """Get the Google Sheets service."""
-        return self._sheets_service
-
-    def get_drive_service(self) -> Optional[DriveService]:
-        """Get the Google Drive service."""
-        return self._drive_service
-
-    def get_oauth2_service(self) -> Optional[UserInfoService]:
-        """Get the OAuth2 service."""
-        return self._oauth2_service
+        return cast(Resource, service)
