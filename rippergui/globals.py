@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from typing import Dict, Optional, Type, Union
+from typing import Dict, Optional, Union
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication

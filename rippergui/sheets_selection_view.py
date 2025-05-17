@@ -1,10 +1,10 @@
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, cast
+from typing import Any, Dict, List, Optional
 
 from googleapiclient.errors import HttpError
-from PySide6.QtCore import QObject, QSize, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QIcon, QImage, QMouseEvent, QPixmap
+from PySide6.QtCore import QSize, Qt, QUrl, Slot
+from PySide6.QtGui import QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -27,7 +26,6 @@ from PySide6.QtWidgets import (
 
 from ripperlib.auth import AuthManager
 from ripperlib.database import get_thumbnail, store_thumbnail
-from ripperlib.sheets_backend import list_sheets
 
 log = logging.getLogger("ripper:sheets_selection_view")
 

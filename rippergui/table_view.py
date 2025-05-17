@@ -1,6 +1,6 @@
 import logging
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Iterator, List, Optional, Set, Union, cast
+from typing import Any, Dict, List, Optional, Set, Union, cast
 
 from PySide6.QtCore import (
     QAbstractTableModel,
@@ -14,7 +14,6 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -167,43 +166,40 @@ class TransactionModel(QAbstractTableModel):
         return len(self._headers)
 
     def data(self, index: Union[QModelIndex, QPersistentModelIndex], role: int = Qt.ItemDataRole.DisplayRole) -> Any:
-        """
-        Return data for the given index and role.
-
-        Args:
-            index: Model index to get data for
-            role: Data role (display, edit, alignment, etc.)
-
-        Returns:
-            Data for the given index and role, or None if not available
-        """
         if not index.isValid():
             return None
-
+        row = index.row()
+        col = index.column()
         if role == Qt.ItemDataRole.DisplayRole:
-            row = index.row()
-            col = index.column()
-            if 0 <= row < len(self._data) and 0 <= col < len(self._headers):
-                header = self._headers[col]
-                value = self._data[row].get(header)
-                if isinstance(value, QDate):
-                    return value.toString("yyyy-MM-dd")
-                if isinstance(value, (float, Decimal)):
-                    try:
-                        return f"{Decimal(value):.2f}"
-                    except:
-                        return str(value)
-                return str(value)
+            return self._get_display_data(row, col)
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            col = index.column()
-            if 0 <= col < len(self._headers):
-                header = self._headers[col]
-                value = self._data[index.row()].get(header)
-                if isinstance(value, (int, float, Decimal)):
-                    return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-
+            return self._get_alignment(col, row)
         return None
+
+    def _get_display_data(self, row: int, col: int) -> Any:
+        if 0 <= row < len(self._data) and 0 <= col < len(self._headers):
+            header = self._headers[col]
+            value = self._data[row].get(header)
+            if isinstance(value, QDate):
+                return value.toString("yyyy-MM-dd")
+            if isinstance(value, (float, Decimal)):
+                return self._format_decimal(value)
+            return str(value)
+        return None
+
+    def _format_decimal(self, value: float) -> str:
+        try:
+            return f"{Decimal(value):.2f}"
+        except Exception:
+            return str(value)
+
+    def _get_alignment(self, col: int, row: int) -> int:
+        if 0 <= col < len(self._headers):
+            header = self._headers[col]
+            value = self._data[row].get(header)
+            if isinstance(value, (int, float, Decimal)):
+                return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         """
@@ -392,32 +388,34 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
     def lessThan(
         self, left: Union[QModelIndex, QPersistentModelIndex], right: Union[QModelIndex, QPersistentModelIndex]
     ) -> bool:
-        """
-        Compare two items for sorting.
-
-        Args:
-            left: Index of the left item
-            right: Index of the right item
-
-        Returns:
-            True if the left item is less than the right item
-        """
         source_model = self.sourceModel()
-        # Only TransactionModel has _headers
         if not hasattr(source_model, "_headers"):
             return False
+        return self._compare_items(source_model, left, right)
+
+    def _compare_items(self, source_model, left, right) -> bool:
         left_data = source_model.data(left, Qt.ItemDataRole.EditRole)
         right_data = source_model.data(right, Qt.ItemDataRole.EditRole)
+        col = left.column()
+        headers = source_model._headers
+        if col == headers.index("Amount"):
+            return self._compare_decimal(left_data, right_data)
+        if col == headers.index("Date"):
+            return self._compare_dates(left_data, right_data)
+        return self._compare_strings(left_data, right_data)
 
-        if left.column() == source_model._headers.index("Amount"):
-            try:
-                return Decimal(str(left_data)) < Decimal(str(right_data))
-            except (InvalidOperation, TypeError):  # Handle None comparison
-                return False
-        if left.column() == source_model._headers.index("Date"):
-            if isinstance(left_data, QDate) and isinstance(right_data, QDate):
-                return left_data < right_data
+    def _compare_decimal(self, left_data, right_data) -> bool:
+        try:
+            return Decimal(str(left_data)) < Decimal(str(right_data))
+        except (InvalidOperation, TypeError):
+            return False
 
+    def _compare_dates(self, left_data, right_data) -> bool:
+        if isinstance(left_data, QDate) and isinstance(right_data, QDate):
+            return left_data < right_data
+        return False
+
+    def _compare_strings(self, left_data, right_data) -> bool:
         try:
             return str(left_data).lower() < str(right_data).lower()
         except TypeError:

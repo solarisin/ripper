@@ -4,7 +4,7 @@ import sqlite3
 from queue import Queue
 from sqlite3 import Connection, Cursor, Error, Row, connect
 from threading import Lock
-from typing import Any, Dict, List, Literal, Optional, Tuple, TypeVar, Union, cast, overload
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, cast
 
 # Create a logger for the database module
 log = logging.getLogger("ripper:database")

@@ -1,7 +1,7 @@
 import logging
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, cast
+from typing import Optional
 
-from PySide6.QtCore import QCoreApplication, QObject, QSize
+from PySide6.QtCore import QSize
 from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
 from PySide6.QtWidgets import (
     QApplication,

@@ -1,7 +1,6 @@
 import logging
-from typing import Any, Dict, List, Optional, Protocol, TypeVar, cast
+from typing import Any, Dict, List, Optional, Protocol, cast
 
-from googleapiclient.discovery import Resource as GoogleApiResource
 from googleapiclient.errors import HttpError
 
 # Configure module logger

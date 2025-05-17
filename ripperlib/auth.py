@@ -2,17 +2,13 @@ import enum
 import json
 import logging
 import os
-from json import JSONDecodeError
-from typing import Any, Dict, List, Optional, Protocol, Tuple, Type, Union, cast
-from unittest.mock import MagicMock
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Type, cast
 
 import keyring
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
-from googleapiclient.discovery import Resource
-from googleapiclient.discovery import Resource as GoogleApiResource
 from googleapiclient.discovery import build
 from keyring.errors import PasswordDeleteError
 from PySide6.QtCore import QObject, Signal
@@ -537,7 +533,7 @@ class AuthManager(QObject):
         cred = self.authorize()
         if not cred:
             return None
-        service: GoogleApiResource = build("sheets", "v4", credentials=cred)
+        service = build("sheets", "v4", credentials=cred)
         return cast(SheetsService, service)
 
     def create_drive_service(self) -> Optional[DriveService]:
@@ -550,7 +546,7 @@ class AuthManager(QObject):
         cred = self.authorize()
         if not cred:
             return None
-        service: GoogleApiResource = build("drive", "v3", credentials=cred)
+        service = build("drive", "v3", credentials=cred)
         return cast(DriveService, service)
 
     def create_userinfo_service(self, cred: Optional[Credentials] = None) -> Optional[UserInfoService]:
@@ -567,7 +563,7 @@ class AuthManager(QObject):
             cred = self.authorize()
         if not cred:
             return None
-        service: GoogleApiResource = build("oauth2", "v2", credentials=cred)
+        service = build("oauth2", "v2", credentials=cred)
         return cast(UserInfoService, service)
 
     def get_sheets_service(self) -> Optional[SheetsService]:
