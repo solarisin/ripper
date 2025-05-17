@@ -384,6 +384,10 @@ class AuthManager(QObject):
             self._current_auth_info = AuthInfo(new_state, user_info)
             self.authStateChanged.emit(self._current_auth_info)
 
+    def clear_stored_credentials(self) -> None:
+        """Clear the stored credentials."""
+        self._token_store.invalidate()
+
     def retrieve_user_info(self, cred: Credentials) -> Optional[Dict[str, Any]]:
         """
         Retrieve user info using the provided credentials.
