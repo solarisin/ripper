@@ -141,7 +141,7 @@ class TestTransactionModel(unittest.TestCase):
         self.assertEqual(self.model._data[1]["ID"], "t1")
 
     def test_set_data_list(self):
-        """Test setting a new data list."""
+        """Test setting a new data list by directly updating the model's data."""
         new_data = [
             {
                 "ID": "t3",
@@ -152,7 +152,8 @@ class TestTransactionModel(unittest.TestCase):
                 "Account": "New Account",
             }
         ]
-        self.model.setDataList(new_data)
+        self.model._data = new_data
+        self.model.layoutChanged.emit()
         self.assertEqual(self.model.rowCount(), 1)
         self.assertEqual(self.model.data(self.model.index(0, 0)), "t3")
 

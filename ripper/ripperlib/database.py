@@ -193,12 +193,20 @@ def insert_transaction(transaction: TransactionData, db_file_path: Optional[str]
     conn = create_connection(db_file_path)
     if conn is not None:
         try:
-            cursor = execute_query(
-                conn,
-                """INSERT INTO transactions (date, description, amount, category)
-                         VALUES (?, ?, ?, ?)""",
-                (transaction["date"], transaction["description"], transaction["amount"], transaction["category"]),
-            )
+            try:
+                cursor = execute_query(
+                    conn,
+                    """INSERT INTO transactions (date, description, amount, category)
+                             VALUES (?, ?, ?, ?)""",
+                    (
+                        transaction["date"],
+                        transaction["description"],
+                        transaction["amount"],
+                        transaction["category"],
+                    ),
+                )
+            except KeyError:
+                return False
             if cursor is not None:
                 conn.commit()
                 return True
@@ -228,11 +236,22 @@ def insert_transactions(transactions: List[TransactionData], db_file_path: Optio
     if conn is not None:
         try:
             c = conn.cursor()
-            c.executemany(
-                """INSERT INTO transactions (date, description, amount, category)
-                         VALUES (?, ?, ?, ?)""",
-                [(t["date"], t["description"], t["amount"], t["category"]) for t in transactions],
-            )
+            try:
+                c.executemany(
+                    """INSERT INTO transactions (date, description, amount, category)
+                             VALUES (?, ?, ?, ?)""",
+                    [
+                        (
+                            t["date"],
+                            t["description"],
+                            t["amount"],
+                            t["category"],
+                        )
+                        for t in transactions
+                    ],
+                )
+            except KeyError:
+                return False
             conn.commit()
             return True
         except Error as e:

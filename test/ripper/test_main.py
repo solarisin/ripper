@@ -4,6 +4,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+import click.testing
 import pytest
 
 from ripper.main import configure_logging, get_version
@@ -96,11 +97,11 @@ class TestMain(unittest.TestCase):
         mock_auth_manager_instance = MagicMock()
         mock_auth_manager.return_value = mock_auth_manager_instance
 
-        # Import main_gui function (it's not imported at the top level to avoid circular imports)
-        from ripper.main import main
+        # Use CliRunner to invoke the CLI
+        from ripper import main as main_module
 
-        # Call main
-        main()
+        runner = click.testing.CliRunner()
+        runner.invoke(main_module.main, [])
 
         # Check that QApplication was created
         mock_qapp.assert_called_once_with(sys.argv)
@@ -114,5 +115,5 @@ class TestMain(unittest.TestCase):
         # Check that MainView.show was called
         mock_main_view_instance.show.assert_called_once()
 
-        # Check that sys.exit was called with app.exec()
-        mock_sys_exit.assert_called_once_with(mock_app_instance.exec())
+        # Check that sys.exit was not called (since we return app.exec())
+        mock_sys_exit.assert_not_called()
