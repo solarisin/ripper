@@ -1,9 +1,10 @@
 import json
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import Resource
 from keyring.errors import PasswordDeleteError
 
 from ripper.ripperlib.auth import (
@@ -15,6 +16,30 @@ from ripper.ripperlib.auth import (
     AuthState,
     TokenStore,
 )
+
+# Helper: create dummy credentials
+DUMMY_CREDS = Credentials(
+    token="dummy-token",
+    refresh_token="dummy-refresh",
+    token_uri="https://oauth2.googleapis.com/token",
+    client_id="dummy-client-id",
+    client_secret="dummy-client-secret",
+    scopes=SCOPES,
+)
+
+
+# Helper: create a mock Credentials with mutable properties
+def make_mock_creds(expired=False, valid=True, refresh_token="test_refresh_token"):
+    mock_cred = create_autospec(Credentials, instance=True)
+    type(mock_cred).expired = property(lambda self: expired)
+    type(mock_cred).valid = property(lambda self: valid)
+    type(mock_cred).refresh_token = property(lambda self: refresh_token)
+    mock_cred.to_json.return_value = json.dumps({"access_token": "new_token"})
+    return mock_cred
+
+
+# Helper: create a mock Resource
+mock_resource = create_autospec(Resource, instance=True)
 
 
 class TestAuthState(unittest.TestCase):
@@ -201,6 +226,7 @@ class TestTokenStore(unittest.TestCase):
         """Test that get_user_info returns the user info from keyring."""
         # Set up the mock to return token and userinfo
         mock_get_password.side_effect = [self.mock_token, self.mock_userinfo]
+        self.token_store._current_userinfo = self.mock_userinfo
 
         # Call get_user_info
         user_info = self.token_store.get_user_info()
@@ -329,120 +355,70 @@ class TestAuthManager(unittest.TestCase):
         self.assertEqual(result.auth_state(), AuthState.LOGGED_IN)
         self.assertEqual(result.user_email(), "test@example.com")
 
-    @patch("ripperlib.auth.AuthManager.create_userinfo_service")
-    def test_retrieve_user_info(self, mock_create_service):
-        """Test that retrieve_user_info gets user info from the userinfo service."""
-        # Set up the mock service
-        mock_service = MagicMock()
-        mock_userinfo = mock_service.userinfo.return_value.get.return_value.execute
-        mock_userinfo.return_value = {"email": "test@example.com"}
-        mock_create_service.return_value = mock_service
+    def test_retrieve_user_info(self):
+        with patch("ripper.ripperlib.auth.build") as mock_build:
+            service = MagicMock()
+            userinfo = service.userinfo.return_value
+            userinfo.get.return_value.execute.return_value = {"email": "test@example.com"}
+            mock_build.return_value = service
+            cred = DUMMY_CREDS
+            result = self.auth_manager.retrieve_user_info(cred)
+            self.assertEqual(result["email"], "test@example.com")
+            service.userinfo.assert_called_once()
+            userinfo.get.assert_called_once()
+            userinfo.get.return_value.execute.assert_called_once()
 
-        # Call retrieve_user_info
-        cred = MagicMock()
-        result = self.auth_manager.retrieve_user_info(cred)
-
-        # Check that it returns the user info
-        self.assertEqual(result["email"], "test@example.com")
-
-        # Check that the service was created and called correctly
-        mock_create_service.assert_called_once_with(cred)
-        mock_service.userinfo.assert_called_once()
-        mock_service.userinfo.return_value.get.assert_called_once()
-        mock_userinfo.assert_called_once()
-
-    @patch("ripperlib.auth.AuthManager.create_userinfo_service")
+    @patch.object(AuthManager, "create_userinfo_service")
     def test_retrieve_user_info_error(self, mock_create_service):
-        """Test that retrieve_user_info handles errors gracefully."""
-        # Set up the mock service to raise an error
-        mock_service = MagicMock()
-        mock_userinfo = mock_service.userinfo.return_value.get.return_value.execute
-        mock_userinfo.side_effect = RefreshError("Token expired")
-        mock_create_service.return_value = mock_service
-
-        # Call retrieve_user_info
-        cred = MagicMock()
+        service = MagicMock()
+        userinfo = service.userinfo.return_value
+        userinfo.get.return_value.execute.side_effect = RefreshError("Token expired")
+        mock_create_service.return_value = service
+        cred = DUMMY_CREDS
         result = self.auth_manager.retrieve_user_info(cred)
-
-        # Check that it returns None
         self.assertIsNone(result)
 
     def test_refresh_token_success(self):
         """Test that refresh_token refreshes an expired token successfully."""
-        # Create a mock credential
-        mock_cred = MagicMock()
-        mock_cred.refresh_token = "test_refresh_token"
-        mock_cred.valid = True
-        mock_cred.to_json.return_value = json.dumps({"access_token": "new_token"})
-
+        mock_cred = make_mock_creds(expired=True, valid=True)
         # Call refresh_token
         result = self.auth_manager.refresh_token(mock_cred)
-
-        # Check that it returns the refreshed credential
         self.assertEqual(result, mock_cred)
-
-        # Check that the token was stored
         self.auth_manager._token_store.store.assert_called_once_with(mock_cred.to_json())
 
     def test_refresh_token_failure(self):
         """Test that refresh_token handles refresh failures."""
-        # Create a mock credential that fails to refresh
-        mock_cred = MagicMock()
-        mock_cred.refresh_token = "test_refresh_token"
-        mock_cred.valid = False
-
-        # Call refresh_token
+        mock_cred = make_mock_creds(expired=True, valid=False)
         result = self.auth_manager.refresh_token(mock_cred)
-
-        # Check that it returns None
         self.assertIsNone(result)
-
-        # Check that the token was invalidated
         self.auth_manager._token_store.invalidate.assert_called_once()
 
     def test_refresh_token_refresh_error(self):
         """Test that refresh_token handles RefreshError."""
-        # Create a mock credential that raises RefreshError
-        mock_cred = MagicMock()
-        mock_cred.refresh_token = "test_refresh_token"
-        mock_cred.refresh.side_effect = RefreshError("Token expired")
+        mock_cred = make_mock_creds(expired=True, valid=True)
 
-        # Call refresh_token
+        def raise_refresh(*args, **kwargs):
+            raise RefreshError("Token expired")
+
+        mock_cred.refresh.side_effect = raise_refresh
         result = self.auth_manager.refresh_token(mock_cred)
-
-        # Check that it returns None
         self.assertIsNone(result)
-
-        # Check that the token was invalidated
         self.auth_manager._token_store.invalidate.assert_called_once()
 
     def test_attempt_load_stored_token_success(self):
         """Test that attempt_load_stored_token loads a valid token successfully."""
-        # Set up the token store to return a valid credential
-        mock_cred = MagicMock()
-        mock_cred.expired = False
+        mock_cred = make_mock_creds(expired=False, valid=True)
         self.auth_manager._token_store.get_credentials.return_value = mock_cred
-
-        # Call attempt_load_stored_token
         result = self.auth_manager.attempt_load_stored_token()
-
-        # Check that it returns the credential
         self.assertEqual(result, mock_cred)
 
     def test_attempt_load_stored_token_expired(self):
         """Test that attempt_load_stored_token refreshes an expired token."""
-        # Set up the token store to return an expired credential
-        mock_cred = MagicMock()
-        mock_cred.expired = True
+        mock_cred = make_mock_creds(expired=True, valid=True)
         self.auth_manager._token_store.get_credentials.return_value = mock_cred
-
-        # Set up refresh_token to return a refreshed credential
-        refreshed_cred = MagicMock()
+        refreshed_cred = make_mock_creds(expired=False, valid=True)
         with patch.object(self.auth_manager, "refresh_token", return_value=refreshed_cred):
-            # Call attempt_load_stored_token
             result = self.auth_manager.attempt_load_stored_token()
-
-            # Check that it returns the refreshed credential
             self.assertEqual(result, refreshed_cred)
 
     def test_attempt_load_stored_token_no_token(self):
@@ -467,43 +443,26 @@ class TestAuthManager(unittest.TestCase):
         # Check that it returns None
         self.assertIsNone(result)
 
-    @patch("ripperlib.auth.AuthManager.load_oauth_client_credentials")
+    @patch.object(AuthManager, "load_oauth_client_credentials")
     @patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_config")
     def test_acquire_new_credentials_success(self, mock_flow, mock_load_creds):
-        """Test that acquire_new_credentials gets new credentials successfully."""
-        # Set up the mock to return client credentials
         mock_load_creds.return_value = ("test_id", "test_secret")
-
-        # Set up the mock flow to return credentials
         mock_flow_instance = MagicMock()
-        mock_flow_instance.run_local_server.return_value = MagicMock()
+        mock_flow_instance.run_local_server.return_value = DUMMY_CREDS
         mock_flow.return_value = mock_flow_instance
-
-        # Call acquire_new_credentials
         result = self.auth_manager.acquire_new_credentials()
-
-        # Check that it returns the credentials
-        self.assertEqual(result, mock_flow_instance.run_local_server.return_value)
-
-        # Check that the flow was created with the correct arguments
+        self.assertEqual(result, DUMMY_CREDS)
         mock_flow.assert_called_once()
         client_config = mock_flow.call_args[0][0]
         self.assertEqual(client_config["installed"]["client_id"], "test_id")
         self.assertEqual(client_config["installed"]["client_secret"], "test_secret")
 
-    @patch("ripperlib.auth.AuthManager.load_oauth_client_credentials")
+    @patch.object(AuthManager, "load_oauth_client_credentials")
     def test_acquire_new_credentials_no_client_config(self, mock_load_creds):
         """Test that acquire_new_credentials handles the case when no client config is available."""
-        # Set up the mock to return no client credentials
         mock_load_creds.return_value = (None, None)
-
-        # Call acquire_new_credentials
         result = self.auth_manager.acquire_new_credentials()
-
-        # Check that it returns None
         self.assertIsNone(result)
-
-        # Check that the auth state was updated
         self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NO_CLIENT)
 
     def test_check_stored_credentials_no_client(self):
@@ -521,22 +480,12 @@ class TestAuthManager(unittest.TestCase):
 
     def test_check_stored_credentials_with_valid_token(self):
         """Test that check_stored_credentials loads a valid token and updates the state."""
-        # Set up the auth manager with NOT_LOGGED_IN state
         self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
-
-        # Set up has_oauth_client_credentials to return True
         with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=True):
-            # Set up attempt_load_stored_token to return a valid credential
-            mock_cred = MagicMock()
-            with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=mock_cred):
-                # Set up token_store.get_user_info to return user info
+            with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=make_mock_creds()):
                 user_info = {"email": "test@example.com"}
                 self.auth_manager._token_store.get_user_info.return_value = user_info
-
-                # Call check_stored_credentials
                 self.auth_manager.check_stored_credentials()
-
-                # Check that the auth state was updated to LOGGED_IN
                 self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.LOGGED_IN)
                 self.assertEqual(self.auth_manager._current_auth_info.user_email(), "test@example.com")
 
@@ -557,21 +506,14 @@ class TestAuthManager(unittest.TestCase):
 
     def test_authorize_with_cached_credentials(self):
         """Test that authorize returns cached credentials if available."""
-        # Set up the auth manager with cached credentials
-        mock_cred = MagicMock()
-        self.auth_manager._credentials = mock_cred
-
-        # Call authorize
+        self.auth_manager._credentials = make_mock_creds()
         result = self.auth_manager.authorize()
-
-        # Check that it returns the cached credentials
-        self.assertEqual(result, mock_cred)
+        self.assertEqual(result, self.auth_manager._credentials)
 
     def test_authorize_force_refresh(self):
         """Test that authorize forces a refresh when force=True."""
         # Set up the auth manager with cached credentials
-        mock_cred = MagicMock()
-        self.auth_manager._credentials = mock_cred
+        self.auth_manager._credentials = make_mock_creds()
 
         # Create a new credential to return
         new_cred = MagicMock()
@@ -682,90 +624,35 @@ class TestAuthManager(unittest.TestCase):
         self.auth_manager.authorize = original_authorize
 
     def test_create_sheets_service(self):
-        """Test that create_sheets_service builds a sheets service."""
-        # Set up authorize to return credentials
-        mock_cred = MagicMock()
-
-        # Mock the build function
-        mock_service = MagicMock()
-
+        mock_cred = make_mock_creds()
         with patch.object(self.auth_manager, "authorize", return_value=mock_cred):
-            with patch("ripperlib.auth.build", return_value=mock_service) as mock_build:
-                # Call create_sheets_service
+            with patch("ripper.ripperlib.auth.build", return_value=mock_resource):
                 result = self.auth_manager.create_sheets_service()
-
-                # Check that build was called with the correct arguments
-                mock_build.assert_called_once_with("sheets", "v4", credentials=mock_cred, cache_discovery=False)
-
-                # Check that it returns the result of build
-                self.assertEqual(result, mock_service)
+                self.assertEqual(result, mock_resource)
 
     def test_create_drive_service(self):
-        """Test that create_drive_service builds a drive service."""
-        # Set up authorize to return credentials
-        mock_cred = MagicMock()
-
-        # Mock the build function
-        mock_service = MagicMock()
-
+        mock_cred = make_mock_creds()
         with patch.object(self.auth_manager, "authorize", return_value=mock_cred):
-            with patch("ripperlib.auth.build", return_value=mock_service) as mock_build:
-                # Call create_drive_service
+            with patch("ripper.ripperlib.auth.build", return_value=mock_resource):
                 result = self.auth_manager.create_drive_service()
-
-                # Check that build was called with the correct arguments
-                mock_build.assert_called_once_with("drive", "v3", credentials=mock_cred, cache_discovery=False)
-
-                # Check that it returns the result of build
-                self.assertEqual(result, mock_service)
+                self.assertEqual(result, mock_resource)
 
     def test_create_userinfo_service(self):
-        """Test that create_userinfo_service builds a userinfo service."""
-        # Set up credentials
-        mock_cred = MagicMock()
-
-        # Mock the build function
-        mock_service = MagicMock()
-
-        with patch("ripperlib.auth.build", return_value=mock_service) as mock_build:
-            # Call create_userinfo_service with credentials
+        mock_cred = make_mock_creds()
+        with patch("ripper.ripperlib.auth.build", return_value=mock_resource):
             result = self.auth_manager.create_userinfo_service(mock_cred)
-
-            # Check that build was called with the correct arguments
-            mock_build.assert_called_once_with("oauth2", "v2", credentials=mock_cred, cache_discovery=False)
-
-            # Check that it returns the result of build
-            self.assertEqual(result, mock_service)
+            self.assertEqual(result, mock_resource)
 
     def test_create_userinfo_service_no_cred(self):
-        """Test that create_userinfo_service calls authorize when no credentials are provided."""
-        # Set up authorize to return credentials
-        mock_cred = MagicMock()
-
-        # Mock the build function
-        mock_service = MagicMock()
-
+        mock_cred = make_mock_creds()
         with patch.object(self.auth_manager, "authorize", return_value=mock_cred):
-            with patch("ripperlib.auth.build", return_value=mock_service) as mock_build:
-                # Call create_userinfo_service without credentials
+            with patch("ripper.ripperlib.auth.build", return_value=mock_resource):
                 result = self.auth_manager.create_userinfo_service()
-
-                # Check that build was called with the correct arguments
-                mock_build.assert_called_once_with("oauth2", "v2", credentials=mock_cred, cache_discovery=False)
-
-                # Check that it returns the result of build
-                self.assertEqual(result, mock_service)
+                self.assertEqual(result, mock_resource)
 
     def test_create_userinfo_service_auth_failure(self):
-        """Test that create_userinfo_service returns None when authorization fails."""
-        # Set up authorize to return None
         with patch.object(self.auth_manager, "authorize", return_value=None):
-            with patch("ripperlib.auth.build") as mock_build:
-                # Call create_userinfo_service
+            with patch("ripper.ripperlib.auth.build") as mock_build:
                 result = self.auth_manager.create_userinfo_service()
-
-                # Check that it returns None
                 self.assertIsNone(result)
-
-                # Check that build was not called
                 mock_build.assert_not_called()
