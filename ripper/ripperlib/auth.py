@@ -2,9 +2,9 @@ import enum
 import json
 import logging
 import os
-from beartype.typing import Any, Dict, List, Optional, Protocol, Tuple, Type, cast
 
 import keyring
+from beartype.typing import Any, Dict, List, Optional, Protocol, Tuple, Type, cast
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials

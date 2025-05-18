@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
-from beartype.typing import Any, Dict, List, Optional, cast
 
+from beartype.typing import Any, Dict, List, Optional, cast
 from googleapiclient.errors import HttpError
 from PySide6.QtCore import QSize, Qt, QUrl, Slot
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap

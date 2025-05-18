@@ -80,9 +80,9 @@ class TestMain(unittest.TestCase):
         self.assertEqual(kwargs["datefmt"], "%Y-%m-%d %H:%M:%S")
 
     @pytest.mark.qt
-    @patch("main.QApplication")
-    @patch("main.MainView")
-    @patch("main.AuthManager")
+    @patch("ripper.main.QApplication")
+    @patch("ripper.main.MainView")
+    @patch("ripper.main.AuthManager")
     @patch("sys.exit")
     def test_main(self, mock_sys_exit, mock_auth_manager, mock_main_view, mock_qapp):
         """Test that main initializes the application correctly."""

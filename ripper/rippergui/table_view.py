@@ -1,7 +1,7 @@
 import logging
 from decimal import Decimal, InvalidOperation
-from beartype.typing import Any, Dict, List, Optional, Set, cast
 
+from beartype.typing import Any, Dict, List, Optional, Set, cast
 from PySide6.QtCore import (
     QAbstractTableModel,
     QDate,

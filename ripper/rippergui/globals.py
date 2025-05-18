@@ -1,6 +1,6 @@
 from enum import Enum, auto
-from beartype.typing import Dict, Optional
 
+from beartype.typing import Dict, Optional
 from PySide6.QtWidgets import QApplication
 
 

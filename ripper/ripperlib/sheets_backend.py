@@ -1,6 +1,6 @@
 import logging
-from beartype.typing import Any, Dict, List, Optional, Protocol, cast
 
+from beartype.typing import Any, Dict, List, Optional, Protocol, cast
 from googleapiclient.errors import HttpError
 
 # Configure module logger

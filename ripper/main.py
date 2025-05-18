@@ -3,10 +3,10 @@ import logging
 import os
 import sys
 from pathlib import Path
-from beartype.typing import Optional
 
 import click
 import toml
+from beartype.typing import Optional
 from PySide6.QtWidgets import QApplication
 
 from ripper.rippergui.mainview import MainView
