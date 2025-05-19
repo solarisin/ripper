@@ -330,6 +330,64 @@ def insert_data_source(
     return False
 
 
+def store_metadata(sheet_id: str, metadata: dict, db_file_path: Optional[str] = None) -> bool:
+    if db_file_path is None:
+        db_file_path = get_db_path()
+    conn = create_connection(db_file_path)
+    if conn is not None:
+        try:
+
+            # TODO extract discrete  properties to be stored from dict, or replace dict with a type
+            #   or maybe use JSON1 extension?
+
+            c = conn.cursor()
+            # Check if metadata already exists for this spreadsheet
+            c.execute("SELECT 1 FROM sheet_thumbnails WHERE sheet_id = ?", (sheet_id,))
+            if c.fetchone():
+                # Update existing metadata
+                c.execute(
+                    """UPDATE sheet_metadata
+                       SET # TODO properties
+                       WHERE sheet_id = ?""",
+                    (..., sheet_id),
+                )
+            else:
+                # Insert new metadata
+                c.execute(
+                    """INSERT INTO sheet_thumbnails (sheet_id, # TODO properties)
+                       VALUES (?, ?, ?)""",
+                    (sheet_id, ...),
+                )
+            conn.commit()
+            return True
+        except Error as e:
+            log.error(f"Error storing sheet metadata: {e}")
+            return False
+        finally:
+            conn.close()
+    return False
+
+
+def get_metadata(sheet_id: str, db_file_path: Optional[str] = None) -> Optional[dict]:
+    if db_file_path is None:
+        db_file_path = get_db_path()
+    conn = create_connection(db_file_path)
+    if conn is not None:
+        try:
+            c = conn.cursor()
+            c.execute("SELECT ... FROM sheet_metadata WHERE sheet_id = ?", (sheet_id,))
+            result = c.fetchone()
+            if result:  # TODO implement discrete properties or type and return them
+                return {}
+            return None
+        except Error as e:
+            log.error(f"Error retrieving metadata: {e}")
+            return None
+        finally:
+            conn.close()
+    return None
+
+
 def store_thumbnail(
     sheet_id: str, thumbnail_data: bytes, last_modified: str, db_file_path: Optional[str] = None
 ) -> bool:

@@ -528,7 +528,7 @@ class AuthManager(QObject):
 
     # Service creation methods
 
-    def create_sheets_service(self) -> Optional[Resource]:
+    def create_sheets_service(self) -> Optional[SheetsService]:
         """
         Create an authenticated Google Sheets API service.
 
@@ -539,9 +539,9 @@ class AuthManager(QObject):
         if not cred:
             return None
         service = build("sheets", "v4", credentials=cred)
-        return cast(Resource, service)
+        return cast(SheetsService, cast(Resource, service))
 
-    def create_drive_service(self) -> Optional[Resource]:
+    def create_drive_service(self) -> Optional[DriveService]:
         """
         Create an authenticated Google Drive API service.
 
@@ -552,7 +552,7 @@ class AuthManager(QObject):
         if not cred:
             return None
         service = build("drive", "v3", credentials=cred)
-        return cast(Resource, service)
+        return cast(DriveService, cast(Resource, service))
 
     def create_userinfo_service(self, cred: Optional[Credentials] = None) -> Optional[Resource]:
         """

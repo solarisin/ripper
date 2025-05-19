@@ -2,8 +2,7 @@ import logging
 from datetime import datetime
 
 from beartype.typing import Any, Dict, List, Optional, cast
-from googleapiclient.errors import HttpError
-from PySide6.QtCore import QSize, Qt, QUrl, Slot
+from PySide6.QtCore import QSize, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.database import get_thumbnail, store_thumbnail
+from ripper.ripperlib.sheets_backend import list_sheets, read_spreadsheet_metadata
 
 log = logging.getLogger("ripper:sheets_selection_view")
 
@@ -238,6 +238,9 @@ class SheetsSelectionDialog(QDialog):
     and allows the user to select one to view details and get information about it.
     """
 
+    # Signal emitted when the user chooses a sheet
+    sheet_selected = Signal(dict)
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """
         Initialize the sheets selection dialog.
@@ -252,8 +255,6 @@ class SheetsSelectionDialog(QDialog):
 
         self.selected_sheet: Optional[Dict[str, Any]] = None
         self.sheets_list: List[Dict[str, Any]] = []
-        self.sheet_name: str = "Sheet1"  # Default sheet name
-        self.sheet_range: Optional[str] = None  # Default to None (entire table)
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -277,7 +278,7 @@ class SheetsSelectionDialog(QDialog):
         self.grid_layout = QGridLayout(scroll_content)
         self.sheets_list_widget = QListWidget()
         self.sheets_list_widget.setIconSize(QSize(120, 80))
-        self.sheets_list_widget.itemDoubleClicked.connect(self.on_sheet_selected)
+        self.sheets_list_widget.itemDoubleClicked.connect(self._on_sheet_selected)
         scroll_area.setWidget(scroll_content)
         thumbnails_layout.addWidget(scroll_area)
 
@@ -308,7 +309,7 @@ class SheetsSelectionDialog(QDialog):
         advanced_options_layout = QFormLayout(self.advanced_options_group)
 
         # Sheet name input
-        self.sheet_name_input = QLineEdit(self.sheet_name)  # Default to Sheet1
+        self.sheet_name_input = QLineEdit("Sheet1")  # Default to Sheet1
         self.sheet_name_input.setPlaceholderText("Required - Default: Sheet1")
         advanced_options_layout.addRow("Sheet Name:", self.sheet_name_input)
 
@@ -334,7 +335,7 @@ class SheetsSelectionDialog(QDialog):
 
         self.select_button = QPushButton("Select Sheet")
         self.select_button.setEnabled(False)
-        self.select_button.clicked.connect(self.print_sheet_info)
+        self.select_button.clicked.connect(self.user_confirmed_sheet)
 
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.reject)
@@ -357,12 +358,13 @@ class SheetsSelectionDialog(QDialog):
         try:
             # Get Drive service
             drive_service = AuthManager().create_drive_service()
-            if not drive_service:
+            sheets_service = AuthManager().create_sheets_service()
+            if not drive_service or not sheets_service:
                 self.show_error("Not authenticated. Please authenticate with Google first.")
                 return
 
             # List sheets with more fields
-            self.sheets_list = self.list_sheets_with_thumbnails(drive_service) or []
+            self.sheets_list = list_sheets(drive_service) or []
             if not self.sheets_list:
                 self.show_error("Failed to fetch sheets list. Please try again.")
                 return
@@ -373,48 +375,6 @@ class SheetsSelectionDialog(QDialog):
         except Exception as e:
             log.error(f"Error loading sheets: {e}")
             self.show_error(f"Error loading sheets: {str(e)}")
-
-    def list_sheets_with_thumbnails(self, service: Any) -> Optional[List[Dict[str, Any]]]:
-        """
-        List Google Sheets with thumbnail links and additional metadata.
-
-        This method extends the basic list_sheets functionality by requesting
-        additional fields like thumbnailLink, webViewLink, etc.
-
-        Args:
-            service: Authenticated Google Drive API service
-
-        Returns:
-            List of dictionaries containing sheet information, or None if an error occurred
-        """
-        try:
-            # Use the Drive API to list files with additional fields
-            page_token = None
-            files = []
-
-            while True:
-                response = (
-                    service.files()
-                    .list(
-                        q="mimeType='application/vnd.google-apps.spreadsheet'",
-                        spaces="drive",
-                        fields="nextPageToken, files(id, name, thumbnailLink, webViewLink, createdTime, modifiedTime, \
-                            owners, size, shared)",
-                        pageToken=page_token,
-                    )
-                    .execute()
-                )
-                files.extend(response.get("files", []))
-                page_token = response.get("nextPageToken", None)
-                if page_token is None:
-                    break
-
-            log.debug(f"Found {len(files)} sheets with thumbnail information")
-            return files
-
-        except HttpError as error:
-            log.error(f"An error occurred fetching sheets list: {error}")
-            return None
 
     def display_sheets(self) -> None:
         """
@@ -488,49 +448,55 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = details
         self.details_content.setText(self.details_text)
 
-    def print_sheet_info(self) -> None:
+    def print_sheet_info(self, sheet_info: Dict[str, Any]) -> None:
         """
-        Process the selected sheet with advanced options.
+        Gets the sheet name and range from the advanced options and
+        logs details about the selected sheet.
+        """
 
-        Gets the sheet name and range from the advanced options,
-        logs details about the selected sheet, and shows a confirmation message
-        in the details panel.
-        """
+        spreadsheet_name = sheet_info.get("name")
+        spreadsheet_id = sheet_info.get("id")
+        worksheet_name = sheet_info.get("worksheet")
+        worksheet_range = sheet_info.get("range")
+
+        log.info("Selected Google Sheet Information:")
+        log.info(f"Spreadsheet Name: {spreadsheet_name}")
+        log.info(f"Spreadsheet ID: {spreadsheet_id}")
+        log.info(f"Worksheet Name: {worksheet_name}")
+        log.info(f"Worksheet Range: {worksheet_range if worksheet_range else 'Entire table'}")
+
+    def user_confirmed_sheet(self) -> None:
         if not self.selected_sheet:
             return
 
+        try:
+            spreadsheet_name = self.selected_sheet.get("name")
+            spreadsheet_id = self.selected_sheet.get("id")
+        except KeyError as e:
+            log.error(f"Missing required data key in selected sheet: {e}")
+            return
+
         # Get sheet name and range from advanced options
-        sheet_name = self.sheet_name_input.text().strip()
-        sheet_range = self.sheet_range_input.text().strip()
+        worksheet_name = self.sheet_name_input.text().strip()
+        worksheet_range = self.sheet_range_input.text().strip()
 
         # Validate sheet name (required)
-        if not sheet_name:
+        if not worksheet_name:
             self.show_error("Sheet name is required. Please enter a sheet name in the Advanced Options.")
             self.advanced_options_checkbox.setChecked(True)  # Show advanced options
             self.sheet_name_input.setFocus()
             return
 
-        # Store the values for later use
-        self.sheet_name = sheet_name
-        self.sheet_range = sheet_range if sheet_range else None
+        sheet_info = {
+            "name": spreadsheet_name,
+            "id": spreadsheet_id,
+            "worksheet": worksheet_name,
+            "range": worksheet_range,
+        }
 
-        # Construct the range string
-        range_string = f"{sheet_name}"
-        if sheet_range:
-            range_string += f"!{sheet_range}"
+        self.print_sheet_info(sheet_info)
 
-        log.info("Selected Google Sheet Information:")
-        log.info(f"Spreadsheet Name: {self.selected_sheet.get('name', 'Unknown')}")
-        log.info(f"ID: {self.selected_sheet.get('id', 'Unknown')}")
-        log.info(f"Worksheet Name: {sheet_name}")
-        log.info(f"Worksheet Range: {sheet_range if sheet_range else 'Entire table'}")
-
-        # Show confirmation to user with sheet name and range
-        confirmation = "<br><br><b>Sheet information has been printed to the log.</b><br>"
-        confirmation += f"<b>Sheet Name:</b> {sheet_name}<br>"
-        confirmation += f"<b>Sheet Range:</b> {sheet_range if sheet_range else 'Entire table'}"
-        log.info(self.details_text + confirmation)
-        self.details_content.setText(self.details_text + confirmation)
+        self.sheet_selected.emit(sheet_info)
 
     def toggle_advanced_options(self, checked: bool) -> None:
         """
@@ -551,7 +517,7 @@ class SheetsSelectionDialog(QDialog):
         self.details_content.setText(f"<span style='color: red;'>{message}</span>")
 
     @Slot()
-    def on_sheet_selected(self) -> None:
+    def _on_sheet_selected(self) -> None:
         """Handle sheet selection."""
         current_item = self.sheets_list_widget.currentItem()
         if not current_item:
@@ -560,5 +526,8 @@ class SheetsSelectionDialog(QDialog):
         sheet_data = current_item.data(Qt.ItemDataRole.UserRole)
         if not sheet_data:
             return
+
+        # TODO attempt to load the sheet metadata from the database cache, otherwise, query the google api for it
+        read_spreadsheet_metadata(...)
 
         self.accept()

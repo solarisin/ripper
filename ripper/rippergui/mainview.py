@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ripper.rippergui.globals import FontId, fonts
+from ripper.rippergui.fonts import FontId, FontManager
 from ripper.rippergui.oauth_client_config_view import AuthView
 from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
@@ -124,13 +124,14 @@ class MainView(QMainWindow):
         # Initialize status bar attributes
         self._auth_status_label = QLabel(self)
         self._auth_status_label.setMinimumWidth(200)
-        self._auth_status_label.setFont(fonts.get(FontId.TOOLTIP))
+        self._auth_status_label.setFont(FontManager().get(FontId.TOOLTIP))
 
         # Initialize dialog attributes
         self._auth_dialog: Optional[QDialog] = None
+        self._sheet_selection_dialog: Optional[QDialog] = None
 
         # Setup monospace font for tooltips
-        QToolTip.setFont(fonts.get(FontId.TOOLTIP))
+        QToolTip.setFont(FontManager().get(FontId.TOOLTIP))
 
         # Set up the main window
         self.setWindowTitle("ripper")
@@ -357,9 +358,10 @@ class MainView(QMainWindow):
             )
             return
 
-        # Open the sheets selection dialog
-        dialog = SheetsSelectionDialog(self)
-        dialog.exec()
+        # Open the sheet selection dialog
+        self._sheet_selection_dialog = SheetsSelectionDialog(self)
+        self._sheet_selection_dialog.sheet_selected.connect(self.data_source_selected)
+        self._sheet_selection_dialog.exec()
 
     # Slots #############################################################################
 
@@ -401,3 +403,13 @@ class MainView(QMainWindow):
         # Update UI to enable options only available after an OAuth client is configured
         self.update_oauth_ui()
         log.info("OAuth client registration successful")
+
+    def data_source_selected(self, source_info: dict) -> None:
+
+        # TODO attempt to get the sheet data from the database cache, if it exists, or from the Google API
+
+        # Close the sheet selection dialog if it is open
+        if self._sheet_selection_dialog:
+            self._sheet_selection_dialog.accept()
+
+        log.info(f"Data source selected: {source_info}")

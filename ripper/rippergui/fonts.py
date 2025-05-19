@@ -40,7 +40,3 @@ class FontManager:
     def set(self, font_id: FontId, font: str) -> None:
         """Set a font."""
         self._fonts[font_id] = font
-
-
-# Global font manager instance
-fonts = FontManager()

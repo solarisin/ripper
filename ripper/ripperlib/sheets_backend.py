@@ -8,7 +8,8 @@ log = logging.getLogger("ripper:sheets_backend")
 
 # Type aliases for better readability
 SheetData = List[List[Any]]
-SheetInfo = Dict[str, Any]
+SheetMetadata = Dict[str, Any]
+FileInfo = Dict[str, Any]
 
 
 # Protocol classes for type checking
@@ -25,51 +26,75 @@ class SheetsService(Protocol):
     def batchUpdate(self, spreadsheetId: str, body: Dict[str, Any]) -> Any: ...
 
 
-def list_sheets(service: DriveService) -> Optional[List[SheetInfo]]:
-    """
-    List all Google Sheets in the user's Drive.
+DRIVE_FILE_FIELDS: frozenset[str] = frozenset(
+    [
+        "id",
+        "name",
+        "thumbnailLink",
+        "webViewLink",
+        "createdTime",
+        "modifiedTime",
+        "owners",
+        "size",
+        "shared",
+    ]
+)
 
-    Args:
-        service: An authenticated Google Drive API service instance
 
-    Returns:
-        List of dictionaries containing sheet information (id, name),
-        or None if an error occurred
+def list_sheets(service: DriveService, file_fields: frozenset[str] = DRIVE_FILE_FIELDS) -> Optional[List[FileInfo]]:
     """
-    files: List[SheetInfo] = []
+    List Google Sheets in the user's Drive.
+
+    :param DriveService service: Authenticated Google Drive API service
+    :param list[str] file_fields: Override the default fields to request from the API
+    :return: A list of dictionaries containing information about the sheets, or None if an error occurred
+
+    """
     try:
-        # Create drive api client
+        # Use the Drive API to list files with additional fields
         page_token = None
+        files = []
+
         while True:
-            response = cast(
-                Dict[str, Any],
+            response = (
                 service.files()
                 .list(
                     q="mimeType='application/vnd.google-apps.spreadsheet'",
                     spaces="drive",
-                    fields="nextPageToken, files(id, name)",
+                    fields=f"nextPageToken, files({', '.join(file_fields)})",
                     pageToken=page_token,
                 )
-                .execute(),
+                .execute()
             )
-            files.extend(cast(List[SheetInfo], response.get("files", [])))
+            files.extend(response.get("files", []))
             page_token = response.get("nextPageToken", None)
             if page_token is None:
                 break
+
+        log.debug(f"Found {len(files)} sheets with thumbnail information")
+        return files
 
     except HttpError as error:
         log.error(f"An error occurred fetching sheets list: {error}")
         return None
 
-    # Log at debug level only if there are a reasonable number of files
-    if len(files) <= 10:
-        log.debug(f"Found {len(files)} sheets:")
-        for file_info in files:
-            log.debug(f"  {file_info}")
-    else:
-        log.debug(f"Found {len(files)} sheets")
 
-    return files
+def read_spreadsheet_metadata(service: SheetsService, spreadsheet_id: str) -> Optional[SheetMetadata]:
+    try:
+        # Create a Sheets API instance
+        sheets = service.spreadsheets()
+
+        # Request to get values from the specified range in the Google Sheet
+        result = sheets.get(
+            spreadsheetId=spreadsheet_id, fields="sheets.properties(sheetId,title,sheetType,gridProperties)"
+        ).execute()
+
+        log.debug(f"read_spreadsheet_metadata result: {result}")
+        return dict(result)
+
+    except HttpError as error:
+        log.error(f"An error occurred reading spreadsheet data: {error}")
+        return None
 
 
 def read_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, range_name: str) -> Optional[SheetData]:
@@ -103,29 +128,6 @@ def read_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, rang
         log.debug(f"Found {len(values)} rows of data in spreadsheet")
         return values
 
-    except HttpError as error:
-        log.error(f"An error occurred reading spreadsheet data: {error}")
-        return None
-
-
-def get_spreadsheet_metadata(service: SheetsService, spreadsheet_id: str) -> Dict[str, Any]:
-    """Get metadata about a spreadsheet."""
-    try:
-        sheets = service.spreadsheets()
-        result = cast(Dict[str, Any], sheets.get(spreadsheetId=spreadsheet_id).execute())
-        return result
-    except HttpError as error:
-        log.error(f"An error occurred reading spreadsheet metadata: {error}")
-        return {}
-
-
-def get_spreadsheet_values(service: SheetsService, spreadsheet_id: str, range_name: str) -> Optional[SheetData]:
-    """Get values from a spreadsheet range."""
-    try:
-        sheets = service.spreadsheets()
-        result = cast(Dict[str, Any], sheets.values().get(spreadsheetId=spreadsheet_id, range=range_name).execute())
-        values = result.get("values", None)
-        return cast(Optional[SheetData], values)
     except HttpError as error:
         log.error(f"An error occurred reading spreadsheet data: {error}")
         return None
