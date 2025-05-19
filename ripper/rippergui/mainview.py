@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from beartype.typing import Optional
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt

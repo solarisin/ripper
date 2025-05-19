@@ -2,7 +2,7 @@ import enum
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Protocol, Tuple, Type, cast
+from beartype.typing import Any, Dict, List, Optional, Protocol, Tuple, Type, cast
 
 import keyring
 from google.auth.exceptions import RefreshError
