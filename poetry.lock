@@ -1276,6 +1276,25 @@ pluggy = ">=1.5,<2"
 dev = ["argcomplete", "attrs (>=19.2)", "hypothesis (>=3.56)", "mock", "pygments (>=2.7.2)", "requests", "setuptools", "xmlschema"]
 
 [[package]]
+name = "pytest-beartype"
+version = "0.2.0"
+description = "Pytest plugin to run your tests with beartype checking enabled."
+optional = false
+python-versions = ">=3.8"
+groups = ["dev"]
+files = [
+    {file = "pytest_beartype-0.2.0-py3-none-any.whl", hash = "sha256:be6be04be4a143f965f21140d6661bab43dcd7c761d50cf6daa1b16848e5d2d0"},
+    {file = "pytest_beartype-0.2.0.tar.gz", hash = "sha256:9eeec379f812e0e5c9c1bb7e95d90a33a79c387034f2d735e03bc9aa0fd7cf3f"},
+]
+
+[package.dependencies]
+beartype = ">=0.19.0"
+pytest = "*"
+
+[package.extras]
+dev = ["black", "mypy", "pytest-cov", "tox"]
+
+[[package]]
 name = "pytest-cov"
 version = "6.1.1"
 description = "Pytest plugin for measuring coverage."
@@ -1562,4 +1581,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "8f74c6820f925d141c75fa679896ecf38f0cfc3223e719d32d134e33edc52ef0"
+content-hash = "937dc7b7b6e31fae96c8dfa48ce1d082a85ef2b3c0db786852e8c29982514341"

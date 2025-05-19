@@ -42,6 +42,7 @@ types-toml = "^0.10.8.20240310"
 google-auth-stubs = "^0.3.0"
 google-api-python-client-stubs = "^1.29.0"
 types-oauthlib = "^3.2.0.20250516"
+pytest-beartype = "^0.2.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
@@ -55,7 +56,7 @@ target-version = ['py313']
 pythonpath = ["."]
 testpaths = ["test"]
 markers = ["qt: mark test as Qt-specific"]
-addopts = ["--cov=rippergui", "--cov=ripperlib", "--cov-report=xml", "--strict-markers"]
+addopts = ["--beartype-packages=ripper", "--cov=ripper", "--cov-report=xml", "--strict-markers"]
 
 [tool.flake8]
 extend-ignore = ["E203"]
