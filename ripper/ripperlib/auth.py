@@ -4,7 +4,7 @@ import logging
 import os
 
 import keyring
-from beartype.typing import Any, Dict, List, Optional, Protocol, Tuple, Type, cast
+from beartype.typing import Any, Dict, List, Optional, Tuple, Type, cast
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -12,7 +12,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 from googleapiclient.discovery import Resource, build
 from keyring.errors import PasswordDeleteError
 from PySide6.QtCore import QObject, Signal
-from typing_extensions import runtime_checkable
+
+from ripper.ripperlib.defs import DriveService, SheetsService, UserInfoService
 
 OAUTH_CLIENT_KEY = "ripper-oauth-client"
 OAUTH_CLIENT_USER = "default-user"
@@ -24,27 +25,6 @@ SCOPES = [
 ]
 
 log = logging.getLogger("ripper:auth")
-
-
-# Protocol classes for Google API services
-@runtime_checkable
-class SheetsService(Protocol):
-    def spreadsheets(self) -> Any: ...
-    def values(self) -> Any: ...
-    def get(self, spreadsheetId: str) -> Any: ...
-
-
-@runtime_checkable
-class DriveService(Protocol):
-    def files(self) -> Any: ...
-    def get(self, fileId: str) -> Any: ...
-    def list(self, **kwargs: Any) -> Any: ...
-
-
-@runtime_checkable
-class UserInfoService(Protocol):
-    def userinfo(self) -> Any: ...
-    def get(self) -> Any: ...
 
 
 class AuthState(enum.Enum):

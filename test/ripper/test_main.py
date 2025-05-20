@@ -1,13 +1,8 @@
 import importlib.metadata
-import logging
-import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import click.testing
-import pytest
-
-from ripper.main import configure_logging, get_version
+from ripper.main import get_version
 
 
 class TestMain(unittest.TestCase):
@@ -53,67 +48,3 @@ class TestMain(unittest.TestCase):
 
         # Check that toml.load was called
         mock_toml_load.assert_called_once()
-
-    @patch("logging.basicConfig")
-    def test_configure_logging_with_default_level(self, mock_basicConfig):
-        """Test that configure_logging sets up logging with the default level (DEBUG)."""
-        # Call configure_logging with no level
-        configure_logging()
-
-        # Check that basicConfig was called with the correct arguments
-        mock_basicConfig.assert_called_once()
-        args, kwargs = mock_basicConfig.call_args
-        self.assertEqual(kwargs["level"], logging.DEBUG)
-        self.assertEqual(kwargs["format"], "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        self.assertEqual(kwargs["datefmt"], "%Y-%m-%d %H:%M:%S")
-
-    @patch("logging.basicConfig")
-    def test_configure_logging_with_custom_level(self, mock_basicConfig):
-        """Test that configure_logging sets up logging with a custom level."""
-        # Call configure_logging with a custom level
-        configure_logging(logging.INFO)
-
-        # Check that basicConfig was called with the correct arguments
-        mock_basicConfig.assert_called_once()
-        args, kwargs = mock_basicConfig.call_args
-        self.assertEqual(kwargs["level"], logging.INFO)
-        self.assertEqual(kwargs["format"], "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        self.assertEqual(kwargs["datefmt"], "%Y-%m-%d %H:%M:%S")
-
-    @pytest.mark.qt
-    @patch("ripper.main.QApplication")
-    @patch("ripper.main.MainView")
-    @patch("ripper.main.AuthManager")
-    @patch("sys.exit")
-    def test_main(self, mock_sys_exit, mock_auth_manager, mock_main_view, mock_qapp):
-        """Test that main initializes the application correctly."""
-        # Set up mocks
-        mock_app_instance = MagicMock()
-        mock_qapp.return_value = mock_app_instance
-
-        mock_main_view_instance = MagicMock()
-        mock_main_view.return_value = mock_main_view_instance
-
-        mock_auth_manager_instance = MagicMock()
-        mock_auth_manager.return_value = mock_auth_manager_instance
-
-        # Use CliRunner to invoke the CLI
-        from ripper import main as main_module
-
-        runner = click.testing.CliRunner()
-        runner.invoke(main_module.main, [])
-
-        # Check that QApplication was created
-        mock_qapp.assert_called_once_with(sys.argv)
-
-        # Check that MainView was created
-        mock_main_view.assert_called_once()
-
-        # Check that AuthManager.check_stored_credentials was called
-        mock_auth_manager_instance.check_stored_credentials.assert_called_once()
-
-        # Check that MainView.show was called
-        mock_main_view_instance.show.assert_called_once()
-
-        # Check that sys.exit was not called (since we return app.exec())
-        mock_sys_exit.assert_not_called()

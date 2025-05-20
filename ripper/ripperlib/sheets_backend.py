@@ -1,7 +1,9 @@
 import logging
 
-from beartype.typing import Any, Dict, List, Optional, Protocol, cast
+from beartype.typing import Any, Dict, List, Optional, cast
 from googleapiclient.errors import HttpError
+
+from ripper.ripperlib.defs import DriveService, SheetsService
 
 # Configure module logger
 log = logging.getLogger("ripper:sheets_backend")
@@ -10,20 +12,6 @@ log = logging.getLogger("ripper:sheets_backend")
 SheetData = List[List[Any]]
 SheetMetadata = Dict[str, Any]
 FileInfo = Dict[str, Any]
-
-
-# Protocol classes for type checking
-class DriveService(Protocol):
-    def files(self) -> Any: ...
-    def get(self, fileId: str) -> Any: ...
-    def list(self, **kwargs: Any) -> Any: ...
-
-
-class SheetsService(Protocol):
-    def spreadsheets(self) -> Any: ...
-    def values(self) -> Any: ...
-    def get(self, spreadsheetId: str) -> Any: ...
-    def batchUpdate(self, spreadsheetId: str, body: Dict[str, Any]) -> Any: ...
 
 
 DRIVE_FILE_FIELDS: frozenset[str] = frozenset(
