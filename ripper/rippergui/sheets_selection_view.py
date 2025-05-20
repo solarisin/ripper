@@ -52,7 +52,8 @@ class SheetThumbnailWidget(QFrame):
             parent: Parent widget
         """
         super().__init__(parent)
-        self.sheet_info: Dict[str, Any] = sheet_info
+        self.spreadsheet_info: Dict[str, Any] = sheet_info
+        self.sheet_id: str = sheet_info.get("id")
         self.dialog: Optional[SheetsSelectionDialog] = cast(SheetsSelectionDialog, parent)
 
         # Configure frame appearance
@@ -132,7 +133,7 @@ class SheetThumbnailWidget(QFrame):
         pixmap.fill(Qt.GlobalColor.lightGray)
         self.thumbnail_label.setPixmap(pixmap)
 
-    def load_thumbnail(self, url: str, sheet_id: str) -> None:
+    def load_thumbnail(self, url: str, spreadsheet_id: str) -> None:
         """
         Load thumbnail from cache or URL asynchronously.
 
@@ -141,7 +142,7 @@ class SheetThumbnailWidget(QFrame):
             sheet_id: ID of the sheet to use as cache key
         """
         # Check cache first
-        cached_thumbnail = get_thumbnail(sheet_id)
+        cached_thumbnail = get_thumbnail(spreadsheet_id)
         if cached_thumbnail:
             try:
                 thumbnail_data = cached_thumbnail["thumbnail_data"]
@@ -149,10 +150,10 @@ class SheetThumbnailWidget(QFrame):
                 if image.loadFromData(thumbnail_data):
                     pixmap = QPixmap.fromImage(image)
                     self.thumbnail_label.setPixmap(pixmap)
-                    log.debug(f"Loaded thumbnail for sheet {sheet_id} from cache")
+                    log.debug(f"Loaded thumbnail for spreadsheet id {spreadsheet_id} from cache")
                     return
                 else:
-                    log.warning(f"Failed to load image data for sheet {sheet_id} from cache")
+                    log.warning(f"Failed to load image data for spreadsheet id {spreadsheet_id} from cache")
             except KeyError as e:
                 log.error(f"Missing key in cached thumbnail data: {e}")
             except Exception as e:
@@ -165,7 +166,7 @@ class SheetThumbnailWidget(QFrame):
         # Load from URL asynchronously
         request = QNetworkRequest(QUrl(url))
         self.network_manager.get(request)
-        log.debug(f"Requesting thumbnail for sheet {sheet_id} from URL: {url}")
+        log.debug(f"Requesting thumbnail for spreadsheet id {spreadsheet_id} from URL: {url}")
 
     def handle_thumbnail_response(self, reply: QNetworkReply) -> None:
         """
@@ -188,12 +189,12 @@ class SheetThumbnailWidget(QFrame):
                     pixmap = QPixmap.fromImage(image)
                     self.thumbnail_label.setPixmap(pixmap)
 
-                    # Store in cache if we have a sheet ID
-                    if "id" in self.sheet_info:
-                        sheet_id = self.sheet_info["id"]
+                    # Store in cache if we have a spreadsheet ID
+                    if "id" in self.spreadsheet_info:
+                        spreadsheet_id = self.spreadsheet_info["id"]
                         last_modified = datetime.now().isoformat()
-                        store_thumbnail(sheet_id, image_data, last_modified)
-                        log.debug(f"Stored thumbnail for sheet {sheet_id} in cache")
+                        store_thumbnail(spreadsheet_id, image_data, last_modified)
+                        log.debug(f"Stored thumbnail for spreadsheet id {spreadsheet_id} in cache")
                 else:
                     log.error("Failed to load image data from network response")
                     self.set_default_thumbnail()
@@ -217,7 +218,7 @@ class SheetThumbnailWidget(QFrame):
         super().mousePressEvent(event)
         self.setFrameShadow(QFrame.Shadow.Sunken)
         if self.dialog:
-            self.dialog.select_sheet(self.sheet_info)
+            self.dialog.select_sheet(self.spreadsheet_info)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """
@@ -252,6 +253,7 @@ class SheetsSelectionDialog(QDialog):
         self.setWindowTitle("Select Google Sheet")
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
+        self.resize(1600, 900)
 
         self.selected_sheet: Optional[Dict[str, Any]] = None
         self.sheets_list: List[Dict[str, Any]] = []
@@ -278,7 +280,6 @@ class SheetsSelectionDialog(QDialog):
         self.grid_layout = QGridLayout(scroll_content)
         self.sheets_list_widget = QListWidget()
         self.sheets_list_widget.setIconSize(QSize(120, 80))
-        self.sheets_list_widget.itemDoubleClicked.connect(self._on_sheet_selected)
         scroll_area.setWidget(scroll_content)
         thumbnails_layout.addWidget(scroll_area)
 
@@ -408,7 +409,7 @@ class SheetsSelectionDialog(QDialog):
                 col = 0
                 row += 1
 
-    def select_sheet(self, sheet_info: Dict[str, Any]) -> None:
+    def select_sheet(self, spreadsheet_info: Dict[str, Any]) -> None:
         """
         Handle sheet selection.
 
@@ -418,28 +419,28 @@ class SheetsSelectionDialog(QDialog):
         Args:
             sheet_info: Dictionary containing information about the selected sheet
         """
-        self.selected_sheet = sheet_info
+        self.selected_sheet = spreadsheet_info
         self.select_button.setEnabled(True)
 
         # Update details view
-        details = f"<b>Name:</b> {sheet_info.get('name', 'Unknown')}<br>"
-        details += f"<b>ID:</b> {sheet_info.get('id', 'Unknown')}<br>"
+        details = f"<b>Name:</b> {spreadsheet_info['name']}<br>"
+        details += f"<b>ID:</b> {spreadsheet_info['id']}<br>"
 
-        if "createdTime" in sheet_info:
-            details += f"<b>Created:</b> {sheet_info['createdTime']}<br>"
+        if "createdTime" in spreadsheet_info:
+            details += f"<b>Created:</b> {spreadsheet_info['createdTime']}<br>"
 
-        if "modifiedTime" in sheet_info:
-            details += f"<b>Modified:</b> {sheet_info['modifiedTime']}<br>"
+        if "modifiedTime" in spreadsheet_info:
+            details += f"<b>Modified:</b> {spreadsheet_info['modifiedTime']}<br>"
 
-        if "owners" in sheet_info and sheet_info["owners"]:
-            owner = sheet_info["owners"][0]
+        if "owners" in spreadsheet_info and spreadsheet_info["owners"]:
+            owner = spreadsheet_info["owners"][0]
             details += f"<b>Owner:</b> {owner.get('displayName', 'Unknown')}<br>"
 
-        if "shared" in sheet_info:
-            details += f"<b>Shared:</b> {'Yes' if sheet_info['shared'] else 'No'}<br>"
+        if "shared" in spreadsheet_info:
+            details += f"<b>Shared:</b> {'Yes' if spreadsheet_info['shared'] else 'No'}<br>"
 
-        if "webViewLink" in sheet_info:
-            details += f"<b>Web Link:</b> <a href='{sheet_info['webViewLink']}'>{sheet_info['webViewLink']}</a><br>"
+        if "webViewLink" in spreadsheet_info:
+            details += f"<b>Web Link:</b> <a href='{spreadsheet_info['webViewLink']}'>{spreadsheet_info['webViewLink']}</a><br>"
 
         # Update sheet name in advanced options if not already modified by user
         if self.sheet_name_input.text() == "Sheet1" and not self.sheet_name_input.isModified():
@@ -448,22 +449,30 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = details
         self.details_content.setText(self.details_text)
 
-    def print_sheet_info(self, sheet_info: Dict[str, Any]) -> None:
+        import json
+
+        # TODO attempt to load the sheet metadata from the database cache, otherwise, query the google api for it
+        sheets_service = AuthManager().create_sheets_service()
+        if sheets_service:
+            sheets_properties = read_spreadsheet_metadata(sheets_service, spreadsheet_info["id"])
+            log.debug(f"Spreadsheet contains {len(sheets_properties)} sheets")
+
+    def print_spreadsheet_info(self, spreadsheet_info: Dict[str, Any]) -> None:
         """
         Gets the sheet name and range from the advanced options and
         logs details about the selected sheet.
         """
 
-        spreadsheet_name = sheet_info.get("name")
-        spreadsheet_id = sheet_info.get("id")
-        worksheet_name = sheet_info.get("worksheet")
-        worksheet_range = sheet_info.get("range")
+        spreadsheet_name = spreadsheet_info.get("name")
+        spreadsheet_id = spreadsheet_info.get("id")
+        sheet_name = spreadsheet_info.get("sheet_name")
+        sheet_range = spreadsheet_info.get("sheet_range")
 
         log.info("Selected Google Sheet Information:")
         log.info(f"Spreadsheet Name: {spreadsheet_name}")
         log.info(f"Spreadsheet ID: {spreadsheet_id}")
-        log.info(f"Worksheet Name: {worksheet_name}")
-        log.info(f"Worksheet Range: {worksheet_range if worksheet_range else 'Entire table'}")
+        log.info(f"Sheet Name: {sheet_name}")
+        log.info(f"Sheet Range: {sheet_range if sheet_range else 'Entire table'}")
 
     def user_confirmed_sheet(self) -> None:
         if not self.selected_sheet:
@@ -477,24 +486,24 @@ class SheetsSelectionDialog(QDialog):
             return
 
         # Get sheet name and range from advanced options
-        worksheet_name = self.sheet_name_input.text().strip()
-        worksheet_range = self.sheet_range_input.text().strip()
+        sheet_name = self.sheet_name_input.text().strip()
+        sheet_range = self.sheet_range_input.text().strip()
 
         # Validate sheet name (required)
-        if not worksheet_name:
+        if not sheet_name:
             self.show_error("Sheet name is required. Please enter a sheet name in the Advanced Options.")
             self.advanced_options_checkbox.setChecked(True)  # Show advanced options
             self.sheet_name_input.setFocus()
             return
 
         sheet_info = {
-            "name": spreadsheet_name,
-            "id": spreadsheet_id,
-            "worksheet": worksheet_name,
-            "range": worksheet_range,
+            "spreadsheet_name": spreadsheet_name,
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_name": sheet_name,
+            "sheet_range": sheet_range,
         }
 
-        self.print_sheet_info(sheet_info)
+        self.print_spreadsheet_info(sheet_info)
 
         self.sheet_selected.emit(sheet_info)
 
@@ -515,19 +524,3 @@ class SheetsSelectionDialog(QDialog):
             message: The error message to display
         """
         self.details_content.setText(f"<span style='color: red;'>{message}</span>")
-
-    @Slot()
-    def _on_sheet_selected(self) -> None:
-        """Handle sheet selection."""
-        current_item = self.sheets_list_widget.currentItem()
-        if not current_item:
-            return
-
-        sheet_data = current_item.data(Qt.ItemDataRole.UserRole)
-        if not sheet_data:
-            return
-
-        # TODO attempt to load the sheet metadata from the database cache, otherwise, query the google api for it
-        read_spreadsheet_metadata(...)
-
-        self.accept()

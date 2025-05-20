@@ -3,15 +3,10 @@ import logging
 from beartype.typing import Any, Dict, List, Optional, cast
 from googleapiclient.errors import HttpError
 
-from ripper.ripperlib.defs import DriveService, SheetsService
+from ripper.ripperlib.defs import DriveService, FileInfo, SheetData, SheetProperties, SheetsService
 
 # Configure module logger
 log = logging.getLogger("ripper:sheets_backend")
-
-# Type aliases for better readability
-SheetData = List[List[Any]]
-SheetMetadata = Dict[str, Any]
-FileInfo = Dict[str, Any]
 
 
 DRIVE_FILE_FIELDS: frozenset[str] = frozenset(
@@ -67,18 +62,15 @@ def list_sheets(service: DriveService, file_fields: frozenset[str] = DRIVE_FILE_
         return None
 
 
-def read_spreadsheet_metadata(service: SheetsService, spreadsheet_id: str) -> Optional[SheetMetadata]:
+def read_spreadsheet_metadata(service: SheetsService, spreadsheet_id: str) -> Optional[list[SheetProperties]]:
     try:
         # Create a Sheets API instance
         sheets = service.spreadsheets()
 
         # Request to get values from the specified range in the Google Sheet
-        result = sheets.get(
-            spreadsheetId=spreadsheet_id, fields="sheets.properties(sheetId,title,sheetType,gridProperties)"
-        ).execute()
+        result = sheets.get(spreadsheetId=spreadsheet_id, fields=SheetProperties.api_fields()).execute()
 
-        log.debug(f"read_spreadsheet_metadata result: {result}")
-        return dict(result)
+        return SheetProperties.from_api_result(result)
 
     except HttpError as error:
         log.error(f"An error occurred reading spreadsheet data: {error}")
