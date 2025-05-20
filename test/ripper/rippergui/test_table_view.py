@@ -1,4 +1,5 @@
 import unittest
+import warnings
 from decimal import Decimal
 
 import pytest
@@ -384,12 +385,14 @@ class TestFilterDialog:
         qtbot.addWidget(dialog)
 
         # Set up a signal spy
-        with qtbot.waitSignal(dialog.filters_applied, timeout=1000) as blocker:
-            # Set some values
-            dialog.description_filter_input.setText("Coffee")
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            with qtbot.waitSignal(dialog.filters_applied, timeout=1000) as blocker:
+                # Set some values
+                dialog.description_filter_input.setText("Coffee")
 
-            # Apply and accept
-            dialog.apply_and_accept()
+                # Apply and accept
+                dialog.apply_and_accept()
 
         # Check that the signal was emitted with the correct filters
         filters = blocker.args[0]
