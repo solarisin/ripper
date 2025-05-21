@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import sqlite3
@@ -166,6 +167,13 @@ def create_table(db_file_path: str) -> None:
                             last_modified TEXT NOT NULL
                         );"""
             )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS sheet_metadata (
+                            sheet_id TEXT PRIMARY KEY,
+                            modified_time TEXT NOT NULL,
+                            metadata TEXT NOT NULL
+                        );"""
+            )
             # Add indexes on frequently queried columns
             c.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);")
             c.execute("CREATE INDEX IF NOT EXISTS idx_transactions_description ON transactions (description);")
@@ -330,33 +338,43 @@ def insert_data_source(
     return False
 
 
-def store_metadata(sheet_id: str, metadata: dict, db_file_path: Optional[str] = None) -> bool:
+def store_metadata(sheet_id: str, metadata: dict, modified_time: str, db_file_path: Optional[str] = None) -> bool:
+    """
+    Store or update sheet metadata in the database.
+
+    Args:
+        sheet_id: The ID of the spreadsheet.
+        metadata: The sheet metadata dictionary.
+        modified_time: The last modified time of the spreadsheet.
+        db_file_path: Path to the database file. If None, uses default path.
+
+    Returns:
+        True if successful, False otherwise.
+    """
     if db_file_path is None:
         db_file_path = get_db_path()
     conn = create_connection(db_file_path)
     if conn is not None:
         try:
-
-            # TODO extract discrete  properties to be stored from dict, or replace dict with a type
-            #   or maybe use JSON1 extension?
-
             c = conn.cursor()
+            metadata_json = json.dumps(metadata)
+
             # Check if metadata already exists for this spreadsheet
-            c.execute("SELECT 1 FROM sheet_thumbnails WHERE sheet_id = ?", (sheet_id,))
+            c.execute("SELECT 1 FROM sheet_metadata WHERE sheet_id = ?", (sheet_id,))
             if c.fetchone():
                 # Update existing metadata
                 c.execute(
                     """UPDATE sheet_metadata
-                       SET # TODO properties
+                       SET modified_time = ?, metadata = ?
                        WHERE sheet_id = ?""",
-                    (..., sheet_id),
+                    (modified_time, metadata_json, sheet_id),
                 )
             else:
                 # Insert new metadata
                 c.execute(
-                    """INSERT INTO sheet_thumbnails (sheet_id, # TODO properties)
+                    """INSERT INTO sheet_metadata (sheet_id, modified_time, metadata)
                        VALUES (?, ?, ?)""",
-                    (sheet_id, ...),
+                    (sheet_id, modified_time, metadata_json),
                 )
             conn.commit()
             return True
@@ -368,17 +386,34 @@ def store_metadata(sheet_id: str, metadata: dict, db_file_path: Optional[str] = 
     return False
 
 
-def get_metadata(sheet_id: str, db_file_path: Optional[str] = None) -> Optional[dict]:
+def get_metadata(sheet_id: str, modified_time: str, db_file_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve sheet metadata from the database if the modified time matches.
+
+    Args:
+        sheet_id: The ID of the spreadsheet.
+        modified_time: The last modified time to check against.
+        db_file_path: Path to the database file. If None, uses default path.
+
+    Returns:
+        The metadata dictionary if found and up-to-date, otherwise None.
+    """
     if db_file_path is None:
         db_file_path = get_db_path()
     conn = create_connection(db_file_path)
     if conn is not None:
         try:
             c = conn.cursor()
-            c.execute("SELECT ... FROM sheet_metadata WHERE sheet_id = ?", (sheet_id,))
+            c.execute("SELECT modified_time, metadata FROM sheet_metadata WHERE sheet_id = ?", (sheet_id,))
             result = c.fetchone()
-            if result:  # TODO implement discrete properties or type and return them
-                return {}
+            if result:
+                stored_modified_time, stored_metadata_json = result
+                if stored_modified_time == modified_time:
+                    return cast(Dict[str, Any], json.loads(stored_metadata_json))
+                else:
+                    log.debug(f"Metadata for sheet {sheet_id} is outdated.")
+            else:
+                log.debug(f"No metadata found for sheet {sheet_id}.")
             return None
         except Error as e:
             log.error(f"Error retrieving metadata: {e}")
