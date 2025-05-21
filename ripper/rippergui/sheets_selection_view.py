@@ -3,9 +3,10 @@ from datetime import datetime
 
 from beartype.typing import Any, Dict, List, Optional, cast
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QImage, QMouseEvent, QPixmap
+from PySide6.QtGui import QCursor, QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QFormLayout,
@@ -24,7 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from ripper.ripperlib.auth import AuthManager
-from ripper.ripperlib.database import get_thumbnail, store_thumbnail
+from ripper.ripperlib.database import get_metadata, get_thumbnail, store_metadata, store_thumbnail
+from ripper.ripperlib.defs import SheetProperties
 from ripper.ripperlib.sheets_backend import list_sheets, read_spreadsheet_metadata
 
 log = logging.getLogger("ripper:sheets_selection_view")
@@ -450,10 +452,46 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = details
         self.details_content.setText(self.details_text)
 
-        # TODO attempt to load the sheet metadata from the database cache, otherwise, query the google api for it
+        self._load_and_cache_sheet_metadata(spreadsheet_info)
+
+    def _load_and_cache_sheet_metadata(self, spreadsheet_info: Dict[str, Any]) -> None:
+        """
+        Load sheet metadata from cache or API and store in cache.
+        """
         sheets_service = AuthManager().create_sheets_service()
         if sheets_service:
-            sheets_properties = read_spreadsheet_metadata(sheets_service, spreadsheet_info["id"])
+            spreadsheet_id = spreadsheet_info["id"]
+            modified_time = spreadsheet_info.get("modifiedTime")
+
+            cached_metadata: Optional[Dict[str, Any]] = None
+            if modified_time:
+                cached_metadata = get_metadata(spreadsheet_id, modified_time)
+
+            sheets_properties: Optional[List[SheetProperties]] = None
+
+            if cached_metadata is None:
+                log.debug(f"Metadata for sheet {spreadsheet_id} not found in cache or is outdated. Fetching from API.")
+                QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+                api_metadata = read_spreadsheet_metadata(sheets_service, spreadsheet_id)
+                if api_metadata is not None and modified_time:
+                    # Convert list of SheetProperties to a dictionary for caching
+                    metadata_to_cache = {"sheets": [sheet.to_dict() for sheet in api_metadata]}
+                    store_metadata(spreadsheet_id, metadata_to_cache, modified_time)
+                    log.debug(f"Stored metadata for sheet {spreadsheet_id} in cache.")
+                sheets_properties = api_metadata
+                QApplication.restoreOverrideCursor()
+            else:
+                log.debug(f"Metadata for sheet {spreadsheet_id} found in cache.")
+                # Convert cached dictionary back to list of SheetProperties
+                if "sheets" in cached_metadata:
+                    try:
+                        sheets_properties = [
+                            SheetProperties({"properties": sheet_dict}) for sheet_dict in cached_metadata["sheets"]
+                        ]
+                    except Exception as e:
+                        log.error(f"Error converting cached metadata to SheetProperties: {e}")
+                        sheets_properties = None  # Invalidate cached data if conversion fails
+
             if sheets_properties is not None:
                 log.debug(f"Spreadsheet contains {len(sheets_properties)} sheets")
 
