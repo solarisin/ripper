@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 from googleapiclient.errors import HttpError
 
-from ripper.ripperlib.sheets_backend import list_sheets, read_data_from_spreadsheet
+from ripper.ripperlib.sheets_backend import DRIVE_FILE_FIELDS, list_sheets, read_data_from_spreadsheet
 
 
 class TestSheetsBackend(unittest.TestCase):
@@ -38,7 +38,7 @@ class TestSheetsBackend(unittest.TestCase):
         mock_files_list.assert_called_once_with(
             q="mimeType='application/vnd.google-apps.spreadsheet'",
             spaces="drive",
-            fields="nextPageToken, files(id, name)",
+            fields=f"nextPageToken, files({', '.join(DRIVE_FILE_FIELDS)})",
             pageToken=None,
         )
 
