@@ -5,14 +5,13 @@ from beartype.typing import Any, Dict, List, Optional, cast
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QCursor, QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PySide6.QtWidgets import QApplication  # QCheckBox,; QGroupBox,
 from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
+    QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -259,6 +258,7 @@ class SheetsSelectionDialog(QDialog):
 
         self.selected_sheet: Optional[Dict[str, Any]] = None
         self.sheets_list: List[Dict[str, Any]] = []
+        self.all_sheet_properties: Dict[str, List[SheetProperties]] = {}
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -301,30 +301,19 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = ""
         details_layout.addWidget(self.details_content)
 
-        # Advanced Options section (collapsible)
-        self.advanced_options_checkbox = QCheckBox("Advanced Options")
-        self.advanced_options_checkbox.setChecked(False)  # Hidden by default
-        details_layout.addWidget(self.advanced_options_checkbox)
+        # Sheet name and range input
+        advanced_options_layout = QFormLayout()
 
-        # Advanced Options group box
-        self.advanced_options_group = QGroupBox()
-        self.advanced_options_group.setVisible(False)  # Hidden by default
-        advanced_options_layout = QFormLayout(self.advanced_options_group)
-
-        # Sheet name input
-        self.sheet_name_input = QLineEdit("Sheet1")  # Default to Sheet1
-        self.sheet_name_input.setPlaceholderText("Required - Default: Sheet1")
-        advanced_options_layout.addRow("Sheet Name:", self.sheet_name_input)
+        # Sheet name combobox
+        self.sheet_name_combobox = QComboBox()
+        advanced_options_layout.addRow("Sheet Name:", self.sheet_name_combobox)
 
         # Sheet range input
         self.sheet_range_input = QLineEdit()
-        self.sheet_range_input.setPlaceholderText("Optional - e.g., A1:Z100")
         advanced_options_layout.addRow("Sheet Range:", self.sheet_range_input)
 
-        details_layout.addWidget(self.advanced_options_group)
-
-        # Connect checkbox to toggle advanced options visibility
-        self.advanced_options_checkbox.toggled.connect(self.toggle_advanced_options)
+        # Add the form layout directly to details_layout
+        details_layout.addLayout(advanced_options_layout)
 
         # Add widgets to splitter
         splitter.addWidget(thumbnails_widget)
@@ -446,13 +435,11 @@ class SheetsSelectionDialog(QDialog):
             details += f"<a href='{spreadsheet_info['webViewLink']}'>{spreadsheet_info['webViewLink']}</a><br>"
 
         # Update sheet name in advanced options if not already modified by user
-        if self.sheet_name_input.text() == "Sheet1" and not self.sheet_name_input.isModified():
-            self.sheet_name_input.setText("Sheet1")
-            self.sheet_name_input.setModified(False)  # Reset modified state
         self.details_text = details
         self.details_content.setText(self.details_text)
 
         self._load_and_cache_sheet_metadata(spreadsheet_info)
+        self._update_sheet_details(spreadsheet_info)
 
     def _load_and_cache_sheet_metadata(self, spreadsheet_info: Dict[str, Any]) -> None:
         """
@@ -478,8 +465,11 @@ class SheetsSelectionDialog(QDialog):
                     metadata_to_cache = {"sheets": [sheet.to_dict() for sheet in api_metadata]}
                     store_metadata(spreadsheet_id, metadata_to_cache, modified_time)
                     log.debug(f"Stored metadata for sheet {spreadsheet_id} in cache.")
-                sheets_properties = api_metadata
-                QApplication.restoreOverrideCursor()
+                    sheets_properties = api_metadata
+                    QApplication.restoreOverrideCursor()
+                else:
+                    log.error("Failed to fetch metadata from API")
+                    sheets_properties = None
             else:
                 log.debug(f"Metadata for sheet {spreadsheet_id} found in cache.")
                 # Convert cached dictionary back to list of SheetProperties
@@ -494,6 +484,60 @@ class SheetsSelectionDialog(QDialog):
 
             if sheets_properties is not None:
                 log.debug(f"Spreadsheet contains {len(sheets_properties)} sheets")
+                # Store the sheet properties
+                self.all_sheet_properties[spreadsheet_id] = sheets_properties
+
+    def _update_sheet_details(self, spreadsheet_info: Dict[str, Any]) -> None:
+        """
+        Update the sheet name combobox and range input based on the selected spreadsheet's metadata.
+        """
+        spreadsheet_id = spreadsheet_info["id"]
+        sheets_properties = self.all_sheet_properties.get(spreadsheet_id)
+
+        self.sheet_name_combobox.clear()
+        self.sheet_range_input.clear()
+
+        if sheets_properties:
+            sheet_names = [sheet.title for sheet in sheets_properties]
+            self.sheet_name_combobox.addItems(sheet_names)
+
+            # Connect the signal after populating to avoid triggering during population
+            self.sheet_name_combobox.currentIndexChanged.connect(self._sheet_name_selected)
+
+            # Select the first sheet by default and update the range
+            if sheet_names:
+                self.sheet_name_combobox.setCurrentIndex(0)
+                self._sheet_name_selected(0)
+
+    def _sheet_name_selected(self, index: int) -> None:
+        """
+        Handle sheet name selection from the combobox and update the range input.
+        """
+        if self.selected_sheet and index >= 0:
+            spreadsheet_id = self.selected_sheet["id"]
+            sheets_properties = self.all_sheet_properties.get(spreadsheet_id)
+
+            if sheets_properties and index < len(sheets_properties):
+                selected_sheet_props = sheets_properties[index]
+
+                # Calculate the range (e.g., Sheet1!A1:Z100)
+                row_count = selected_sheet_props.grid.row_count
+                col_count = selected_sheet_props.grid.column_count
+
+                # Convert column index to letter (A=1, B=2, etc.)
+                def col_to_letter(col_index: int) -> str:
+                    letter = ""
+                    while col_index > 0:
+                        col_index, remainder = divmod(col_index - 1, 26)
+                        letter = chr(65 + remainder) + letter
+                    return letter
+
+                end_column_letter = col_to_letter(col_count)
+
+                sheet_range = f"A1:{end_column_letter}{row_count}"
+                self.sheet_range_input.setText(sheet_range)
+        else:
+            self.sheet_range_input.clear()
 
     def print_spreadsheet_info(self, spreadsheet_info: Dict[str, Any]) -> None:
         """
@@ -510,7 +554,7 @@ class SheetsSelectionDialog(QDialog):
         log.info(f"Spreadsheet Name: {spreadsheet_name}")
         log.info(f"Spreadsheet ID: {spreadsheet_id}")
         log.info(f"Sheet Name: {sheet_name}")
-        log.info(f"Sheet Range: {sheet_range if sheet_range else 'Entire table'}")
+        log.info(f"Sheet Range: {sheet_range}")
 
     def user_confirmed_sheet(self) -> None:
         if not self.selected_sheet:
@@ -523,15 +567,14 @@ class SheetsSelectionDialog(QDialog):
             log.error(f"Missing required data key in selected sheet: {e}")
             return
 
-        # Get sheet name and range from advanced options
-        sheet_name = self.sheet_name_input.text().strip()
+        # Get sheet name and range from the combobox and line edit
+        sheet_name = self.sheet_name_combobox.currentText().strip()
         sheet_range = self.sheet_range_input.text().strip()
 
         # Validate sheet name (required)
         if not sheet_name:
             self.show_error("Sheet name is required. Please enter a sheet name in the Advanced Options.")
-            self.advanced_options_checkbox.setChecked(True)  # Show advanced options
-            self.sheet_name_input.setFocus()
+            self.sheet_name_combobox.setFocus()
             return
 
         sheet_info = {
@@ -544,15 +587,6 @@ class SheetsSelectionDialog(QDialog):
         self.print_spreadsheet_info(sheet_info)
 
         self.sheet_selected.emit(sheet_info)
-
-    def toggle_advanced_options(self, checked: bool) -> None:
-        """
-        Toggle the visibility of the advanced options section.
-
-        Args:
-            checked: Whether the checkbox is checked
-        """
-        self.advanced_options_group.setVisible(checked)
 
     def show_error(self, message: str) -> None:
         """
