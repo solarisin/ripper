@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 
 from beartype.typing import Any, Dict, List, Optional, cast
-from PySide6.QtCore import QSize, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -53,7 +53,7 @@ class SheetThumbnailWidget(QFrame):
         """
         super().__init__(parent)
         self.spreadsheet_info: Dict[str, Any] = sheet_info
-        self.sheet_id: str = sheet_info.get("id")
+        self.sheet_id: Optional[str] = sheet_info.get("id")
         self.dialog: Optional[SheetsSelectionDialog] = cast(SheetsSelectionDialog, parent)
 
         # Configure frame appearance
@@ -440,7 +440,8 @@ class SheetsSelectionDialog(QDialog):
             details += f"<b>Shared:</b> {'Yes' if spreadsheet_info['shared'] else 'No'}<br>"
 
         if "webViewLink" in spreadsheet_info:
-            details += f"<b>Web Link:</b> <a href='{spreadsheet_info['webViewLink']}'>{spreadsheet_info['webViewLink']}</a><br>"
+            details += "<b>Web Link:</b>"
+            details += f"<a href='{spreadsheet_info['webViewLink']}'>{spreadsheet_info['webViewLink']}</a><br>"
 
         # Update sheet name in advanced options if not already modified by user
         if self.sheet_name_input.text() == "Sheet1" and not self.sheet_name_input.isModified():
@@ -449,13 +450,12 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = details
         self.details_content.setText(self.details_text)
 
-        import json
-
         # TODO attempt to load the sheet metadata from the database cache, otherwise, query the google api for it
         sheets_service = AuthManager().create_sheets_service()
         if sheets_service:
             sheets_properties = read_spreadsheet_metadata(sheets_service, spreadsheet_info["id"])
-            log.debug(f"Spreadsheet contains {len(sheets_properties)} sheets")
+            if sheets_properties is not None:
+                log.debug(f"Spreadsheet contains {len(sheets_properties)} sheets")
 
     def print_spreadsheet_info(self, spreadsheet_info: Dict[str, Any]) -> None:
         """

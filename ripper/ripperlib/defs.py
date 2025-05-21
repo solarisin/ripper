@@ -1,5 +1,4 @@
 import logging
-from typing import Self
 
 from beartype.typing import Any, Dict, Protocol
 from typing_extensions import runtime_checkable
@@ -38,7 +37,7 @@ class SheetProperties:
             self.row_count = row_count
             self.column_count = column_count
 
-        def __dict__(self) -> dict[str, Any]:
+        def to_dict(self) -> dict[str, Any]:
             return {
                 "rowCount": self.row_count,
                 "columnCount": self.column_count,
@@ -56,13 +55,13 @@ class SheetProperties:
             properties["gridProperties"]["columnCount"],
         )
 
-    def __dict__(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "sheetId": self.id,
             "index": self.index,
             "title": self.title,
             "sheetType": self.type,
-            "gridProperties": self.grid.__dict__(),
+            "gridProperties": self.grid.to_dict(),
         }
 
     @staticmethod
@@ -74,7 +73,7 @@ class SheetProperties:
         return f"sheets.properties({','.join(SheetProperties.fields())})"
 
     @staticmethod
-    def from_api_result(api_result: dict[str, Any]) -> list[Self]:
+    def from_api_result(api_result: dict[str, Any]) -> list["SheetProperties"]:
         sheets = []
         if "sheets" in api_result:
             for sheet in api_result["sheets"]:
