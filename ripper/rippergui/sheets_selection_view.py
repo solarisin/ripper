@@ -1,12 +1,13 @@
 import logging
+import re
 from datetime import datetime
 
 from beartype.typing import Any, Dict, List, Optional, cast
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QCursor, QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
-from PySide6.QtWidgets import QApplication  # QCheckBox,; QGroupBox,
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -29,6 +30,43 @@ from ripper.ripperlib.defs import SheetProperties
 from ripper.ripperlib.sheets_backend import list_sheets, read_spreadsheet_metadata
 
 log = logging.getLogger("ripper:sheets_selection_view")
+
+
+def col_to_letter(col_index: int) -> str:
+    """
+    Convert column index to letter (A=1, B=2, etc.).
+    """
+    letter = ""
+    while col_index > 0:
+        col_index, remainder = divmod(col_index - 1, 26)
+        letter = chr(65 + remainder) + letter
+    return letter
+
+
+def parse_cell(cell_text: str) -> tuple[int, int]:
+    """
+    Basic parsing of cell like A1, B5.
+
+    Args:
+        cell_text: The cell text (e.g., "A1").
+
+    Returns:
+        A tuple containing the row number (1-indexed) and column number (1-indexed).
+
+    Raises:
+        ValueError: If the cell format is invalid.
+    """
+    col_str = "".join(filter(str.isalpha, cell_text))
+    row_str = "".join(filter(str.isdigit, cell_text))
+    if not col_str or not row_str:
+        raise ValueError("Invalid cell format")
+
+    # Convert column letter to number (A=1, B=2, ...)
+    col_num = 0
+    for char in col_str.upper():
+        col_num = col_num * 26 + (ord(char) - ord("A") + 1)
+    row_num = int(row_str)
+    return row_num, col_num
 
 
 class SheetThumbnailWidget(QFrame):
@@ -311,6 +349,7 @@ class SheetsSelectionDialog(QDialog):
         # Sheet range input
         self.sheet_range_input = QLineEdit()
         advanced_options_layout.addRow("Sheet Range:", self.sheet_range_input)
+        self.sheet_range_input.textChanged.connect(self._validate_sheet_range)
 
         # Add the form layout directly to details_layout
         details_layout.addLayout(advanced_options_layout)
@@ -525,26 +564,118 @@ class SheetsSelectionDialog(QDialog):
                 col_count = selected_sheet_props.grid.column_count
 
                 # Convert column index to letter (A=1, B=2, etc.)
-                def col_to_letter(col_index: int) -> str:
-                    letter = ""
-                    while col_index > 0:
-                        col_index, remainder = divmod(col_index - 1, 26)
-                        letter = chr(65 + remainder) + letter
-                    return letter
-
                 end_column_letter = col_to_letter(col_count)
 
                 sheet_range = f"A1:{end_column_letter}{row_count}"
                 self.sheet_range_input.setText(sheet_range)
+                # Store the full calculated range for validation
+                self._current_full_range = sheet_range
+                # Also trigger validation for the pre-filled text
+                self._validate_sheet_range(sheet_range)
         else:
             self.sheet_range_input.clear()
+            self.select_button.setEnabled(False)
+            return
+
+    def _validate_sheet_range(self, text: str) -> None:
+        """
+        Validates the sheet range input by checking if it's empty,
+        has a valid format, and is within the sheet dimensions.
+        """
+        if not self._is_range_empty(text):
+            return
+
+        if not self._is_range_format_valid(text):
+            return
+
+        # Get sheet dimensions for bounds check
+        sheet_row_count = 0
+        sheet_col_count = 0
+        if self.selected_sheet:
+            spreadsheet_id = self.selected_sheet["id"]
+            sheets_properties = self.all_sheet_properties.get(spreadsheet_id)
+            if sheets_properties:
+                current_sheet_name = self.sheet_name_combobox.currentText().strip()
+                for sheet_props in sheets_properties:
+                    if sheet_props.title == current_sheet_name:
+                        sheet_row_count = sheet_props.grid.row_count
+                        sheet_col_count = sheet_props.grid.column_count
+                        break
+
+        # Only perform bounds check if dimensions are available
+        if sheet_row_count > 0 and sheet_col_count > 0:
+            if not self._is_range_within_bounds(text, sheet_row_count, sheet_col_count):
+                return
+            # If bounds are valid, proceed to enable button
+            self.details_content.setText(self.details_text)  # Restore original details text
+            self.select_button.setEnabled(True)
+        else:
+            # If dimensions are not available, format is valid, but bounds can't be checked.
+            # Treat as valid for now, but this might need refinement based on desired UX.
+            self.details_content.setText("Warning: Cannot validate range bounds (sheet dimensions not available).")
+            self.select_button.setEnabled(True)
+
+    def _is_range_empty(self, text: str) -> bool:
+        """
+        Checks if the range input is empty.
+        """
+        if not text.strip():
+            self.show_error("Sheet range cannot be empty.")
+            self.select_button.setEnabled(False)
+            return False
+        return True
+
+    def _is_range_format_valid(self, text: str) -> bool:
+        """
+        Checks if the range input matches the expected A1:B5 format.
+        """
+        range_pattern = r"^[a-zA-Z]+\d+:[a-zA-Z]+\d+$"
+        if not re.match(range_pattern, text):
+            self.show_error("Invalid range format. Expected A1:B5.")
+            self.select_button.setEnabled(False)
+            return False
+        return True
+
+    def _is_range_within_bounds(self, text: str, sheet_row_count: int, sheet_col_count: int) -> bool:
+        """
+        Checks if the range is within the sheet dimensions.
+        """
+        try:
+            parts = text.split(":")
+            start_cell_text = parts[0]
+            end_cell_text = parts[1]
+
+            start_row, start_col = parse_cell(start_cell_text)
+            end_row, end_col = parse_cell(end_cell_text)
+
+            # Check if the range is within the sheet dimensions and is valid (start <= end)
+            if (
+                start_row < 1
+                or start_col < 1
+                or end_row > sheet_row_count
+                or end_col > sheet_col_count
+                or start_row > end_row
+                or start_col > end_col
+            ):
+                self.show_error(
+                    f"Range ({text}) outside dimensions (A1:{col_to_letter(sheet_col_count)}{sheet_row_count})."
+                )
+                self.select_button.setEnabled(False)
+                return False
+
+        except ValueError:
+            # If parsing fails, it's an invalid format for bounds check
+            self.show_error("Could not parse range for bounds check. Use A1:B5 format.")
+            self.select_button.setEnabled(False)
+            return False
+
+        return True
 
     def print_spreadsheet_info(self, spreadsheet_info: Dict[str, Any]) -> None:
         """
         Gets the sheet name and range from the advanced options and
         logs details about the selected sheet.
         """
-
         spreadsheet_name = spreadsheet_info.get("name")
         spreadsheet_id = spreadsheet_info.get("id")
         sheet_name = spreadsheet_info.get("sheet_name")
@@ -577,6 +708,11 @@ class SheetsSelectionDialog(QDialog):
             self.sheet_name_combobox.setFocus()
             return
 
+        # Validate the entered sheet range before proceeding
+        self._validate_sheet_range(sheet_range)
+        if not self.select_button.isEnabled():
+            return
+
         sheet_info = {
             "spreadsheet_name": spreadsheet_name,
             "spreadsheet_id": spreadsheet_id,
@@ -595,4 +731,9 @@ class SheetsSelectionDialog(QDialog):
         Args:
             message: The error message to display
         """
-        self.details_content.setText(f"<span style='color: red;'>{message}</span>")
+        # Append the error message below the existing text
+        current_text = self.details_content.text()
+        if not current_text.endswith("<br>"):
+            # Add a line break if the current text doesn't end with one
+            current_text += "<br>"
+        self.details_content.setText(f"{current_text}<br><br><br><span style='color: red;'>{message}</span>")
