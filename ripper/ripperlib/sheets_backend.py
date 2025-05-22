@@ -1,8 +1,10 @@
+import json
 import logging
 
 from beartype.typing import Any, Dict, List, Optional, cast
 from googleapiclient.errors import HttpError
 
+from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import DriveService, FileInfo, SheetData, SheetProperties, SheetsService
 
 # Configure module logger
@@ -24,13 +26,15 @@ DRIVE_FILE_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def list_sheets(service: DriveService, file_fields: frozenset[str] = DRIVE_FILE_FIELDS) -> Optional[List[FileInfo]]:
+def list_spreadsheets(
+    service: DriveService, file_fields: frozenset[str] = DRIVE_FILE_FIELDS
+) -> Optional[List[FileInfo]]:
     """
-    List Google Sheets in the user's Drive.
+    List Google Spreadsheets in the user's Drive.
 
     :param DriveService service: Authenticated Google Drive API service
     :param list[str] file_fields: Override the default fields to request from the API
-    :return: A list of dictionaries containing information about the sheets, or None if an error occurred
+    :return: A list of dictionaries containing information about the spreadsheets, or None if an error occurred
 
     """
     try:
@@ -111,3 +115,40 @@ def read_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, rang
     except HttpError as error:
         log.error(f"An error occurred reading spreadsheet data: {error}")
         return None
+
+
+def fetch_and_store_spreadsheets(drive_service: DriveService, db: Db) -> Optional[List[FileInfo]]:
+    """
+    Fetches the list of spreadsheets from Google Drive and stores relevant information in the database.
+
+    Args:
+        drive_service: Authenticated Google Drive API service.
+        db: An instance of the database class.
+
+    Returns:
+        A list of dictionaries containing information about the fetched sheets, or None if an error occurred.
+    """
+    log.debug("Fetching and storing spreadsheets from Google Drive.")
+    sheets_list = list_spreadsheets(drive_service)
+
+    if not sheets_list:
+        log.error("Failed to fetch sheets list.")
+        return None
+
+    for sheet_info in sheets_list:
+        spreadsheet_id = sheet_info.get("id")
+        if spreadsheet_id:
+            info_to_store = {
+                "name": sheet_info.get("name"),
+                "last_modified": sheet_info.get("modifiedTime"),
+                "webViewLink": sheet_info.get("webViewLink"),
+                "createdTime": sheet_info.get("createdTime"),
+                # owners is a list of dicts, store as JSON string for simplicity
+                "owners": json.dumps(sheet_info.get("owners")) if sheet_info.get("owners") is not None else None,
+                "size": sheet_info.get("size"),
+                "shared": sheet_info.get("shared"),
+            }
+            db.store_spreadsheet_info(spreadsheet_id, info_to_store)
+
+    log.debug(f"Successfully fetched and stored {len(sheets_list)} spreadsheets.")
+    return sheets_list

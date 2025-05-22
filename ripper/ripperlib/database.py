@@ -72,14 +72,14 @@ class _db_impl:
         c.execute(
             """CREATE TABLE IF NOT EXISTS spreadsheets (
                         spreadsheet_id TEXT PRIMARY KEY,
-                        last_modified TEXT
-                    );"""
-        )
-        c.execute(
-            """CREATE TABLE IF NOT EXISTS spreadsheet_thumbnails (
-                        spreadsheet_id TEXT PRIMARY KEY,
-                        thumbnail_data BLOB NOT NULL,
-                        FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
+                        name TEXT,
+                        last_modified TEXT,
+                        webViewLink TEXT,
+                        createdTime TEXT,
+                        owners TEXT,
+                        size INTEGER,
+                        shared INTEGER,
+                        thumbnail BLOB
                     );"""
         )
         c.execute(
@@ -186,23 +186,11 @@ class _db_impl:
                 "UPDATE spreadsheets SET last_modified = ? WHERE spreadsheet_id = ?", (last_modified, spreadsheet_id)
             )
 
-            # Check if the thumbnail already exists
-            c.execute("SELECT 1 FROM spreadsheet_thumbnails WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            if c.fetchone():
-                # Update existing thumbnail
-                c.execute(
-                    """UPDATE spreadsheet_thumbnails
-                    SET thumbnail_data = ?
-                    WHERE spreadsheet_id = ?""",
-                    (thumbnail_data, spreadsheet_id),
-                )
-            else:
-                # Insert new thumbnail
-                c.execute(
-                    """INSERT INTO spreadsheet_thumbnails (spreadsheet_id, thumbnail_data)
-                    VALUES (?, ?)""",
-                    (spreadsheet_id, thumbnail_data),
-                )
+            # Update thumbnail_data in the spreadsheets table
+            c.execute(
+                "UPDATE spreadsheets SET thumbnail = ? WHERE spreadsheet_id = ?", (thumbnail_data, spreadsheet_id)
+            )
+
             self._conn.commit()
             return True
         except sqlite.Error as e:
@@ -224,16 +212,50 @@ class _db_impl:
                 raise sqlite.Error("Database not open")
             c = self._conn.cursor()
             c.execute(
-                "SELECT thumbnail_data, s.last_modified FROM spreadsheet_thumbnails st "
-                "JOIN spreadsheets s ON st.spreadsheet_id = s.spreadsheet_id WHERE st.spreadsheet_id = ?",
+                "SELECT thumbnail, last_modified FROM spreadsheets WHERE spreadsheet_id = ?",
                 (spreadsheet_id,),
             )
             result = c.fetchone()
             if result:
-                return {"thumbnail_data": result[0], "last_modified": result[1]}
+                return {"thumbnail": result[0], "last_modified": result[1]}
         except sqlite.Error as e:
             log.error(f"Error retrieving spreadsheet thumbnail: {e}")
         return None
+
+    def store_spreadsheet_info(self, spreadsheet_id: str, info: Dict[str, Any]) -> bool:
+        """
+        Store or update general information for a spreadsheet in the database.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet.
+            info: A dictionary containing the spreadsheet information (e.g., name, webViewLink, etc.).
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        try:
+            if self._conn is None:
+                raise sqlite.Error("Database not open")
+            c = self._conn.cursor()
+
+            # Ensure spreadsheet_id exists in the spreadsheets table
+            c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (spreadsheet_id,))
+
+            # Prepare the update statement with only the provided fields
+            update_fields = ", ".join([f"{key} = ?" for key in info.keys()])
+            update_values = list(info.values()) + [spreadsheet_id]
+
+            if update_fields:
+                c.execute(
+                    f"UPDATE spreadsheets SET {update_fields} WHERE spreadsheet_id = ?",
+                    update_values,
+                )
+
+            self._conn.commit()
+            return True
+        except sqlite.Error as e:
+            log.error(f"Error storing spreadsheet info for {spreadsheet_id}: {e}")
+            return False
 
 
 class Db(_db_impl):

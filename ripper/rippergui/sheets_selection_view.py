@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import SheetProperties
-from ripper.ripperlib.sheets_backend import list_sheets, read_spreadsheet_metadata
+from ripper.ripperlib.sheets_backend import fetch_and_store_spreadsheets, read_spreadsheet_metadata
 
 log = logging.getLogger("ripper:sheets_selection_view")
 
@@ -394,10 +394,11 @@ class SheetsSelectionDialog(QDialog):
                 self.show_error("Not authenticated. Please authenticate with Google first.")
                 return
 
-            # List sheets with more fields
-            self.sheets_list = list_sheets(drive_service) or []
+            # Fetch and store sheets using the backend function
+            db = Db()
+            self.sheets_list = fetch_and_store_spreadsheets(drive_service, db) or []
             if not self.sheets_list:
-                self.show_error("Failed to fetch sheets list. Please try again.")
+                self.show_error("Failed to fetch and store sheets list. Please try again.")
                 return
 
             # Display sheets in grid

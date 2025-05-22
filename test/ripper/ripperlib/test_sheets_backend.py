@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 from googleapiclient.errors import HttpError
 
-from ripper.ripperlib.sheets_backend import DRIVE_FILE_FIELDS, list_sheets, read_data_from_spreadsheet
+from ripper.ripperlib.sheets_backend import DRIVE_FILE_FIELDS, list_spreadsheets, read_data_from_spreadsheet
 
 
 class TestSheetsBackend(unittest.TestCase):
@@ -25,7 +25,7 @@ class TestSheetsBackend(unittest.TestCase):
         }
 
         # Call the function with our mock
-        result = list_sheets(mock_service)
+        result = list_spreadsheets(mock_service)
 
         # Verify the result
         self.assertEqual(len(result), 2)
@@ -54,7 +54,7 @@ class TestSheetsBackend(unittest.TestCase):
         )
 
         # Call the function with our mock
-        result = list_sheets(mock_service)
+        result = list_spreadsheets(mock_service)
 
         # Verify the result is None
         self.assertIsNone(result)

@@ -25,8 +25,7 @@ class TestDatabaseIntegration(unittest.TestCase):
         c = conn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in c.fetchall()}
-        self.assertEqual(len(tables), 3)
-        self.assertIn("spreadsheet_thumbnails", tables)
+        self.assertEqual(len(tables), 2)
         self.assertIn("sheet_metadata", tables)
         self.assertIn("spreadsheets", tables)
         conn.close()
@@ -37,18 +36,48 @@ class TestDatabaseIntegration(unittest.TestCase):
         mod = "2024-01-01"
         result = self.db.store_spreadsheet_thumbnail(sid, data, mod)
         self.assertTrue(result)
-        thumb = self.db.get_spreadsheet_thumbnail(sid)
-        self.assertIsNotNone(thumb)
-        self.assertEqual(thumb["thumbnail_data"], data)
-        self.assertEqual(thumb["last_modified"], mod)
+        # After storing thumbnail, verify the data and modified time in the spreadsheets table
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT thumbnail, last_modified FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
+            stored_data = c.fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(stored_data)
+        self.assertEqual(stored_data[0], data)
+        self.assertEqual(stored_data[1], mod)
+
         new_data = b"newimg"
         new_mod = "2024-01-02"
         result2 = self.db.store_spreadsheet_thumbnail(sid, new_data, new_mod)
         self.assertTrue(result2)
-        thumb2 = self.db.get_spreadsheet_thumbnail(sid)
-        self.assertEqual(thumb2["thumbnail_data"], new_data)
-        self.assertEqual(thumb2["last_modified"], new_mod)
+        # After updating thumbnail, verify the new data and modified time in the spreadsheets table
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT thumbnail, last_modified FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
+            updated_data = c.fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(updated_data)
+        self.assertEqual(updated_data[0], new_data)
+        self.assertEqual(updated_data[1], new_mod)
 
     def test_get_thumbnail_not_found(self):
-        thumb = self.db.get_spreadsheet_thumbnail("doesnotexist")
-        self.assertIsNone(thumb)
+        # Test retrieving thumbnail for a spreadsheet that exists but has no thumbnail data
+        sid_no_thumbnail = "spreadsheet_no_thumb"
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (sid_no_thumbnail,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        retrieved_data = self.db.get_spreadsheet_thumbnail(sid_no_thumbnail)
+        self.assertIsNotNone(retrieved_data)
+        self.assertIsNone(retrieved_data["thumbnail"])
+        self.assertIsNone(retrieved_data["last_modified"])
