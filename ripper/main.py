@@ -64,7 +64,13 @@ def configure_logging(level: Optional[int] = None) -> None:
     is_flag=True,
     help="Clear the credential cache before starting, forces re-authentication",
 )
-def main(clear_credential_cache: bool) -> int:
+@click.option(
+    "--clean-db",
+    "-d",
+    is_flag=True,
+    help="Clean the database before starting, forces re-initialization",
+)
+def main(clear_credential_cache: bool, clean_db: bool) -> int:
     """Main entry point for the application."""
     configure_logging()
 
