@@ -15,7 +15,7 @@ class _db_impl:
     def __init__(self, db_file_path: str | None = None):
         self._db_file_path: str = ""
         if db_file_path is None:
-            self._db_file_path = Path(defs.get_app_data_dir(log)) / "ripper.db"
+            self._db_file_path = str(Path(defs.get_app_data_dir(log)) / "ripper.db")
         else:
             self._db_file_path = db_file_path
 
@@ -70,17 +70,23 @@ class _db_impl:
             raise sqlite.Error("Database not open")
         c = self._conn.cursor()
         c.execute(
+            """CREATE TABLE IF NOT EXISTS spreadsheets (
+                        spreadsheet_id TEXT PRIMARY KEY,
+                        last_modified TEXT
+                    );"""
+        )
+        c.execute(
             """CREATE TABLE IF NOT EXISTS spreadsheet_thumbnails (
                         spreadsheet_id TEXT PRIMARY KEY,
                         thumbnail_data BLOB NOT NULL,
-                        last_modified TEXT NOT NULL
+                        FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
                     );"""
         )
         c.execute(
             """CREATE TABLE IF NOT EXISTS sheet_metadata (
                         spreadsheet_id TEXT PRIMARY KEY,
-                        modified_time TEXT NOT NULL,
-                        metadata TEXT NOT NULL
+                        metadata TEXT NOT NULL,
+                        FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
                     );"""
         )
         self._conn.commit()
@@ -103,22 +109,25 @@ class _db_impl:
             c = self._conn.cursor()
             metadata_json = json.dumps(metadata)
 
+            # Ensure spreadsheet_id exists in the spreadsheets table
+            c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (spreadsheet_id,))
+
             # Check if metadata already exists for this spreadsheet
             c.execute("SELECT 1 FROM sheet_metadata WHERE spreadsheet_id = ?", (spreadsheet_id,))
             if c.fetchone():
                 # Update existing metadata
                 c.execute(
                     """UPDATE sheet_metadata
-                    SET modified_time = ?, metadata = ?
+                    SET metadata = ?
                     WHERE spreadsheet_id = ?""",
-                    (modified_time, metadata_json, spreadsheet_id),
+                    (metadata_json, spreadsheet_id),
                 )
             else:
                 # Insert new metadata
                 c.execute(
-                    """INSERT INTO sheet_metadata (spreadsheet_id, modified_time, metadata)
-                    VALUES (?, ?, ?)""",
-                    (spreadsheet_id, modified_time, metadata_json),
+                    """INSERT INTO sheet_metadata (spreadsheet_id, metadata)
+                    VALUES (?, ?)""",
+                    (spreadsheet_id, metadata_json),
                 )
             self._conn.commit()
             return True
@@ -141,14 +150,11 @@ class _db_impl:
             if self._conn is None:
                 raise sqlite.Error("Database not open")
             c = self._conn.cursor()
-            c.execute("SELECT modified_time, metadata FROM sheet_metadata WHERE spreadsheet_id = ?", (spreadsheet_id,))
+            c.execute("SELECT metadata FROM sheet_metadata WHERE spreadsheet_id = ?", (spreadsheet_id,))
             result = c.fetchone()
             if result:
-                stored_modified_time, stored_metadata_json = result
-                if stored_modified_time == modified_time:
-                    return cast(Dict[str, Any], json.loads(stored_metadata_json))
-                else:
-                    log.debug(f"Metadata for sheets in spreadsheet {spreadsheet_id} is outdated.")
+                stored_metadata_json = result[0]
+                return cast(Dict[str, Any], json.loads(stored_metadata_json))
             else:
                 log.debug(f"No metadata found for sheets in spreadsheet {spreadsheet_id}.")
             return None
@@ -172,22 +178,30 @@ class _db_impl:
             if self._conn is None:
                 raise sqlite.Error("Database not open")
             c = self._conn.cursor()
+            # Ensure spreadsheet_id exists in the spreadsheets table
+            c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (spreadsheet_id,))
+
+            # Update last_modified in the spreadsheets table
+            c.execute(
+                "UPDATE spreadsheets SET last_modified = ? WHERE spreadsheet_id = ?", (last_modified, spreadsheet_id)
+            )
+
             # Check if the thumbnail already exists
             c.execute("SELECT 1 FROM spreadsheet_thumbnails WHERE spreadsheet_id = ?", (spreadsheet_id,))
             if c.fetchone():
                 # Update existing thumbnail
                 c.execute(
                     """UPDATE spreadsheet_thumbnails
-                    SET thumbnail_data = ?, last_modified = ?
+                    SET thumbnail_data = ?
                     WHERE spreadsheet_id = ?""",
-                    (thumbnail_data, last_modified, spreadsheet_id),
+                    (thumbnail_data, spreadsheet_id),
                 )
             else:
                 # Insert new thumbnail
                 c.execute(
-                    """INSERT INTO spreadsheet_thumbnails (spreadsheet_id, thumbnail_data, last_modified)
-                    VALUES (?, ?, ?)""",
-                    (spreadsheet_id, thumbnail_data, last_modified),
+                    """INSERT INTO spreadsheet_thumbnails (spreadsheet_id, thumbnail_data)
+                    VALUES (?, ?)""",
+                    (spreadsheet_id, thumbnail_data),
                 )
             self._conn.commit()
             return True
@@ -210,7 +224,8 @@ class _db_impl:
                 raise sqlite.Error("Database not open")
             c = self._conn.cursor()
             c.execute(
-                "SELECT thumbnail_data, last_modified FROM spreadsheet_thumbnails WHERE spreadsheet_id = ?",
+                "SELECT thumbnail_data, s.last_modified FROM spreadsheet_thumbnails st "
+                "JOIN spreadsheets s ON st.spreadsheet_id = s.spreadsheet_id WHERE st.spreadsheet_id = ?",
                 (spreadsheet_id,),
             )
             result = c.fetchone()

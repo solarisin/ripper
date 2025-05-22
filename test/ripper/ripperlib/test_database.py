@@ -25,9 +25,10 @@ class TestDatabaseIntegration(unittest.TestCase):
         c = conn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in c.fetchall()}
-        self.assertEqual(len(tables), 2)
+        self.assertEqual(len(tables), 3)
         self.assertIn("spreadsheet_thumbnails", tables)
         self.assertIn("sheet_metadata", tables)
+        self.assertIn("spreadsheets", tables)
         conn.close()
 
     def test_store_and_get_thumbnail(self):
