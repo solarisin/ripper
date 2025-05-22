@@ -1,6 +1,5 @@
 import importlib.metadata
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -11,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from ripper.rippergui.mainview import MainView
 from ripper.ripperlib.auth import AuthManager
+from ripper.ripperlib.database import Db
 
 # Get the project root path
 project_path = Path(__file__).parent.parent.resolve()
@@ -57,21 +57,6 @@ def configure_logging(level: Optional[int] = None) -> None:
     log.debug(f"Logging configured with level: {logging.getLevelName(level)}")
 
 
-def get_app_data_dir() -> str:
-    """Get the application data directory."""
-    app_data = os.environ.get("APPDATA")
-    if not app_data:
-        app_data = str(Path.home() / ".local" / "share")
-    return os.path.join(app_data, "ripper")
-
-
-def ensure_app_data_dir() -> None:
-    """Ensure the application data directory exists."""
-    app_data_dir = get_app_data_dir()
-    if not os.path.exists(app_data_dir):
-        os.makedirs(app_data_dir)
-
-
 @click.command()
 @click.option(
     "--clear-credential-cache",
@@ -82,17 +67,25 @@ def ensure_app_data_dir() -> None:
 def main(clear_credential_cache: bool) -> int:
     """Main entry point for the application."""
     configure_logging()
-    ensure_app_data_dir()
 
+    # Initialize the database
+    Db().open()
+
+    # Clear the credential cache if requested
     if clear_credential_cache:
         AuthManager().clear_stored_credentials()
 
+    # Initialize the main window
     app = QApplication(sys.argv)
     main_window = MainView()
     AuthManager().check_stored_credentials()
     main_window.show()
 
-    return app.exec()
+    # Start the event loop
+    try:
+        return app.exec()
+    finally:
+        Db().close()
 
 
 if __name__ == "__main__":

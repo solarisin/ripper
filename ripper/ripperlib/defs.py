@@ -1,6 +1,9 @@
 import logging
+import os
+from pathlib import Path
 
 from beartype.typing import Any, Dict, Protocol
+from PySide6.QtCore import QStandardPaths
 from typing_extensions import runtime_checkable
 
 
@@ -29,6 +32,29 @@ class UserInfoService(Protocol):
 # Google API query result types
 SheetData = list[list[Any]]
 FileInfo = dict[str, Any]
+
+
+def get_app_data_dir(log: logging.Logger = logging.getLogger("ripper:defs")) -> str:
+    """
+    Get the application data directory for the current user.
+
+    Returns:
+        The path to the application data directory.
+    """
+    app_data_dir = (
+        Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / "ripper"
+    )
+
+    # Attempt to create the directory if it doesn't exist
+    if not app_data_dir.exists():
+        try:
+            app_data_dir.mkdir(exist_ok=True, parents=True)
+        except Exception as e:
+            # Fall back to current directory if we can't create the app data directory
+            log.warning(f"Application data directory {app_data_dir} does not exist, and failed to create it: {e}")
+            app_data_dir = Path(os.getcwd())
+            log.warning(f"Using current directory {app_data_dir} for application data")
+    return str(app_data_dir)
 
 
 class SheetProperties:

@@ -73,7 +73,7 @@ def read_spreadsheet_metadata(service: SheetsService, spreadsheet_id: str) -> Op
         return SheetProperties.from_api_result(result)
 
     except HttpError as error:
-        log.error(f"An error occurred reading spreadsheet data: {error}")
+        log.error(f"An error occurred reading spreadsheet metadata: {error}")
         return None
 
 
@@ -84,7 +84,7 @@ def read_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, rang
     Args:
         service: An authenticated Sheets API service instance
         spreadsheet_id: The ID of the spreadsheet to read from
-        range_name: The A1 notation of the range to read
+        range_name: The A1 notation of the range to read (includes sheet name and cell range)
 
     Returns:
         A list of lists containing the values, or None if no data was found or an error occurred
@@ -93,7 +93,7 @@ def read_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, rang
         # Create a Sheets API instance
         sheets = service.spreadsheets()
 
-        # Request to get values from the specified range in the Google Sheet
+        # Request to get values from the specified range (includes sheet name and cell range) in the Google Sheet
         result = cast(Dict[str, Any], sheets.values().get(spreadsheetId=spreadsheet_id, range=range_name).execute())
 
         # Extract the values from the response

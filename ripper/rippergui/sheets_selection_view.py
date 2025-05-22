@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ripper.ripperlib.auth import AuthManager
-from ripper.ripperlib.database import get_metadata, get_thumbnail, store_metadata, store_thumbnail
+from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import SheetProperties
 from ripper.ripperlib.sheets_backend import list_sheets, read_spreadsheet_metadata
 
@@ -69,11 +69,11 @@ def parse_cell(cell_text: str) -> tuple[int, int]:
     return row_num, col_num
 
 
-class SheetThumbnailWidget(QFrame):
+class SpreadsheetThumbnailWidget(QFrame):
     """
-    Widget to display a Google Sheet thumbnail with its name.
+    Widget to display a Google Spreadsheet thumbnail with its name.
 
-    This widget shows a thumbnail image of a Google Sheet along with its name.
+    This widget shows a thumbnail image of a Google Spreadsheet along with its name.
     It loads the thumbnail from cache if available, or from the Google API if not.
     """
 
@@ -86,13 +86,13 @@ class SheetThumbnailWidget(QFrame):
         Initialize the thumbnail widget.
 
         Args:
-            sheet_info: Dictionary containing sheet information (id, name, thumbnailLink, etc.)
-            dialog: Parent dialog that will handle sheet selection
+            sheet_info: Dictionary containing spreadsheet information (id, name, thumbnailLink, etc.)
+            dialog: Parent dialog that will handle spreadsheet selection
             parent: Parent widget
         """
         super().__init__(parent)
         self.spreadsheet_info: Dict[str, Any] = sheet_info
-        self.sheet_id: Optional[str] = sheet_info.get("id")
+        self.sheet_id: Optional[str] = sheet_info.get("id")  # sheet id is for a spreadsheet
         self.dialog: Optional[SheetsSelectionDialog] = cast(SheetsSelectionDialog, parent)
 
         # Configure frame appearance
@@ -106,13 +106,13 @@ class SheetThumbnailWidget(QFrame):
         layout = QVBoxLayout(self)
 
         # Sheet name - truncate long names and add tooltip
-        sheet_name = sheet_info.get("name", "Unknown")
-        sheet_created = sheet_info.get("createdTime")
-        sheet_modified = sheet_info.get("modifiedTime")
+        spreadsheet_name = sheet_info.get("name", "Unknown")
+        spreadsheet_created = sheet_info.get("createdTime")
+        spreadsheet_modified = sheet_info.get("modifiedTime")
 
         # Set some info about the sheet as the tooltip
         tooltip = "{:9} {}\n{:9} {}\n{:9} {}".format(
-            "Name:", sheet_name, "Created:", sheet_created, "Modified:", sheet_modified
+            "Name:", spreadsheet_name, "Created:", spreadsheet_created, "Modified:", spreadsheet_modified
         )
 
         # Thumbnail image
@@ -129,12 +129,12 @@ class SheetThumbnailWidget(QFrame):
         available_width = 170
 
         # Check if the text needs to be elided
-        if font_metrics.horizontalAdvance(sheet_name) > available_width:
+        if font_metrics.horizontalAdvance(spreadsheet_name) > available_width:
             # Elide the text (add ... at the end)
-            elided_text = font_metrics.elidedText(sheet_name, Qt.TextElideMode.ElideMiddle, available_width)
-            sheet_name = elided_text
+            elided_text = font_metrics.elidedText(spreadsheet_name, Qt.TextElideMode.ElideMiddle, available_width)
+            spreadsheet_name = elided_text
 
-        self.name_label = QLabel(sheet_name)
+        self.name_label = QLabel(spreadsheet_name)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setWordWrap(False)
         self.name_label.setFixedWidth(180)
@@ -181,7 +181,7 @@ class SheetThumbnailWidget(QFrame):
             sheet_id: ID of the sheet to use as cache key
         """
         # Check cache first
-        cached_thumbnail = get_thumbnail(spreadsheet_id)
+        cached_thumbnail = Db().get_spreadsheet_thumbnail(spreadsheet_id)
         if cached_thumbnail:
             try:
                 thumbnail_data = cached_thumbnail["thumbnail_data"]
@@ -232,7 +232,7 @@ class SheetThumbnailWidget(QFrame):
                     if "id" in self.spreadsheet_info:
                         spreadsheet_id = self.spreadsheet_info["id"]
                         last_modified = datetime.now().isoformat()
-                        store_thumbnail(spreadsheet_id, image_data, last_modified)
+                        Db().store_spreadsheet_thumbnail(spreadsheet_id, image_data, last_modified)
                         log.debug(f"Stored thumbnail for spreadsheet id {spreadsheet_id} in cache")
                 else:
                     log.error("Failed to load image data from network response")
@@ -431,7 +431,7 @@ class SheetsSelectionDialog(QDialog):
         max_cols = 3  # Number of columns in the grid
 
         for sheet in self.sheets_list:
-            thumbnail = SheetThumbnailWidget(sheet, parent=self)
+            thumbnail = SpreadsheetThumbnailWidget(sheet, parent=self)
             self.grid_layout.addWidget(thumbnail, row, col)
 
             col += 1
@@ -491,7 +491,7 @@ class SheetsSelectionDialog(QDialog):
 
             cached_metadata: Optional[Dict[str, Any]] = None
             if modified_time:
-                cached_metadata = get_metadata(spreadsheet_id, modified_time)
+                cached_metadata = Db().get_sheet_metadata(spreadsheet_id, modified_time)
 
             sheets_properties: Optional[List[SheetProperties]] = None
 
@@ -502,7 +502,7 @@ class SheetsSelectionDialog(QDialog):
                 if api_metadata is not None and modified_time:
                     # Convert list of SheetProperties to a dictionary for caching
                     metadata_to_cache = {"sheets": [sheet.to_dict() for sheet in api_metadata]}
-                    store_metadata(spreadsheet_id, metadata_to_cache, modified_time)
+                    Db().store_sheet_metadata(spreadsheet_id, metadata_to_cache, modified_time)
                     log.debug(f"Stored metadata for sheet {spreadsheet_id} in cache.")
                     sheets_properties = api_metadata
                     QApplication.restoreOverrideCursor()
