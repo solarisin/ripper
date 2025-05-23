@@ -74,6 +74,9 @@ def main(clear_credential_cache: bool, clean_db: bool) -> int:
     """Main entry point for the application."""
     configure_logging()
 
+    if clean_db:
+        Db().clean()
+
     # Initialize the database
     Db().open()
 

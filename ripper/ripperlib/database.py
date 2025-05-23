@@ -59,6 +59,16 @@ class _db_impl:
             log.error(f"Error executing query: {e}")
             return None
 
+    def clean(self) -> None:
+        """
+        Clean the database by deleting the file.
+        """
+        if hasattr(self, "_conn") and self._conn is not None:
+            self._conn.close()
+        if Path(self._db_file_path).exists():
+            log.info(f"Deleting database file {self._db_file_path}")
+            Path(self._db_file_path).unlink()
+
     def create_tables(self) -> None:
         """
         Create the necessary tables in the database if they don't exist.
