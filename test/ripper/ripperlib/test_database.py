@@ -40,7 +40,7 @@ class TestDatabaseIntegration(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         try:
-            c.execute("SELECT thumbnail, last_modified FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
+            c.execute("SELECT thumbnail, modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
             stored_data = c.fetchone()
         finally:
             conn.close()
@@ -57,7 +57,7 @@ class TestDatabaseIntegration(unittest.TestCase):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         try:
-            c.execute("SELECT thumbnail, last_modified FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
+            c.execute("SELECT thumbnail, modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
             updated_data = c.fetchone()
         finally:
             conn.close()
@@ -80,4 +80,4 @@ class TestDatabaseIntegration(unittest.TestCase):
         retrieved_data = self.db.get_spreadsheet_thumbnail(sid_no_thumbnail)
         self.assertIsNotNone(retrieved_data)
         self.assertIsNone(retrieved_data["thumbnail"])
-        self.assertIsNone(retrieved_data["last_modified"])
+        self.assertIsNone(retrieved_data["modifiedTime"])

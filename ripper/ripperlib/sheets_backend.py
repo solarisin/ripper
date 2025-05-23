@@ -140,7 +140,7 @@ def fetch_and_store_spreadsheets(drive_service: DriveService, db: Db) -> Optiona
         if spreadsheet_id:
             info_to_store = {
                 "name": sheet_info.get("name"),
-                "last_modified": sheet_info.get("modifiedTime"),
+                "modifiedTime": sheet_info.get("modifiedTime"),
                 "webViewLink": sheet_info.get("webViewLink"),
                 "createdTime": sheet_info.get("createdTime"),
                 # owners is a list of dicts, store as JSON string for simplicity

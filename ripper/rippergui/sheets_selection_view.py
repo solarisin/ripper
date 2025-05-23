@@ -231,8 +231,8 @@ class SpreadsheetThumbnailWidget(QFrame):
                     # Store in cache if we have a spreadsheet ID
                     if "id" in self.spreadsheet_info:
                         spreadsheet_id = self.spreadsheet_info["id"]
-                        last_modified = datetime.now().isoformat()
-                        Db().store_spreadsheet_thumbnail(spreadsheet_id, image_data, last_modified)
+                        modifiedTime = datetime.now().isoformat()
+                        Db().store_spreadsheet_thumbnail(spreadsheet_id, image_data, modifiedTime)
                         log.debug(f"Stored thumbnail for spreadsheet id {spreadsheet_id} in cache")
                 else:
                     log.error("Failed to load image data from network response")
@@ -440,17 +440,17 @@ class SheetsSelectionDialog(QDialog):
                 col = 0
                 row += 1
 
-    def select_sheet(self, spreadsheet_info: Dict[str, Any]) -> None:
+    def select_spreadsheet(self, spreadsheet_info: Dict[str, Any]) -> None:
         """
-        Handle sheet selection.
+        Handle spreadsheet selection.
 
-        Updates the UI to show details about the selected sheet and enables
+        Updates the UI to show details about the selected spreadsheet and enables
         the select button.
 
         Args:
-            sheet_info: Dictionary containing information about the selected sheet
+            spreadsheet_info: Dictionary containing information about the selected spreadsheet
         """
-        self.selected_sheet = spreadsheet_info
+        self.selected_spreadsheet = spreadsheet_info
         self.select_button.setEnabled(True)
 
         # Update details view

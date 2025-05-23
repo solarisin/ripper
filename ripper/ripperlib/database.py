@@ -83,7 +83,7 @@ class _db_impl:
             """CREATE TABLE IF NOT EXISTS spreadsheets (
                         spreadsheet_id TEXT PRIMARY KEY,
                         name TEXT,
-                        last_modified TEXT,
+                        modifiedTime TEXT,
                         webViewLink TEXT,
                         createdTime TEXT,
                         owners TEXT,
@@ -93,10 +93,21 @@ class _db_impl:
                     );"""
         )
         c.execute(
-            """CREATE TABLE IF NOT EXISTS sheet_metadata (
-                        spreadsheet_id TEXT PRIMARY KEY,
-                        metadata TEXT NOT NULL,
+            """CREATE TABLE IF NOT EXISTS sheets (
+                        spreadsheet_id TEXT,
+                        sheetId TEXT,
+                        index INTEGER,
+                        title TEXT,
+                        sheetType TEXT,
                         FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
+                    );"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS grid_properties (
+                        sheetId TEXT,
+                        rowCount INTEGER,
+                        columnCount INTEGER,
+                        FOREIGN KEY (sheetId) REFERENCES sheets(sheetId) ON DELETE CASCADE
                     );"""
         )
         self._conn.commit()
@@ -172,14 +183,14 @@ class _db_impl:
             log.error(f"Error retrieving sheet metadata: {e}")
             return None
 
-    def store_spreadsheet_thumbnail(self, spreadsheet_id: str, thumbnail_data: bytes, last_modified: str) -> bool:
+    def store_spreadsheet_thumbnail(self, spreadsheet_id: str, thumbnail_data: bytes, modifiedTime: str) -> bool:
         """
         Store or update a thumbnail for a spreadsheet in the database.
 
         Args:
             spreadsheet_id: ID of the Google spreadsheet
             thumbnail_data: Binary thumbnail image data
-            last_modified: Timestamp of when the thumbnail was last modified
+            modifiedTime: Timestamp of when the thumbnail was last modified
 
         Returns:
             True if successful, False otherwise
@@ -191,9 +202,9 @@ class _db_impl:
             # Ensure spreadsheet_id exists in the spreadsheets table
             c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (spreadsheet_id,))
 
-            # Update last_modified in the spreadsheets table
+            # Update modifiedTime in the spreadsheets table
             c.execute(
-                "UPDATE spreadsheets SET last_modified = ? WHERE spreadsheet_id = ?", (last_modified, spreadsheet_id)
+                "UPDATE spreadsheets SET modifiedTime = ? WHERE spreadsheet_id = ?", (modifiedTime, spreadsheet_id)
             )
 
             # Update thumbnail_data in the spreadsheets table
@@ -215,19 +226,19 @@ class _db_impl:
             spreadsheet_id: ID of the Google spreadsheet
 
         Returns:
-            Dictionary containing thumbnail_data and last_modified, or None if not found
+            Dictionary containing thumbnail_data and modifiedTime, or None if not found
         """
         try:
             if self._conn is None:
                 raise sqlite.Error("Database not open")
             c = self._conn.cursor()
             c.execute(
-                "SELECT thumbnail, last_modified FROM spreadsheets WHERE spreadsheet_id = ?",
+                "SELECT thumbnail, modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?",
                 (spreadsheet_id,),
             )
             result = c.fetchone()
             if result:
-                return {"thumbnail": result[0], "last_modified": result[1]}
+                return {"thumbnail": result[0], "modifiedTime": result[1]}
         except sqlite.Error as e:
             log.error(f"Error retrieving spreadsheet thumbnail: {e}")
         return None
