@@ -11,11 +11,15 @@ import ripper.ripperlib.defs as defs
 log = logging.getLogger("ripper:database")
 
 
+def default_db_path() -> Path:
+    return Path(defs.get_app_data_dir(log)) / "ripper.db"
+
+
 class _db_impl:
     def __init__(self, db_file_path: str | None = None):
         self._db_file_path: str = ""
         if db_file_path is None:
-            self._db_file_path = str(Path(defs.get_app_data_dir(log)) / "ripper.db")
+            self._db_file_path = str(default_db_path())
         else:
             self._db_file_path = db_file_path
 
