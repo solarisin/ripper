@@ -2,7 +2,6 @@ import logging
 import re
 from datetime import datetime
 
-from beartype.typing import Any, Dict, List, Optional, cast
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QCursor, QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from beartype.typing import Any, Dict, List, Optional, cast
 
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.database import Db
@@ -184,7 +184,7 @@ class SpreadsheetThumbnailWidget(QFrame):
         cached_thumbnail = Db().get_spreadsheet_thumbnail(spreadsheet_id)
         if cached_thumbnail:
             try:
-                thumbnail_data = cached_thumbnail["thumbnail_data"]
+                thumbnail_data = cached_thumbnail["thumbnail"]
                 image = QImage()
                 if image.loadFromData(thumbnail_data):
                     pixmap = QPixmap.fromImage(image)
@@ -249,7 +249,7 @@ class SpreadsheetThumbnailWidget(QFrame):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """
-        Handle mouse press events to select this sheet.
+        Handle mouse press events to select this spreadsheet.
 
         Args:
             event: Mouse event
@@ -257,7 +257,7 @@ class SpreadsheetThumbnailWidget(QFrame):
         super().mousePressEvent(event)
         self.setFrameShadow(QFrame.Shadow.Sunken)
         if self.dialog:
-            self.dialog.select_sheet(self.spreadsheet_info)
+            self.dialog.select_spreadsheet(self.spreadsheet_info)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """
@@ -450,7 +450,7 @@ class SheetsSelectionDialog(QDialog):
         Args:
             spreadsheet_info: Dictionary containing information about the selected spreadsheet
         """
-        self.selected_spreadsheet = spreadsheet_info
+        self.selected_sheet = spreadsheet_info
         self.select_button.setEnabled(True)
 
         # Update details view
@@ -515,9 +515,19 @@ class SheetsSelectionDialog(QDialog):
                 # Convert cached dictionary back to list of SheetProperties
                 if "sheets" in cached_metadata:
                     try:
-                        sheets_properties = [
-                            SheetProperties({"properties": sheet_dict}) for sheet_dict in cached_metadata["sheets"]
-                        ]
+                        sheets_properties = []
+                        for sheet_dict in cached_metadata["sheets"]:
+                            # Create a properly structured dictionary for SheetProperties
+                            sheet_info = {
+                                "properties": {
+                                    "sheetId": sheet_dict["sheetId"],
+                                    "index": sheet_dict["index"],
+                                    "title": sheet_dict["title"],
+                                    "sheetType": sheet_dict["sheetType"],
+                                    "gridProperties": sheet_dict["gridProperties"],
+                                }
+                            }
+                            sheets_properties.append(SheetProperties(sheet_info))
                     except Exception as e:
                         log.error(f"Error converting cached metadata to SheetProperties: {e}")
                         sheets_properties = None  # Invalidate cached data if conversion fails
@@ -534,6 +544,9 @@ class SheetsSelectionDialog(QDialog):
         spreadsheet_id = spreadsheet_info["id"]
         sheets_properties = self.all_sheet_properties.get(spreadsheet_id)
 
+        # Block signals temporarily instead of disconnecting
+        old_state = self.sheet_name_combobox.blockSignals(True)
+
         self.sheet_name_combobox.clear()
         self.sheet_range_input.clear()
 
@@ -541,12 +554,17 @@ class SheetsSelectionDialog(QDialog):
             sheet_names = [sheet.title for sheet in sheets_properties]
             self.sheet_name_combobox.addItems(sheet_names)
 
-            # Connect the signal after populating to avoid triggering during population
+            # Restore the previous signal blocking state
+            self.sheet_name_combobox.blockSignals(old_state)
+
+            # Connect the signal if not already connected
+            # This is safe to call multiple times as it won't create duplicate connections
             self.sheet_name_combobox.currentIndexChanged.connect(self._sheet_name_selected)
 
             # Select the first sheet by default and update the range
             if sheet_names:
                 self.sheet_name_combobox.setCurrentIndex(0)
+                # Explicitly call the function to ensure it runs
                 self._sheet_name_selected(0)
 
     def _sheet_name_selected(self, index: int) -> None:
