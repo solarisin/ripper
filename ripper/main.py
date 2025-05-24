@@ -149,7 +149,7 @@ def create(ctx: click.Context) -> None:
     if not db_path.exists():
         try:
             log.debug(f"Creating database at {db_path}")
-            Db().open()
+            Db(db_file_path=ctx.obj["DB_PATH"]).open()
         finally:
             Db().close()
     else:
