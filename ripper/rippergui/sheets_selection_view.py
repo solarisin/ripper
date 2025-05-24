@@ -56,6 +56,10 @@ def parse_cell(cell_text: str) -> tuple[int, int]:
     Raises:
         ValueError: If the cell format is invalid.
     """
+    # Check that the cell format is valid (letters followed by numbers)
+    if not re.match(r"^[A-Za-z]+\d+$", cell_text):
+        raise ValueError("Invalid cell format")
+
     col_str = "".join(filter(str.isalpha, cell_text))
     row_str = "".join(filter(str.isdigit, cell_text))
     if not col_str or not row_str:

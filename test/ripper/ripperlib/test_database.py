@@ -212,3 +212,119 @@ class TestDatabaseIntegration(unittest.TestCase):
             self.assertEqual(grid_prop3[1], 78)
         finally:
             conn.close()
+
+    def test_execute_query(self):
+        """Test the execute_query method for successful and failed queries."""
+        # Test successful query
+        cursor = self.db.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
+        self.assertIsNotNone(cursor)
+        tables = cursor.fetchall()
+        self.assertGreater(len(tables), 0)
+
+        # Test query with parameters
+        test_id = "test_id"
+        self.db.execute_query(
+            "INSERT INTO spreadsheets (spreadsheet_id) VALUES (?)", (test_id,)
+        )
+        cursor = self.db.execute_query(
+            "SELECT spreadsheet_id FROM spreadsheets WHERE spreadsheet_id = ?", (test_id,)
+        )
+        self.assertIsNotNone(cursor)
+        result = cursor.fetchone()
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0], test_id)
+
+        # Test failed query (syntax error)
+        cursor = self.db.execute_query("SELECT * FROM non_existent_table")
+        self.assertIsNone(cursor)
+
+    def test_get_sheet_metadata(self):
+        """Test retrieving sheet metadata from the database."""
+        # Setup: Store sheet metadata
+        spreadsheet_id = "test_spreadsheet_metadata"
+        modified_time = "2024-01-01T00:00:00Z"
+        metadata = {
+            "sheets": [
+                {
+                    "sheetId": "sheet1",
+                    "index": 0,
+                    "title": "Sheet 1",
+                    "sheetType": "GRID",
+                    "gridProperties": {
+                        "rowCount": 100,
+                        "columnCount": 26
+                    }
+                }
+            ]
+        }
+        self.db.store_sheet_metadata(spreadsheet_id, metadata, modified_time)
+
+        # Test: Retrieve with matching modified time
+        retrieved_metadata = self.db.get_sheet_metadata(spreadsheet_id, modified_time)
+        self.assertIsNotNone(retrieved_metadata)
+        self.assertIn("sheets", retrieved_metadata)
+        self.assertEqual(len(retrieved_metadata["sheets"]), 1)
+        sheet = retrieved_metadata["sheets"][0]
+        self.assertEqual(sheet["sheetId"], "sheet1")
+        self.assertEqual(sheet["title"], "Sheet 1")
+        self.assertEqual(sheet["gridProperties"]["rowCount"], 100)
+
+        # Test: Retrieve with non-matching modified time (should return None)
+        different_time = "2024-01-02T00:00:00Z"
+        retrieved_metadata = self.db.get_sheet_metadata(spreadsheet_id, different_time)
+        self.assertIsNone(retrieved_metadata)
+
+        # Test: Retrieve non-existent spreadsheet
+        retrieved_metadata = self.db.get_sheet_metadata("non_existent_id", modified_time)
+        self.assertIsNone(retrieved_metadata)
+
+    def test_store_spreadsheet_info(self):
+        """Test storing and updating spreadsheet information."""
+        spreadsheet_id = "test_spreadsheet_info"
+
+        # Test: Store initial info
+        initial_info = {
+            "name": "Test Spreadsheet",
+            "modifiedTime": "2024-01-01T00:00:00Z",
+            "webViewLink": "https://example.com/sheet1",
+            "createdTime": "2023-12-01T00:00:00Z",
+            "owners": '["owner1"]',
+            "size": 1024,
+            "shared": 1
+        }
+        result = self.db.store_spreadsheet_info(spreadsheet_id, initial_info)
+        self.assertTrue(result)
+
+        # Verify stored info
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT name, modifiedTime, size FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
+            stored_info = c.fetchone()
+            self.assertIsNotNone(stored_info)
+            self.assertEqual(stored_info[0], "Test Spreadsheet")
+            self.assertEqual(stored_info[1], "2024-01-01T00:00:00Z")
+            self.assertEqual(stored_info[2], 1024)
+        finally:
+            conn.close()
+
+        # Test: Update partial info
+        updated_info = {
+            "name": "Updated Spreadsheet",
+            "size": 2048
+        }
+        result = self.db.store_spreadsheet_info(spreadsheet_id, updated_info)
+        self.assertTrue(result)
+
+        # Verify updated info (only specified fields should change)
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT name, modifiedTime, size FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
+            updated_stored_info = c.fetchone()
+            self.assertIsNotNone(updated_stored_info)
+            self.assertEqual(updated_stored_info[0], "Updated Spreadsheet")  # Updated
+            self.assertEqual(updated_stored_info[1], "2024-01-01T00:00:00Z")  # Unchanged
+            self.assertEqual(updated_stored_info[2], 2048)  # Updated
+        finally:
+            conn.close()
