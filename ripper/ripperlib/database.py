@@ -1,9 +1,8 @@
-import json
 import logging
 import sqlite3 as sqlite
 from pathlib import Path
 
-from beartype.typing import Any, Dict, Optional, Tuple, cast
+from beartype.typing import Any, Dict, Optional, Tuple
 
 import ripper.ripperlib.defs as defs
 
@@ -11,11 +10,15 @@ import ripper.ripperlib.defs as defs
 log = logging.getLogger("ripper:database")
 
 
+def default_db_path() -> Path:
+    return Path(defs.get_app_data_dir(log)) / "ripper.db"
+
+
 class _db_impl:
     def __init__(self, db_file_path: str | None = None):
         self._db_file_path: str = ""
         if db_file_path is None:
-            self._db_file_path = str(Path(defs.get_app_data_dir(log)) / "ripper.db")
+            self._db_file_path = str(default_db_path())
         else:
             self._db_file_path = db_file_path
 
@@ -59,6 +62,16 @@ class _db_impl:
             log.error(f"Error executing query: {e}")
             return None
 
+    def clean(self) -> None:
+        """
+        Clean the database by deleting the file.
+        """
+        if hasattr(self, "_conn") and self._conn is not None:
+            self._conn.close()
+        if Path(self._db_file_path).exists():
+            log.info(f"Deleting database file {self._db_file_path}")
+            Path(self._db_file_path).unlink()
+
     def create_tables(self) -> None:
         """
         Create the necessary tables in the database if they don't exist.
@@ -72,21 +85,32 @@ class _db_impl:
         c.execute(
             """CREATE TABLE IF NOT EXISTS spreadsheets (
                         spreadsheet_id TEXT PRIMARY KEY,
-                        last_modified TEXT
+                        name TEXT,
+                        modifiedTime TEXT,
+                        webViewLink TEXT,
+                        createdTime TEXT,
+                        owners TEXT,
+                        size INTEGER,
+                        shared INTEGER,
+                        thumbnail BLOB
                     );"""
         )
         c.execute(
-            """CREATE TABLE IF NOT EXISTS spreadsheet_thumbnails (
-                        spreadsheet_id TEXT PRIMARY KEY,
-                        thumbnail_data BLOB NOT NULL,
+            """CREATE TABLE IF NOT EXISTS sheets (
+                        spreadsheet_id TEXT,
+                        sheetId TEXT,
+                        "index" INTEGER,
+                        title TEXT,
+                        sheetType TEXT,
                         FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
                     );"""
         )
         c.execute(
-            """CREATE TABLE IF NOT EXISTS sheet_metadata (
-                        spreadsheet_id TEXT PRIMARY KEY,
-                        metadata TEXT NOT NULL,
-                        FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
+            """CREATE TABLE IF NOT EXISTS grid_properties (
+                        sheetId TEXT,
+                        rowCount INTEGER,
+                        columnCount INTEGER,
+                        FOREIGN KEY (sheetId) REFERENCES sheets(sheetId) ON DELETE CASCADE
                     );"""
         )
         self._conn.commit()
@@ -107,28 +131,76 @@ class _db_impl:
             if self._conn is None:
                 raise sqlite.Error("Database not open")
             c = self._conn.cursor()
-            metadata_json = json.dumps(metadata)
 
             # Ensure spreadsheet_id exists in the spreadsheets table
-            c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (spreadsheet_id,))
+            c.execute(
+                """INSERT OR IGNORE INTO spreadsheets (spreadsheet_id, modifiedTime)
+                VALUES (?, ?)""",
+                (spreadsheet_id, modified_time),
+            )
 
-            # Check if metadata already exists for this spreadsheet
-            c.execute("SELECT 1 FROM sheet_metadata WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            if c.fetchone():
-                # Update existing metadata
-                c.execute(
-                    """UPDATE sheet_metadata
-                    SET metadata = ?
-                    WHERE spreadsheet_id = ?""",
-                    (metadata_json, spreadsheet_id),
-                )
-            else:
-                # Insert new metadata
-                c.execute(
-                    """INSERT INTO sheet_metadata (spreadsheet_id, metadata)
-                    VALUES (?, ?)""",
-                    (spreadsheet_id, metadata_json),
-                )
+            # Update modifiedTime if it exists
+            c.execute(
+                """UPDATE spreadsheets
+                SET modifiedTime = ?
+                WHERE spreadsheet_id = ?""",
+                (modified_time, spreadsheet_id),
+            )
+
+            # Insert or update sheet metadata into sheets and grid_properties tables
+            if "sheets" in metadata:
+                for sheet in metadata["sheets"]:
+                    # Check if the sheet already exists
+                    c.execute(
+                        """SELECT 1 FROM sheets
+                        WHERE spreadsheet_id = ? AND sheetId = ?""",
+                        (spreadsheet_id, sheet["sheetId"]),
+                    )
+                    sheet_exists = c.fetchone() is not None
+
+                    if sheet_exists:
+                        # Update existing sheet
+                        c.execute(
+                            """UPDATE sheets
+                            SET "index" = ?, title = ?, sheetType = ?
+                            WHERE spreadsheet_id = ? AND sheetId = ?""",
+                            (sheet["index"], sheet["title"], sheet["sheetType"], spreadsheet_id, sheet["sheetId"]),
+                        )
+                    else:
+                        # Insert new sheet
+                        c.execute(
+                            """INSERT INTO sheets (spreadsheet_id, sheetId, "index", title, sheetType)
+                            VALUES (?, ?, ?, ?, ?)""",
+                            (spreadsheet_id, sheet["sheetId"], sheet["index"], sheet["title"], sheet["sheetType"]),
+                        )
+
+                    # Update or insert grid_properties
+                    if "gridProperties" in sheet:
+                        grid_props = sheet["gridProperties"]
+                        # Check if grid properties already exist
+                        c.execute(
+                            """SELECT 1 FROM grid_properties
+                            WHERE sheetId = ?""",
+                            (sheet["sheetId"],),
+                        )
+                        grid_exists = c.fetchone() is not None
+
+                        if grid_exists:
+                            # Update existing grid properties
+                            c.execute(
+                                """UPDATE grid_properties
+                                SET rowCount = ?, columnCount = ?
+                                WHERE sheetId = ?""",
+                                (grid_props["rowCount"], grid_props["columnCount"], sheet["sheetId"]),
+                            )
+                        else:
+                            # Insert new grid properties
+                            c.execute(
+                                """INSERT INTO grid_properties (sheetId, rowCount, columnCount)
+                                VALUES (?, ?, ?)""",
+                                (sheet["sheetId"], grid_props["rowCount"], grid_props["columnCount"]),
+                            )
+
             self._conn.commit()
             return True
         except sqlite.Error as e:
@@ -150,26 +222,68 @@ class _db_impl:
             if self._conn is None:
                 raise sqlite.Error("Database not open")
             c = self._conn.cursor()
-            c.execute("SELECT metadata FROM sheet_metadata WHERE spreadsheet_id = ?", (spreadsheet_id,))
+
+            # Check if the spreadsheet exists and if the modified time matches
+            c.execute(
+                """SELECT modifiedTime FROM spreadsheets
+                WHERE spreadsheet_id = ?""",
+                (spreadsheet_id,),
+            )
             result = c.fetchone()
-            if result:
-                stored_metadata_json = result[0]
-                return cast(Dict[str, Any], json.loads(stored_metadata_json))
-            else:
-                log.debug(f"No metadata found for sheets in spreadsheet {spreadsheet_id}.")
-            return None
+
+            if not result:
+                log.debug(f"No spreadsheet found with ID {spreadsheet_id}.")
+                return None
+
+            stored_modified_time = result[0]
+            if stored_modified_time != modified_time:
+                log.debug(f"Spreadsheet {spreadsheet_id} has been modified. Cached metadata is outdated.")
+                return None
+
+            # Retrieve sheets for this spreadsheet
+            c.execute(
+                """SELECT s.sheetId, s."index", s.title, s.sheetType,
+                          g.rowCount, g.columnCount
+                   FROM sheets s
+                   LEFT JOIN grid_properties g ON s.sheetId = g.sheetId
+                   WHERE s.spreadsheet_id = ?
+                   ORDER BY s."index" """,
+                (spreadsheet_id,),
+            )
+
+            sheets_data = c.fetchall()
+            if not sheets_data:
+                log.debug(f"No sheets found for spreadsheet {spreadsheet_id}.")
+                return None
+
+            # Reconstruct the metadata dictionary
+            sheets = []
+            for sheet_data in sheets_data:
+                sheet_id, index, title, sheet_type, row_count, column_count = sheet_data
+
+                sheet_dict = {
+                    "sheetId": sheet_id,
+                    "index": index,
+                    "title": title,
+                    "sheetType": sheet_type,
+                    "gridProperties": {"rowCount": row_count, "columnCount": column_count},
+                }
+                sheets.append(sheet_dict)
+
+            return {"sheets": sheets}
+
         except sqlite.Error as e:
             log.error(f"Error retrieving sheet metadata: {e}")
             return None
 
-    def store_spreadsheet_thumbnail(self, spreadsheet_id: str, thumbnail_data: bytes, last_modified: str) -> bool:
+    def store_spreadsheet_thumbnail(self, spreadsheet_id: str, thumbnail_data: bytes, modifiedTime: str) -> bool:
         """
         Store or update a thumbnail for a spreadsheet in the database.
 
         Args:
             spreadsheet_id: ID of the Google spreadsheet
             thumbnail_data: Binary thumbnail image data
-            last_modified: Timestamp of when the thumbnail was last modified
+            modifiedTime: Timestamp of when the thumbnail was last modified
 
         Returns:
             True if successful, False otherwise
@@ -181,28 +295,16 @@ class _db_impl:
             # Ensure spreadsheet_id exists in the spreadsheets table
             c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (spreadsheet_id,))
 
-            # Update last_modified in the spreadsheets table
+            # Update modifiedTime in the spreadsheets table
             c.execute(
-                "UPDATE spreadsheets SET last_modified = ? WHERE spreadsheet_id = ?", (last_modified, spreadsheet_id)
+                "UPDATE spreadsheets SET modifiedTime = ? WHERE spreadsheet_id = ?", (modifiedTime, spreadsheet_id)
             )
 
-            # Check if the thumbnail already exists
-            c.execute("SELECT 1 FROM spreadsheet_thumbnails WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            if c.fetchone():
-                # Update existing thumbnail
-                c.execute(
-                    """UPDATE spreadsheet_thumbnails
-                    SET thumbnail_data = ?
-                    WHERE spreadsheet_id = ?""",
-                    (thumbnail_data, spreadsheet_id),
-                )
-            else:
-                # Insert new thumbnail
-                c.execute(
-                    """INSERT INTO spreadsheet_thumbnails (spreadsheet_id, thumbnail_data)
-                    VALUES (?, ?)""",
-                    (spreadsheet_id, thumbnail_data),
-                )
+            # Update thumbnail_data in the spreadsheets table
+            c.execute(
+                "UPDATE spreadsheets SET thumbnail = ? WHERE spreadsheet_id = ?", (thumbnail_data, spreadsheet_id)
+            )
+
             self._conn.commit()
             return True
         except sqlite.Error as e:
@@ -217,23 +319,57 @@ class _db_impl:
             spreadsheet_id: ID of the Google spreadsheet
 
         Returns:
-            Dictionary containing thumbnail_data and last_modified, or None if not found
+            Dictionary containing thumbnail_data and modifiedTime, or None if not found
         """
         try:
             if self._conn is None:
                 raise sqlite.Error("Database not open")
             c = self._conn.cursor()
             c.execute(
-                "SELECT thumbnail_data, s.last_modified FROM spreadsheet_thumbnails st "
-                "JOIN spreadsheets s ON st.spreadsheet_id = s.spreadsheet_id WHERE st.spreadsheet_id = ?",
+                "SELECT thumbnail, modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?",
                 (spreadsheet_id,),
             )
             result = c.fetchone()
             if result:
-                return {"thumbnail_data": result[0], "last_modified": result[1]}
+                return {"thumbnail": result[0], "modifiedTime": result[1]}
         except sqlite.Error as e:
             log.error(f"Error retrieving spreadsheet thumbnail: {e}")
         return None
+
+    def store_spreadsheet_info(self, spreadsheet_id: str, info: Dict[str, Any]) -> bool:
+        """
+        Store or update general information for a spreadsheet in the database.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet.
+            info: A dictionary containing the spreadsheet information (e.g., name, webViewLink, etc.).
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        try:
+            if self._conn is None:
+                raise sqlite.Error("Database not open")
+            c = self._conn.cursor()
+
+            # Ensure spreadsheet_id exists in the spreadsheets table
+            c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (spreadsheet_id,))
+
+            # Prepare the update statement with only the provided fields
+            update_fields = ", ".join([f"{key} = ?" for key in info.keys()])
+            update_values = list(info.values()) + [spreadsheet_id]
+
+            if update_fields:
+                c.execute(
+                    f"UPDATE spreadsheets SET {update_fields} WHERE spreadsheet_id = ?",
+                    update_values,
+                )
+
+            self._conn.commit()
+            return True
+        except sqlite.Error as e:
+            log.error(f"Error storing spreadsheet info for {spreadsheet_id}: {e}")
+            return False
 
 
 class Db(_db_impl):

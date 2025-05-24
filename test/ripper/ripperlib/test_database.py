@@ -26,8 +26,8 @@ class TestDatabaseIntegration(unittest.TestCase):
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in c.fetchall()}
         self.assertEqual(len(tables), 3)
-        self.assertIn("spreadsheet_thumbnails", tables)
-        self.assertIn("sheet_metadata", tables)
+        self.assertIn("sheets", tables)
+        self.assertIn("grid_properties", tables)
         self.assertIn("spreadsheets", tables)
         conn.close()
 
@@ -37,18 +37,294 @@ class TestDatabaseIntegration(unittest.TestCase):
         mod = "2024-01-01"
         result = self.db.store_spreadsheet_thumbnail(sid, data, mod)
         self.assertTrue(result)
-        thumb = self.db.get_spreadsheet_thumbnail(sid)
-        self.assertIsNotNone(thumb)
-        self.assertEqual(thumb["thumbnail_data"], data)
-        self.assertEqual(thumb["last_modified"], mod)
+        # After storing thumbnail, verify the data and modified time in the spreadsheets table
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT thumbnail, modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
+            stored_data = c.fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(stored_data)
+        self.assertEqual(stored_data[0], data)
+        self.assertEqual(stored_data[1], mod)
+
         new_data = b"newimg"
         new_mod = "2024-01-02"
         result2 = self.db.store_spreadsheet_thumbnail(sid, new_data, new_mod)
         self.assertTrue(result2)
-        thumb2 = self.db.get_spreadsheet_thumbnail(sid)
-        self.assertEqual(thumb2["thumbnail_data"], new_data)
-        self.assertEqual(thumb2["last_modified"], new_mod)
+        # After updating thumbnail, verify the new data and modified time in the spreadsheets table
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT thumbnail, modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
+            updated_data = c.fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(updated_data)
+        self.assertEqual(updated_data[0], new_data)
+        self.assertEqual(updated_data[1], new_mod)
 
     def test_get_thumbnail_not_found(self):
-        thumb = self.db.get_spreadsheet_thumbnail("doesnotexist")
-        self.assertIsNone(thumb)
+        # Test retrieving thumbnail for a spreadsheet that exists but has no thumbnail data
+        sid_no_thumbnail = "spreadsheet_no_thumb"
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (sid_no_thumbnail,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        retrieved_data = self.db.get_spreadsheet_thumbnail(sid_no_thumbnail)
+        self.assertIsNotNone(retrieved_data)
+        self.assertIsNone(retrieved_data["thumbnail"])
+        self.assertIsNone(retrieved_data["modifiedTime"])
+
+    def test_store_sheet_metadata_updates_existing_sheets(self):
+        # Test that store_sheet_metadata updates existing sheets instead of deleting them
+        spreadsheet_id = "test_spreadsheet"
+        modified_time = "2024-01-01T00:00:00Z"
+
+        # Initial metadata with two sheets
+        initial_metadata = {
+            "sheets": [
+                {
+                    "sheetId": "sheet1",
+                    "index": 0,
+                    "title": "Sheet 1",
+                    "sheetType": "GRID",
+                    "gridProperties": {
+                        "rowCount": 100,
+                        "columnCount": 26
+                    }
+                },
+                {
+                    "sheetId": "sheet2",
+                    "index": 1,
+                    "title": "Sheet 2",
+                    "sheetType": "GRID",
+                    "gridProperties": {
+                        "rowCount": 200,
+                        "columnCount": 52
+                    }
+                }
+            ]
+        }
+
+        # Store initial metadata
+        result = self.db.store_sheet_metadata(spreadsheet_id, initial_metadata, modified_time)
+        self.assertTrue(result)
+
+        # Verify initial metadata was stored correctly
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            # Check sheets table
+            query = "SELECT sheetId, title FROM sheets WHERE spreadsheet_id = ? ORDER BY \"index\""
+            c.execute(query, (spreadsheet_id,))
+            sheets = c.fetchall()
+            self.assertEqual(len(sheets), 2)
+            self.assertEqual(sheets[0][0], "sheet1")
+            self.assertEqual(sheets[0][1], "Sheet 1")
+            self.assertEqual(sheets[1][0], "sheet2")
+            self.assertEqual(sheets[1][1], "Sheet 2")
+
+            # Check grid_properties table
+            c.execute("SELECT sheetId, rowCount, columnCount FROM grid_properties ORDER BY sheetId")
+            grid_props = c.fetchall()
+            self.assertEqual(len(grid_props), 2)
+            self.assertEqual(grid_props[0][0], "sheet1")
+            self.assertEqual(grid_props[0][1], 100)
+            self.assertEqual(grid_props[0][2], 26)
+            self.assertEqual(grid_props[1][0], "sheet2")
+            self.assertEqual(grid_props[1][1], 200)
+            self.assertEqual(grid_props[1][2], 52)
+        finally:
+            conn.close()
+
+        # Updated metadata with modified values for sheet1 and a new sheet3
+        updated_metadata = {
+            "sheets": [
+                {
+                    "sheetId": "sheet1",
+                    "index": 0,
+                    "title": "Updated Sheet 1",  # Title changed
+                    "sheetType": "GRID",
+                    "gridProperties": {
+                        "rowCount": 150,  # Row count changed
+                        "columnCount": 26
+                    }
+                },
+                {
+                    "sheetId": "sheet3",  # New sheet
+                    "index": 2,
+                    "title": "Sheet 3",
+                    "sheetType": "GRID",
+                    "gridProperties": {
+                        "rowCount": 300,
+                        "columnCount": 78
+                    }
+                }
+            ]
+        }
+
+        # Update with new metadata
+        new_modified_time = "2024-01-02T00:00:00Z"
+        result = self.db.store_sheet_metadata(spreadsheet_id, updated_metadata, new_modified_time)
+        self.assertTrue(result)
+
+        # Verify sheets were updated, not deleted
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            # Check sheets table - should have 3 sheets now (sheet1 updated, sheet2 unchanged, sheet3 new)
+            c.execute("SELECT sheetId, title FROM sheets WHERE spreadsheet_id = ? ORDER BY sheetId", (spreadsheet_id,))
+            sheets = c.fetchall()
+            self.assertEqual(len(sheets), 3)
+
+            # Check sheet1 was updated
+            c.execute("SELECT title FROM sheets WHERE sheetId = ?", ("sheet1",))
+            sheet1 = c.fetchone()
+            self.assertEqual(sheet1[0], "Updated Sheet 1")
+
+            # Check sheet2 still exists and is unchanged
+            c.execute("SELECT title FROM sheets WHERE sheetId = ?", ("sheet2",))
+            sheet2 = c.fetchone()
+            self.assertEqual(sheet2[0], "Sheet 2")
+
+            # Check sheet3 was added
+            c.execute("SELECT title FROM sheets WHERE sheetId = ?", ("sheet3",))
+            sheet3 = c.fetchone()
+            self.assertEqual(sheet3[0], "Sheet 3")
+
+            # Check grid_properties were updated
+            c.execute("SELECT rowCount FROM grid_properties WHERE sheetId = ?", ("sheet1",))
+            grid_prop1 = c.fetchone()
+            self.assertEqual(grid_prop1[0], 150)  # Updated row count
+
+            # Check grid_properties for sheet3 were added
+            c.execute("SELECT rowCount, columnCount FROM grid_properties WHERE sheetId = ?", ("sheet3",))
+            grid_prop3 = c.fetchone()
+            self.assertEqual(grid_prop3[0], 300)
+            self.assertEqual(grid_prop3[1], 78)
+        finally:
+            conn.close()
+
+    def test_execute_query(self):
+        """Test the execute_query method for successful and failed queries."""
+        # Test successful query
+        cursor = self.db.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
+        self.assertIsNotNone(cursor)
+        tables = cursor.fetchall()
+        self.assertGreater(len(tables), 0)
+
+        # Test query with parameters
+        test_id = "test_id"
+        self.db.execute_query(
+            "INSERT INTO spreadsheets (spreadsheet_id) VALUES (?)", (test_id,)
+        )
+        cursor = self.db.execute_query(
+            "SELECT spreadsheet_id FROM spreadsheets WHERE spreadsheet_id = ?", (test_id,)
+        )
+        self.assertIsNotNone(cursor)
+        result = cursor.fetchone()
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0], test_id)
+
+        # Test failed query (syntax error)
+        cursor = self.db.execute_query("SELECT * FROM non_existent_table")
+        self.assertIsNone(cursor)
+
+    def test_get_sheet_metadata(self):
+        """Test retrieving sheet metadata from the database."""
+        # Setup: Store sheet metadata
+        spreadsheet_id = "test_spreadsheet_metadata"
+        modified_time = "2024-01-01T00:00:00Z"
+        metadata = {
+            "sheets": [
+                {
+                    "sheetId": "sheet1",
+                    "index": 0,
+                    "title": "Sheet 1",
+                    "sheetType": "GRID",
+                    "gridProperties": {
+                        "rowCount": 100,
+                        "columnCount": 26
+                    }
+                }
+            ]
+        }
+        self.db.store_sheet_metadata(spreadsheet_id, metadata, modified_time)
+
+        # Test: Retrieve with matching modified time
+        retrieved_metadata = self.db.get_sheet_metadata(spreadsheet_id, modified_time)
+        self.assertIsNotNone(retrieved_metadata)
+        self.assertIn("sheets", retrieved_metadata)
+        self.assertEqual(len(retrieved_metadata["sheets"]), 1)
+        sheet = retrieved_metadata["sheets"][0]
+        self.assertEqual(sheet["sheetId"], "sheet1")
+        self.assertEqual(sheet["title"], "Sheet 1")
+        self.assertEqual(sheet["gridProperties"]["rowCount"], 100)
+
+        # Test: Retrieve with non-matching modified time (should return None)
+        different_time = "2024-01-02T00:00:00Z"
+        retrieved_metadata = self.db.get_sheet_metadata(spreadsheet_id, different_time)
+        self.assertIsNone(retrieved_metadata)
+
+        # Test: Retrieve non-existent spreadsheet
+        retrieved_metadata = self.db.get_sheet_metadata("non_existent_id", modified_time)
+        self.assertIsNone(retrieved_metadata)
+
+    def test_store_spreadsheet_info(self):
+        """Test storing and updating spreadsheet information."""
+        spreadsheet_id = "test_spreadsheet_info"
+
+        # Test: Store initial info
+        initial_info = {
+            "name": "Test Spreadsheet",
+            "modifiedTime": "2024-01-01T00:00:00Z",
+            "webViewLink": "https://example.com/sheet1",
+            "createdTime": "2023-12-01T00:00:00Z",
+            "owners": '["owner1"]',
+            "size": 1024,
+            "shared": 1
+        }
+        result = self.db.store_spreadsheet_info(spreadsheet_id, initial_info)
+        self.assertTrue(result)
+
+        # Verify stored info
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT name, modifiedTime, size FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
+            stored_info = c.fetchone()
+            self.assertIsNotNone(stored_info)
+            self.assertEqual(stored_info[0], "Test Spreadsheet")
+            self.assertEqual(stored_info[1], "2024-01-01T00:00:00Z")
+            self.assertEqual(stored_info[2], 1024)
+        finally:
+            conn.close()
+
+        # Test: Update partial info
+        updated_info = {
+            "name": "Updated Spreadsheet",
+            "size": 2048
+        }
+        result = self.db.store_spreadsheet_info(spreadsheet_id, updated_info)
+        self.assertTrue(result)
+
+        # Verify updated info (only specified fields should change)
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        try:
+            c.execute("SELECT name, modifiedTime, size FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
+            updated_stored_info = c.fetchone()
+            self.assertIsNotNone(updated_stored_info)
+            self.assertEqual(updated_stored_info[0], "Updated Spreadsheet")  # Updated
+            self.assertEqual(updated_stored_info[1], "2024-01-01T00:00:00Z")  # Unchanged
+            self.assertEqual(updated_stored_info[2], 2048)  # Updated
+        finally:
+            conn.close()
