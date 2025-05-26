@@ -3,11 +3,41 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ripper.rippergui.sheets_selection_view import (
-    SpreadsheetThumbnailWidget,
     SheetsSelectionDialog,
+    SpreadsheetThumbnailWidget,
     col_to_letter,
     parse_cell,
 )
+from ripper.ripperlib.database import Db
+
+
+@pytest.fixture(autouse=True)
+def setup_database(tmp_path, monkeypatch):
+    """Setup a clean database for each test."""
+    # Create a test database file in a temporary directory
+    test_db_path = str(tmp_path / "test.db")
+
+    # Store the original __init__
+    original_init = Db.__init__
+
+    def mock_init(self, db_file_path=None):
+        # Always use the test database path
+        original_init(self, test_db_path)
+
+    # Patch the Db.__init__ method
+    monkeypatch.setattr(Db, "__init__", mock_init)
+
+    # Create a new database instance
+    db = Db()
+    # Clean any existing data
+    db.clean()
+    # Initialize the database
+    db.open()
+    yield db
+    # Close the database connection
+    db.close()
+    # Clean the database (but don't delete the file)
+    db.clean()
 
 
 def test_col_to_letter():
@@ -80,36 +110,42 @@ class TestSpreadsheetThumbnailWidget:
             "modifiedTime": "2024-01-01T00:00:00Z",
         }
 
-        # Create the widget with a custom init to avoid calling set_default_thumbnail
-        with patch.object(SpreadsheetThumbnailWidget, '__init__', lambda self, sheet_info, parent=None: None):
-            widget = SpreadsheetThumbnailWidget(None)
-
-            # Manually set up the widget attributes that we need
-            widget.spreadsheet_info = spreadsheet_info
-            widget.thumbnail_label = MagicMock()
-            widget.network_manager = MagicMock()
-            qtbot.addWidget(widget)
-
-            # Create mock image and pixmap
+        # Patch QImage and QPixmap for this specific test
+        with (
+            patch("ripper.rippergui.sheets_selection_view.QImage") as mock_qimage_class,
+            patch("ripper.rippergui.sheets_selection_view.QPixmap.fromImage") as mock_from_image,
+        ):
             mock_image = MagicMock()
             mock_pixmap = MagicMock()
+            mock_qimage_class.return_value = mock_image
+            mock_from_image.return_value = mock_pixmap
+            mock_image.loadFromData.return_value = True
 
-            # Patch QImage and QPixmap for this specific test
-            with patch("ripper.rippergui.sheets_selection_view.QImage", return_value=mock_image):
-                with patch("ripper.rippergui.sheets_selection_view.QPixmap.fromImage", return_value=mock_pixmap):
-                    # Set up the mock image to load successfully
-                    mock_image.loadFromData.return_value = True
+            widget = SpreadsheetThumbnailWidget(spreadsheet_info)
+            qtbot.addWidget(widget)
 
-                    # Call load_thumbnail
-                    widget.load_thumbnail("https://example.com/thumbnail.png", "test_id")
+            # Reset mock call count after widget construction
+            mock_db_instance.get_spreadsheet_thumbnail.reset_mock()
+            mock_image.loadFromData.reset_mock()
+            # Replace setPixmap and network_manager.get with mocks for assertion
+            widget.thumbnail_label.setPixmap = MagicMock()
+            widget.network_manager.get = MagicMock()
 
-                    # Verify that the thumbnail was loaded from cache
-                    mock_db_instance.get_spreadsheet_thumbnail.assert_called_once_with("test_id")
-                    mock_image.loadFromData.assert_called_once_with(mock_thumbnail_data)
-                    widget.thumbnail_label.setPixmap.assert_called_once_with(mock_pixmap)
+            # Connect to the signal and track emissions
+            results = []
+            widget.thumbnail_loaded.connect(lambda result: results.append(result))
 
-                    # Verify that the network request was not made
-                    assert widget.network_manager.get.call_count == 0
+            # Call load_thumbnail
+            widget.load_thumbnail("https://example.com/thumbnail.png", "test_id")
+
+            # Verify that the thumbnail was loaded from cache
+            mock_db_instance.get_spreadsheet_thumbnail.assert_called_once_with("test_id")
+            mock_image.loadFromData.assert_called_once_with(mock_thumbnail_data)
+            widget.thumbnail_label.setPixmap.assert_called_once_with(mock_pixmap)
+            # Verify that the network request was not made
+            assert widget.network_manager.get.call_count == 0
+            # Verify the signal was emitted with 'cache'
+            assert results == ["cache"]
 
 
 @pytest.mark.qt
@@ -124,6 +160,7 @@ class TestSheetsSelectionDialog:
         mock_auth_instance = MagicMock()
         mock_auth_manager.return_value = mock_auth_instance
         mock_auth_instance.create_drive_service.return_value = MagicMock()
+        mock_auth_instance.create_sheets_service.return_value = MagicMock()
 
         # Set up the mock to return a list of spreadsheets
         mock_fetch.return_value = [
@@ -145,10 +182,10 @@ class TestSheetsSelectionDialog:
 
         # Check that the dialog was initialized correctly
         assert dialog.windowTitle() == "Select Google Sheet"
-        assert dialog.selected_sheet is None
-        assert len(dialog.sheets_list) == 2
-        assert dialog.sheets_list[0]["id"] == "sheet1"
-        assert dialog.sheets_list[1]["id"] == "sheet2"
+        assert dialog.selected_spreadsheet is None
+        assert len(dialog.spreadsheets_list) == 2
+        assert dialog.spreadsheets_list[0]["id"] == "sheet1"
+        assert dialog.spreadsheets_list[1]["id"] == "sheet2"
 
     @patch("ripper.rippergui.sheets_selection_view.AuthManager")
     @patch("ripper.rippergui.sheets_selection_view.fetch_and_store_spreadsheets")
@@ -188,7 +225,7 @@ class TestSheetsSelectionDialog:
         dialog.select_spreadsheet(spreadsheet_info)
 
         # Check that the spreadsheet was selected
-        assert dialog.selected_sheet == spreadsheet_info
+        assert dialog.selected_spreadsheet == spreadsheet_info
         assert dialog.select_button.isEnabled()
         assert "Test Sheet 1" in dialog.details_content.text()
 
@@ -219,7 +256,7 @@ class TestSheetsSelectionDialog:
         qtbot.addWidget(dialog)
 
         # Set up the selected sheet and sheet properties
-        dialog.selected_sheet = {
+        dialog.selected_spreadsheet = {
             "id": "sheet1",
             "name": "Test Sheet 1",
             "modifiedTime": "2024-01-01T00:00:00Z",

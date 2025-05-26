@@ -1,4 +1,5 @@
 import json
+import urllib.request
 
 from beartype.typing import Any, Dict, List, Optional, cast
 from googleapiclient.errors import HttpError
@@ -113,6 +114,24 @@ def read_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, rang
         return None
 
 
+def download_thumbnail(url: str) -> Optional[bytes]:
+    """
+    Download thumbnail image data from a URL.
+
+    Args:
+        url: URL to download the thumbnail from
+
+    Returns:
+        The thumbnail image data as bytes, or None if download failed
+    """
+    try:
+        with urllib.request.urlopen(url) as response:
+            return cast(bytes, response.read())
+    except Exception as e:
+        logger.error(f"Error downloading thumbnail: {e}")
+        return None
+
+
 def fetch_and_store_spreadsheets(drive_service: DriveService, db: Db) -> Optional[List[FileInfo]]:
     """
     Fetches the list of spreadsheets from Google Drive and stores relevant information in the database.
@@ -143,8 +162,10 @@ def fetch_and_store_spreadsheets(drive_service: DriveService, db: Db) -> Optiona
                 "owners": json.dumps(sheet_info.get("owners")) if sheet_info.get("owners") is not None else None,
                 "size": sheet_info.get("size"),
                 "shared": sheet_info.get("shared"),
+                "thumbnailLink": sheet_info.get("thumbnailLink"),
             }
             db.store_spreadsheet_info(spreadsheet_id, info_to_store)
+            logger.debug(f"Stored info for spreadsheet {spreadsheet_id}")
 
     logger.debug(f"Successfully fetched and stored {len(sheets_list)} spreadsheets.")
     return sheets_list

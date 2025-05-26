@@ -79,6 +79,9 @@ class SpreadsheetThumbnailWidget(QFrame):
     It loads the thumbnail from cache if available, or from the Google API if not.
     """
 
+    # Signal emitted when thumbnail is loaded (with source: "cache", "network", or "error")
+    thumbnail_loaded = Signal(str)
+
     def __init__(
         self,
         sheet_info: Dict[str, Any],
@@ -180,11 +183,11 @@ class SpreadsheetThumbnailWidget(QFrame):
 
         Args:
             url: URL to load the thumbnail from if not in cache
-            sheet_id: ID of the sheet to use as cache key
+            spreadsheet_id: ID of the sheet to use as cache key
         """
         # Check cache first
         cached_thumbnail = Db().get_spreadsheet_thumbnail(spreadsheet_id)
-        if cached_thumbnail:
+        if cached_thumbnail and cached_thumbnail["thumbnail"] is not None:
             try:
                 thumbnail_data = cached_thumbnail["thumbnail"]
                 image = QImage()
@@ -192,14 +195,14 @@ class SpreadsheetThumbnailWidget(QFrame):
                     pixmap = QPixmap.fromImage(image)
                     self.thumbnail_label.setPixmap(pixmap)
                     logger.debug(f"Loaded thumbnail for spreadsheet id {spreadsheet_id} from cache")
-                    return
+                    self.thumbnail_loaded.emit("cache")
+                    return  # Return early if cache load was successful
                 else:
                     logger.warning(f"Failed to load image data for spreadsheet id {spreadsheet_id} from cache")
             except KeyError as e:
                 logger.error(f"Missing key in cached thumbnail data: {e}")
             except Exception as e:
                 logger.error(f"Error loading cached thumbnail: {e}")
-            # Continue to load from URL if cache fails
 
         # Show loading indicator
         self.loading_label.show()
@@ -216,6 +219,7 @@ class SpreadsheetThumbnailWidget(QFrame):
         Args:
             reply: Network reply containing the thumbnail data
         """
+        success = False
         # Hide loading indicator
         self.loading_label.hide()
 
@@ -229,11 +233,12 @@ class SpreadsheetThumbnailWidget(QFrame):
                 if image.loadFromData(image_data):
                     pixmap = QPixmap.fromImage(image)
                     self.thumbnail_label.setPixmap(pixmap)
+                    success = True
 
                     # Store in cache if we have a spreadsheet ID
                     if "id" in self.spreadsheet_info:
                         spreadsheet_id = self.spreadsheet_info["id"]
-                        modifiedTime = datetime.now().isoformat()
+                        modifiedTime = self.spreadsheet_info.get("modifiedTime", datetime.now().isoformat())
                         Db().store_spreadsheet_thumbnail(spreadsheet_id, image_data, modifiedTime)
                         logger.debug(f"Stored thumbnail for spreadsheet id {spreadsheet_id} in cache")
                 else:
@@ -245,6 +250,11 @@ class SpreadsheetThumbnailWidget(QFrame):
         else:
             logger.error(f"Error loading thumbnail: {reply.errorString()}")
             self.set_default_thumbnail()
+
+        if success:
+            self.thumbnail_loaded.emit("network")
+        else:
+            self.thumbnail_loaded.emit("error")
 
         # Clean up
         reply.deleteLater()
@@ -283,12 +293,13 @@ class SheetsSelectionDialog(QDialog):
     # Signal emitted when the user chooses a sheet
     sheet_selected = Signal(dict)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None, test_db_path: Optional[str] = None) -> None:
         """
         Initialize the sheets selection dialog.
 
         Args:
             parent: Parent widget
+            test_db_path: Optional database path for testing
         """
         super().__init__(parent)
         self.setWindowTitle("Select Google Sheet")
@@ -296,9 +307,10 @@ class SheetsSelectionDialog(QDialog):
         self.setMinimumHeight(400)
         self.resize(1600, 900)
 
-        self.selected_sheet: Optional[Dict[str, Any]] = None
-        self.sheets_list: List[Dict[str, Any]] = []
+        self.selected_spreadsheet: Optional[Dict[str, Any]] = None
+        self.spreadsheets_list: List[Dict[str, Any]] = []
         self.all_sheet_properties: Dict[str, List[SheetProperties]] = {}
+        self.test_db_path = test_db_path
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -378,14 +390,14 @@ class SheetsSelectionDialog(QDialog):
 
         main_layout.addLayout(buttons_layout)
 
-        # Load sheets
-        self.load_sheets()
+        # Load spreadsheets
+        self.load_spreadsheets()
 
-    def load_sheets(self) -> None:
+    def load_spreadsheets(self) -> None:
         """
-        Load Google Sheets from Drive.
+        Load Google Spreadsheets from Drive.
 
-        Fetches the list of Google Sheets from the user's Drive and displays them
+        Fetches the list of Google Spreadsheets from the user's Drive and displays them
         in the grid. Shows an error message if authentication fails or an error occurs.
         """
         try:
@@ -397,25 +409,25 @@ class SheetsSelectionDialog(QDialog):
                 return
 
             # Fetch and store sheets using the backend function
-            db = Db()
-            self.sheets_list = fetch_and_store_spreadsheets(drive_service, db) or []
-            if not self.sheets_list:
+            db = Db(self.test_db_path) if self.test_db_path else Db()
+            self.spreadsheets_list = fetch_and_store_spreadsheets(drive_service, db) or []
+            if not self.spreadsheets_list:
                 self.show_error("Failed to fetch and store sheets list. Please try again.")
                 return
 
             # Display sheets in grid
-            self.display_sheets()
+            self.display_spreadsheets()
 
         except Exception as e:
             logger.error(f"Error loading sheets: {e}")
             self.show_error(f"Error loading sheets: {str(e)}")
 
-    def display_sheets(self) -> None:
+    def display_spreadsheets(self) -> None:
         """
-        Display sheets in the grid layout.
+        Display spreadsheets in the grid layout.
 
-        Clears any existing widgets in the grid and adds thumbnails for each sheet.
-        If no sheets are found, displays a message.
+        Clears any existing widgets in the grid and adds thumbnails for each spreadsheet.
+        If no spreadsheets are found, displays a message.
         """
         # Clear existing items
         while self.grid_layout.count():
@@ -423,18 +435,18 @@ class SheetsSelectionDialog(QDialog):
             if item.widget():
                 item.widget().deleteLater()
 
-        if not self.sheets_list:
-            no_sheets_label = QLabel("No Google Sheets found in your Drive")
+        if not self.spreadsheets_list:
+            no_sheets_label = QLabel("No Google Spreadsheets found in your Drive")
             no_sheets_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.grid_layout.addWidget(no_sheets_label, 0, 0)
             return
 
-        # Add sheets to grid
+        # Add spreadsheets to grid
         row, col = 0, 0
         max_cols = 3  # Number of columns in the grid
 
-        for sheet in self.sheets_list:
-            thumbnail = SpreadsheetThumbnailWidget(sheet, parent=self)
+        for spreadsheet in self.spreadsheets_list:
+            thumbnail = SpreadsheetThumbnailWidget(spreadsheet, parent=self)
             self.grid_layout.addWidget(thumbnail, row, col)
 
             col += 1
@@ -452,7 +464,7 @@ class SheetsSelectionDialog(QDialog):
         Args:
             spreadsheet_info: Dictionary containing information about the selected spreadsheet
         """
-        self.selected_sheet = spreadsheet_info
+        self.selected_spreadsheet = spreadsheet_info
         self.select_button.setEnabled(True)
 
         # Update details view
@@ -558,9 +570,6 @@ class SheetsSelectionDialog(QDialog):
             sheet_names = [sheet.title for sheet in sheets_properties]
             self.sheet_name_combobox.addItems(sheet_names)
 
-            # Restore the previous signal blocking state
-            self.sheet_name_combobox.blockSignals(old_state)
-
             # Connect the signal if not already connected
             # This is safe to call multiple times as it won't create duplicate connections
             self.sheet_name_combobox.currentIndexChanged.connect(self._sheet_name_selected)
@@ -571,12 +580,15 @@ class SheetsSelectionDialog(QDialog):
                 # Explicitly call the function to ensure it runs
                 self._sheet_name_selected(0)
 
+        # Restore the previous signal blocking state
+        self.sheet_name_combobox.blockSignals(old_state)
+
     def _sheet_name_selected(self, index: int) -> None:
         """
         Handle sheet name selection from the combobox and update the range input.
         """
-        if self.selected_sheet and index >= 0:
-            spreadsheet_id = self.selected_sheet["id"]
+        if self.selected_spreadsheet and index >= 0:
+            spreadsheet_id = self.selected_spreadsheet["id"]
             sheets_properties = self.all_sheet_properties.get(spreadsheet_id)
 
             if sheets_properties and index < len(sheets_properties):
@@ -614,8 +626,8 @@ class SheetsSelectionDialog(QDialog):
         # Get sheet dimensions for bounds check
         sheet_row_count = 0
         sheet_col_count = 0
-        if self.selected_sheet:
-            spreadsheet_id = self.selected_sheet["id"]
+        if self.selected_spreadsheet:
+            spreadsheet_id = self.selected_spreadsheet["id"]
             sheets_properties = self.all_sheet_properties.get(spreadsheet_id)
             if sheets_properties:
                 current_sheet_name = self.sheet_name_combobox.currentText().strip()
@@ -641,6 +653,7 @@ class SheetsSelectionDialog(QDialog):
     def _is_range_empty(self, text: str) -> bool:
         """
         Checks if the range input is empty.
+        Returns True if the range is NOT empty.
         """
         if not text.strip():
             self.show_error("Sheet range cannot be empty.")
@@ -711,12 +724,12 @@ class SheetsSelectionDialog(QDialog):
         logger.info(f"Sheet Range: {sheet_range}")
 
     def user_confirmed_sheet(self) -> None:
-        if not self.selected_sheet:
+        if not self.selected_spreadsheet:
             return
 
         try:
-            spreadsheet_name = self.selected_sheet.get("name")
-            spreadsheet_id = self.selected_sheet.get("id")
+            spreadsheet_name = self.selected_spreadsheet.get("name")
+            spreadsheet_id = self.selected_spreadsheet.get("id")
         except KeyError as e:
             logger.error(f"Missing required data key in selected sheet: {e}")
             return

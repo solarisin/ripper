@@ -1,9 +1,8 @@
-import os
 from pathlib import Path
 
+import platformdirs
 from beartype.typing import Any, Dict, Protocol
 from loguru import logger
-from PySide6.QtCore import QStandardPaths
 from typing_extensions import runtime_checkable
 
 
@@ -36,25 +35,13 @@ FileInfo = dict[str, Any]
 
 def get_app_data_dir() -> str:
     """
-    Get the application data directory for the current user.
+    Get the application data directory for the current user using platformdirs.
 
     Returns:
         The path to the application data directory.
     """
-    app_data_dir = (
-        Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / "ripper"
-    )
-
-    # Attempt to create the directory if it doesn't exist
-    if not app_data_dir.exists():
-        try:
-            app_data_dir.mkdir(exist_ok=True, parents=True)
-        except Exception as e:
-            # Fall back to current directory if we can't create the app data directory
-            logger.warning(f"Application data directory {app_data_dir} does not exist, and failed to create it: {e}")
-            app_data_dir = Path(os.getcwd())
-            logger.warning(f"Using current directory {app_data_dir} for application data")
-    return str(app_data_dir)
+    # Use platformdirs to get the user data directory
+    return platformdirs.user_data_dir(appname="ripper", ensure_exists=True)
 
 
 LOG_FILE_PATH = Path(get_app_data_dir()) / "ripper.log"
