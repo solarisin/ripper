@@ -1,6 +1,5 @@
-import logging
-
 from beartype.typing import Optional
+from loguru import logger
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
 from PySide6.QtWidgets import (
@@ -21,8 +20,6 @@ from ripper.rippergui.fonts import FontId, FontManager
 from ripper.rippergui.oauth_client_config_view import AuthView
 from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
-
-log = logging.getLogger("ripper:mainview")
 
 
 class MainView(QMainWindow):
@@ -216,7 +213,7 @@ class MainView(QMainWindow):
 
         Opens a dialog where the user can enter their Google API OAuth client ID and secret.
         """
-        log.debug("Register OAuth selected")
+        logger.debug("Register OAuth selected")
         self.show_auth_view()
 
     def authenticate_oauth(self) -> None:
@@ -226,7 +223,7 @@ class MainView(QMainWindow):
         Initiates the OAuth flow to authenticate with Google and gain access to the user's
         Google Sheets and Drive.
         """
-        log.debug("Authenticate OAuth selected")
+        logger.debug("Authenticate OAuth selected")
         # Start the OAuth flow
         cred = AuthManager().authorize()
 
@@ -255,7 +252,7 @@ class MainView(QMainWindow):
         if self._select_sheet_act:
             self._select_sheet_act.setEnabled(is_logged_in)
 
-        log.debug(
+        logger.debug(
             f"OAuth client credentials {'found' if has_credentials else 'not found'}, "
             f"authentication is {'enabled' if has_credentials else 'disabled'}, "
             f"sheet selection is {'enabled' if is_logged_in else 'disabled'}"
@@ -267,7 +264,7 @@ class MainView(QMainWindow):
 
         Creates a new transaction table view in a dock widget.
         """
-        log.debug("New source selected")
+        logger.debug("New source selected")
 
         from ripper.rippergui import table_view
 
@@ -308,7 +305,7 @@ class MainView(QMainWindow):
 
         This is a placeholder for future implementation.
         """
-        log.debug("Save selected")
+        logger.debug("Save selected")
         # TODO: implement saving functionality
         self.statusBar().showMessage("Saved '[filename]'", 2000)
 
@@ -318,7 +315,7 @@ class MainView(QMainWindow):
 
         This is a placeholder for future implementation.
         """
-        log.debug("Print selected")
+        logger.debug("Print selected")
         # TODO: implement printing functionality
         self.statusBar().showMessage("Printing...", 2000)
 
@@ -328,7 +325,7 @@ class MainView(QMainWindow):
 
         This is a placeholder for future implementation.
         """
-        log.debug("Undo selected")
+        logger.debug("Undo selected")
         # TODO: implement undo functionality
         self.statusBar().showMessage("Undo", 2000)
 
@@ -345,7 +342,7 @@ class MainView(QMainWindow):
         Displays a dialog where the user can select a Google Sheet from their Drive.
         Checks if the user is authenticated first and shows a warning if not.
         """
-        log.debug("Select Google Sheet selected")
+        logger.debug("Select Google Sheet selected")
 
         # Check if user is authenticated
         auth_info = AuthManager().auth_info()
@@ -394,7 +391,7 @@ class MainView(QMainWindow):
         their OAuth client credentials. It closes the auth dialog and updates
         the UI accordingly.
         """
-        log.debug("User configured OAuth client credentials")
+        logger.debug("User configured OAuth client credentials")
 
         # Close the auth dialog if it is open
         if self._auth_dialog:
@@ -402,7 +399,7 @@ class MainView(QMainWindow):
 
         # Update UI to enable options only available after an OAuth client is configured
         self.update_oauth_ui()
-        log.info("OAuth client registration successful")
+        logger.info("OAuth client registration successful")
 
     def data_source_selected(self, source_info: dict) -> None:
 
@@ -412,4 +409,4 @@ class MainView(QMainWindow):
         if self._sheet_selection_dialog:
             self._sheet_selection_dialog.accept()
 
-        log.info(f"Data source selected: {source_info}")
+        logger.info(f"Data source selected: {source_info}")

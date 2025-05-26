@@ -1,8 +1,8 @@
-import logging
 import os
 from pathlib import Path
 
 from beartype.typing import Any, Dict, Protocol
+from loguru import logger
 from PySide6.QtCore import QStandardPaths
 from typing_extensions import runtime_checkable
 
@@ -34,7 +34,7 @@ SheetData = list[list[Any]]
 FileInfo = dict[str, Any]
 
 
-def get_app_data_dir(log: logging.Logger = logging.getLogger("ripper:defs")) -> str:
+def get_app_data_dir() -> str:
     """
     Get the application data directory for the current user.
 
@@ -51,10 +51,13 @@ def get_app_data_dir(log: logging.Logger = logging.getLogger("ripper:defs")) -> 
             app_data_dir.mkdir(exist_ok=True, parents=True)
         except Exception as e:
             # Fall back to current directory if we can't create the app data directory
-            log.warning(f"Application data directory {app_data_dir} does not exist, and failed to create it: {e}")
+            logger.warning(f"Application data directory {app_data_dir} does not exist, and failed to create it: {e}")
             app_data_dir = Path(os.getcwd())
-            log.warning(f"Using current directory {app_data_dir} for application data")
+            logger.warning(f"Using current directory {app_data_dir} for application data")
     return str(app_data_dir)
+
+
+LOG_FILE_PATH = Path(get_app_data_dir()) / "ripper.log"
 
 
 class SheetProperties:
@@ -70,7 +73,7 @@ class SheetProperties:
             }
 
     def __init__(self, sheet_info: dict[str, Any]):
-        logging.debug(f"SheetProperties: {sheet_info['properties']}")
+        logger.debug(f"SheetProperties: {sheet_info['properties']}")
         properties = sheet_info["properties"]
         self.id = properties["sheetId"]
         self.index = properties["index"]

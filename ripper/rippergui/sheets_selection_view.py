@@ -1,7 +1,8 @@
-import logging
 import re
 from datetime import datetime
 
+from beartype.typing import Any, Dict, List, Optional, cast
+from loguru import logger
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QCursor, QImage, QMouseEvent, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -22,14 +23,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from beartype.typing import Any, Dict, List, Optional, cast
 
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import SheetProperties
 from ripper.ripperlib.sheets_backend import fetch_and_store_spreadsheets, read_spreadsheet_metadata
-
-log = logging.getLogger("ripper:sheets_selection_view")
 
 
 def col_to_letter(col_index: int) -> str:
@@ -193,14 +191,14 @@ class SpreadsheetThumbnailWidget(QFrame):
                 if image.loadFromData(thumbnail_data):
                     pixmap = QPixmap.fromImage(image)
                     self.thumbnail_label.setPixmap(pixmap)
-                    log.debug(f"Loaded thumbnail for spreadsheet id {spreadsheet_id} from cache")
+                    logger.debug(f"Loaded thumbnail for spreadsheet id {spreadsheet_id} from cache")
                     return
                 else:
-                    log.warning(f"Failed to load image data for spreadsheet id {spreadsheet_id} from cache")
+                    logger.warning(f"Failed to load image data for spreadsheet id {spreadsheet_id} from cache")
             except KeyError as e:
-                log.error(f"Missing key in cached thumbnail data: {e}")
+                logger.error(f"Missing key in cached thumbnail data: {e}")
             except Exception as e:
-                log.error(f"Error loading cached thumbnail: {e}")
+                logger.error(f"Error loading cached thumbnail: {e}")
             # Continue to load from URL if cache fails
 
         # Show loading indicator
@@ -209,7 +207,7 @@ class SpreadsheetThumbnailWidget(QFrame):
         # Load from URL asynchronously
         request = QNetworkRequest(QUrl(url))
         self.network_manager.get(request)
-        log.debug(f"Requesting thumbnail for spreadsheet id {spreadsheet_id} from URL: {url}")
+        logger.debug(f"Requesting thumbnail for spreadsheet id {spreadsheet_id} from URL: {url}")
 
     def handle_thumbnail_response(self, reply: QNetworkReply) -> None:
         """
@@ -237,15 +235,15 @@ class SpreadsheetThumbnailWidget(QFrame):
                         spreadsheet_id = self.spreadsheet_info["id"]
                         modifiedTime = datetime.now().isoformat()
                         Db().store_spreadsheet_thumbnail(spreadsheet_id, image_data, modifiedTime)
-                        log.debug(f"Stored thumbnail for spreadsheet id {spreadsheet_id} in cache")
+                        logger.debug(f"Stored thumbnail for spreadsheet id {spreadsheet_id} in cache")
                 else:
-                    log.error("Failed to load image data from network response")
+                    logger.error("Failed to load image data from network response")
                     self.set_default_thumbnail()
             except Exception as e:
-                log.error(f"Error processing thumbnail data: {e}")
+                logger.error(f"Error processing thumbnail data: {e}")
                 self.set_default_thumbnail()
         else:
-            log.error(f"Error loading thumbnail: {reply.errorString()}")
+            logger.error(f"Error loading thumbnail: {reply.errorString()}")
             self.set_default_thumbnail()
 
         # Clean up
@@ -409,7 +407,7 @@ class SheetsSelectionDialog(QDialog):
             self.display_sheets()
 
         except Exception as e:
-            log.error(f"Error loading sheets: {e}")
+            logger.error(f"Error loading sheets: {e}")
             self.show_error(f"Error loading sheets: {str(e)}")
 
     def display_sheets(self) -> None:
@@ -501,21 +499,23 @@ class SheetsSelectionDialog(QDialog):
             sheets_properties: Optional[List[SheetProperties]] = None
 
             if cached_metadata is None:
-                log.debug(f"Metadata for sheet {spreadsheet_id} not found in cache or is outdated. Fetching from API.")
+                logger.debug(
+                    f"Metadata for sheet {spreadsheet_id} not found in cache or is outdated. Fetching from API."
+                )
                 QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
                 api_metadata = read_spreadsheet_metadata(sheets_service, spreadsheet_id)
                 if api_metadata is not None and modified_time:
                     # Convert list of SheetProperties to a dictionary for caching
                     metadata_to_cache = {"sheets": [sheet.to_dict() for sheet in api_metadata]}
                     Db().store_sheet_metadata(spreadsheet_id, metadata_to_cache, modified_time)
-                    log.debug(f"Stored metadata for sheet {spreadsheet_id} in cache.")
+                    logger.debug(f"Stored metadata for sheet {spreadsheet_id} in cache.")
                     sheets_properties = api_metadata
                     QApplication.restoreOverrideCursor()
                 else:
-                    log.error("Failed to fetch metadata from API")
+                    logger.error("Failed to fetch metadata from API")
                     sheets_properties = None
             else:
-                log.debug(f"Metadata for sheet {spreadsheet_id} found in cache.")
+                logger.debug(f"Metadata for sheet {spreadsheet_id} found in cache.")
                 # Convert cached dictionary back to list of SheetProperties
                 if "sheets" in cached_metadata:
                     try:
@@ -533,11 +533,11 @@ class SheetsSelectionDialog(QDialog):
                             }
                             sheets_properties.append(SheetProperties(sheet_info))
                     except Exception as e:
-                        log.error(f"Error converting cached metadata to SheetProperties: {e}")
+                        logger.error(f"Error converting cached metadata to SheetProperties: {e}")
                         sheets_properties = None  # Invalidate cached data if conversion fails
 
             if sheets_properties is not None:
-                log.debug(f"Spreadsheet contains {len(sheets_properties)} sheets")
+                logger.debug(f"Spreadsheet contains {len(sheets_properties)} sheets")
                 # Store the sheet properties
                 self.all_sheet_properties[spreadsheet_id] = sheets_properties
 
@@ -704,11 +704,11 @@ class SheetsSelectionDialog(QDialog):
         sheet_name = spreadsheet_info.get("sheet_name")
         sheet_range = spreadsheet_info.get("sheet_range")
 
-        log.info("Selected Google Sheet Information:")
-        log.info(f"Spreadsheet Name: {spreadsheet_name}")
-        log.info(f"Spreadsheet ID: {spreadsheet_id}")
-        log.info(f"Sheet Name: {sheet_name}")
-        log.info(f"Sheet Range: {sheet_range}")
+        logger.info("Selected Google Sheet Information:")
+        logger.info(f"Spreadsheet Name: {spreadsheet_name}")
+        logger.info(f"Spreadsheet ID: {spreadsheet_id}")
+        logger.info(f"Sheet Name: {sheet_name}")
+        logger.info(f"Sheet Range: {sheet_range}")
 
     def user_confirmed_sheet(self) -> None:
         if not self.selected_sheet:
@@ -718,7 +718,7 @@ class SheetsSelectionDialog(QDialog):
             spreadsheet_name = self.selected_sheet.get("name")
             spreadsheet_id = self.selected_sheet.get("id")
         except KeyError as e:
-            log.error(f"Missing required data key in selected sheet: {e}")
+            logger.error(f"Missing required data key in selected sheet: {e}")
             return
 
         # Get sheet name and range from the combobox and line edit

@@ -1,17 +1,14 @@
-import logging
 import sqlite3 as sqlite
 from pathlib import Path
 
 from beartype.typing import Any, Dict, Optional, Tuple
+from loguru import logger
 
 import ripper.ripperlib.defs as defs
 
-# Create a logger for the database module
-log = logging.getLogger("ripper:database")
-
 
 def default_db_path() -> Path:
-    return Path(defs.get_app_data_dir(log)) / "ripper.db"
+    return Path(defs.get_app_data_dir()) / "ripper.db"
 
 
 class _db_impl:
@@ -28,11 +25,11 @@ class _db_impl:
             self._conn = sqlite.connect(self._db_file_path)
             if self._conn is not None:
                 self._conn.row_factory = sqlite.Row
-            log.debug(f"Database path: {self._db_file_path}")
+            logger.debug(f"Database path: {self._db_file_path}")
             self.create_tables()
-            log.debug("Database initialization complete")
+            logger.debug("Database initialization complete")
         except sqlite.Error as e:
-            log.critical(f"Failed to initialize database at {self._db_file_path}: {e}")
+            logger.critical(f"Failed to initialize database at {self._db_file_path}: {e}")
             exit(1)
 
     def close(self) -> None:
@@ -59,7 +56,7 @@ class _db_impl:
             cursor.execute(query, params)
             return cursor
         except sqlite.Error as e:
-            log.error(f"Error executing query: {e}")
+            logger.error(f"Error executing query: {e}")
             return None
 
     def clean(self) -> None:
@@ -69,7 +66,7 @@ class _db_impl:
         if hasattr(self, "_conn") and self._conn is not None:
             self._conn.close()
         if Path(self._db_file_path).exists():
-            log.info(f"Deleting database file {self._db_file_path}")
+            logger.info(f"Deleting database file {self._db_file_path}")
             Path(self._db_file_path).unlink()
 
     def create_tables(self) -> None:
@@ -204,7 +201,7 @@ class _db_impl:
             self._conn.commit()
             return True
         except sqlite.Error as e:
-            log.error(f"Error storing sheet metadata: {e}")
+            logger.error(f"Error storing sheet metadata: {e}")
             return False
 
     def get_sheet_metadata(self, spreadsheet_id: str, modified_time: str) -> Optional[Dict[str, Any]]:
@@ -232,12 +229,12 @@ class _db_impl:
             result = c.fetchone()
 
             if not result:
-                log.debug(f"No spreadsheet found with ID {spreadsheet_id}.")
+                logger.debug(f"No spreadsheet found with ID {spreadsheet_id}.")
                 return None
 
             stored_modified_time = result[0]
             if stored_modified_time != modified_time:
-                log.debug(f"Spreadsheet {spreadsheet_id} has been modified. Cached metadata is outdated.")
+                logger.debug(f"Spreadsheet {spreadsheet_id} has been modified. Cached metadata is outdated.")
                 return None
 
             # Retrieve sheets for this spreadsheet
@@ -253,7 +250,7 @@ class _db_impl:
 
             sheets_data = c.fetchall()
             if not sheets_data:
-                log.debug(f"No sheets found for spreadsheet {spreadsheet_id}.")
+                logger.debug(f"No sheets found for spreadsheet {spreadsheet_id}.")
                 return None
 
             # Reconstruct the metadata dictionary
@@ -273,7 +270,7 @@ class _db_impl:
             return {"sheets": sheets}
 
         except sqlite.Error as e:
-            log.error(f"Error retrieving sheet metadata: {e}")
+            logger.error(f"Error retrieving sheet metadata: {e}")
             return None
 
     def store_spreadsheet_thumbnail(self, spreadsheet_id: str, thumbnail_data: bytes, modifiedTime: str) -> bool:
@@ -308,7 +305,7 @@ class _db_impl:
             self._conn.commit()
             return True
         except sqlite.Error as e:
-            log.error(f"Error storing spreadsheet thumbnail: {e}")
+            logger.error(f"Error storing spreadsheet thumbnail: {e}")
             return False
 
     def get_spreadsheet_thumbnail(self, spreadsheet_id: str) -> Optional[Dict[str, Any]]:
@@ -333,7 +330,7 @@ class _db_impl:
             if result:
                 return {"thumbnail": result[0], "modifiedTime": result[1]}
         except sqlite.Error as e:
-            log.error(f"Error retrieving spreadsheet thumbnail: {e}")
+            logger.error(f"Error retrieving spreadsheet thumbnail: {e}")
         return None
 
     def store_spreadsheet_info(self, spreadsheet_id: str, info: Dict[str, Any]) -> bool:
@@ -368,7 +365,7 @@ class _db_impl:
             self._conn.commit()
             return True
         except sqlite.Error as e:
-            log.error(f"Error storing spreadsheet info for {spreadsheet_id}: {e}")
+            logger.error(f"Error storing spreadsheet info for {spreadsheet_id}: {e}")
             return False
 
 

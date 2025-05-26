@@ -1,18 +1,53 @@
 import importlib.metadata
-import logging
 import sys
 from pathlib import Path
 
 import click
 import toml
-from PySide6.QtWidgets import QApplication
-from beartype.typing import Optional
 from click import pass_context
+from loguru import logger
+from PySide6.QtWidgets import QApplication
 
 import ripper.ripperlib.database
 from ripper.rippergui.mainview import MainView
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.database import Db
+from ripper.ripperlib.defs import LOG_FILE_PATH
+
+
+def configure_logging(log_level: str = "DEBUG") -> None:
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        level=log_level.upper(),
+        filter=lambda record: record["level"].no < 40,  # 40 is ERROR
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+            "<level>{level: <8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>"
+        ),
+    )
+    stderr_level = "CRITICAL" if log_level.upper() == "CRITICAL" else "ERROR"
+    logger.add(
+        sys.stderr,
+        level=stderr_level,
+        format=(
+            "<red>{time:YYYY-MM-DD HH:mm:ss}</red> | "
+            "<level>{level: <8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>"
+        ),
+    )
+    logger.add(
+        LOG_FILE_PATH,
+        rotation="10 MB",
+        retention="10 days",
+        level=log_level.upper(),
+        encoding="utf-8",
+        format=("{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | " "{name}:{function}:{line} - {message}"),
+    )
+
 
 # Get the project root path
 project_path = Path(__file__).parent.parent.resolve()
@@ -28,48 +63,28 @@ def get_version() -> str:
     Returns:
         The version string
     """
-    log = logging.getLogger("ripper:version")
-
     try:
         # Try to get version from package metadata (when installed)
         version = importlib.metadata.version("ripper")
         return str(version)
     except importlib.metadata.PackageNotFoundError:
         # Fall back to reading from pyproject.toml
-        log.debug("Package not installed, reading version from pyproject.toml")
+        logger.debug("Package not installed, reading version from pyproject.toml")
         pyproject_toml = toml.load(str(project_path / "pyproject.toml"))
         return str(pyproject_toml["project"]["version"])
 
 
-def configure_logging(level: Optional[int] = None) -> None:
-    """
-    Configure the application's logging.
-
-    Args:
-        level: The logging level to use. If None, uses DEBUG.
-    """
-    if level is None:
-        level = logging.DEBUG
-
-    # Configure root logger
-    logging.basicConfig(
-        level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    logging.debug(f"Logging configured with level: {logging.getLevelName(level)}")
-
-
 def log_context(ctx: click.Context) -> None:
-    log = logging.getLogger("ripper:cli")
     if ctx.obj is not None and "DEBUG_CLI" in ctx.obj and ctx.obj["DEBUG_CLI"]:
         if ctx.parent is not None:
             log_context(ctx.parent)
-        log.debug(f"======= {ctx.command.name} =======")
-        log.debug(f"ctx.params: {ctx.params}")
-        log.debug(f"ctx.args: {ctx.args}")
-        log.debug(f"ctx.invoked_subcommand: {ctx.invoked_subcommand}")
-        log.debug(f"ctx.parent: {ctx.parent}")
-        log.debug(f"ctx.command_path: {ctx.command_path}")
-        log.debug(f"ctx.obj: {ctx.obj}")
+        logger.debug(f"======= {ctx.command.name} =======")
+        logger.debug(f"ctx.params: {ctx.params}")
+        logger.debug(f"ctx.args: {ctx.args}")
+        logger.debug(f"ctx.invoked_subcommand: {ctx.invoked_subcommand}")
+        logger.debug(f"ctx.parent: {ctx.parent}")
+        logger.debug(f"ctx.command_path: {ctx.command_path}")
+        logger.debug(f"ctx.obj: {ctx.obj}")
 
 
 @click.group(invoke_without_command=True)
@@ -85,19 +100,29 @@ def log_context(ctx: click.Context) -> None:
     is_flag=True,
     help="Print verbose debug messages about CLI execution",
 )
-def cli(ctx: click.Context, clear_credential_cache: bool = False, debug_cli: bool = False) -> int:
+@click.option(
+    "--log-level",
+    "-l",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
+    default="DEBUG",
+    show_default=True,
+    help="Set the logging level for stdout and file logs.",
+)
+def cli(
+    ctx: click.Context,
+    log_level: str,
+    clear_credential_cache: bool = False,
+    debug_cli: bool = False,
+) -> int:
     """Ripper application command line interface."""
     # Always executed first, even for subcommands
-    configure_logging()
-
+    configure_logging(log_level)
     ctx.ensure_object(dict)
     ctx.obj["VERSION"] = get_version()
-    ctx.obj["CLI_LOGGER"] = logging.getLogger("ripper:cli")
     ctx.obj["DEBUG_CLI"] = debug_cli
 
     # Only execute if this is the main command (no subcommand)
     if ctx.invoked_subcommand is None:
-
         # Initialize the database
         Db().open()
 
@@ -133,27 +158,24 @@ def db(ctx: click.Context, file_path: Path | None) -> None:
         ctx.obj["DB_PATH"] = ripper.ripperlib.database.default_db_path()
     else:
         ctx.obj["DB_PATH"] = file_path
-    ctx.obj["CLI_LOGGER"] = logging.getLogger("ripper:cli:db")
 
 
 @db.command()
 @click.pass_context
 def create(ctx: click.Context) -> None:
     """Create database tables."""
-    log = ctx.obj["CLI_LOGGER"]
     log_context(ctx)
-
     db_path: Path = ctx.obj["DB_PATH"]
-    log.debug(f"db absolute path: {db_path.absolute()}")
+    logger.debug(f"db absolute path: {db_path.absolute()}")
 
     if not db_path.exists():
         try:
-            log.debug(f"Creating database at {db_path}")
+            logger.debug(f"Creating database at {db_path}")
             Db(db_file_path=ctx.obj["DB_PATH"]).open()
         finally:
             Db().close()
     else:
-        log.debug(f"Database at {db_path} already exists, skipping create")
+        logger.debug(f"Database at {db_path} already exists, skipping create")
 
 
 @db.command()
@@ -161,14 +183,12 @@ def create(ctx: click.Context) -> None:
 def clean(ctx: click.Context) -> None:
     """Create database tables."""
     log_context(ctx)
-    log = ctx.obj["CLI_LOGGER"]
-
     db_path: Path = ctx.obj["DB_PATH"]
     if db_path.exists():
-        log.debug(f"Cleaning database at {db_path}")
+        logger.debug(f"Cleaning database at {db_path}")
         db_path.unlink()
     else:
-        log.debug(f"Database at {db_path} does not exist, skipping clean")
+        logger.debug(f"Database at {db_path} does not exist, skipping clean")
 
 
 if __name__ == "__main__":

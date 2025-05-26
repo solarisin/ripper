@@ -1,15 +1,11 @@
 import json
-import logging
 
 from beartype.typing import Any, Dict, List, Optional, cast
 from googleapiclient.errors import HttpError
+from loguru import logger
 
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import DriveService, FileInfo, SheetData, SheetProperties, SheetsService
-
-# Configure module logger
-log = logging.getLogger("ripper:sheets_backend")
-
 
 DRIVE_FILE_FIELDS: frozenset[str] = frozenset(
     [
@@ -58,11 +54,11 @@ def list_spreadsheets(
             if page_token is None:
                 break
 
-        log.debug(f"Found {len(files)} sheets with thumbnail information")
+        logger.debug(f"Found {len(files)} sheets with thumbnail information")
         return files
 
     except HttpError as error:
-        log.error(f"An error occurred fetching sheets list: {error}")
+        logger.error(f"An error occurred fetching sheets list: {error}")
         return None
 
 
@@ -77,7 +73,7 @@ def read_spreadsheet_metadata(service: SheetsService, spreadsheet_id: str) -> Op
         return SheetProperties.from_api_result(result)
 
     except HttpError as error:
-        log.error(f"An error occurred reading spreadsheet metadata: {error}")
+        logger.error(f"An error occurred reading spreadsheet metadata: {error}")
         return None
 
 
@@ -105,15 +101,15 @@ def read_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, rang
 
         # If the spreadsheet is empty, log an info message and return None
         if not values:
-            log.info("No data found in spreadsheet.")
+            logger.info("No data found in spreadsheet.")
             return None
 
         # Log the number of rows found at debug level
-        log.debug(f"Found {len(values)} rows of data in spreadsheet")
+        logger.debug(f"Found {len(values)} rows of data in spreadsheet")
         return values
 
     except HttpError as error:
-        log.error(f"An error occurred reading spreadsheet data: {error}")
+        logger.error(f"An error occurred reading spreadsheet data: {error}")
         return None
 
 
@@ -128,11 +124,11 @@ def fetch_and_store_spreadsheets(drive_service: DriveService, db: Db) -> Optiona
     Returns:
         A list of dictionaries containing information about the fetched sheets, or None if an error occurred.
     """
-    log.debug("Fetching and storing spreadsheets from Google Drive.")
+    logger.debug("Fetching and storing spreadsheets from Google Drive.")
     sheets_list = list_spreadsheets(drive_service)
 
     if not sheets_list:
-        log.error("Failed to fetch sheets list.")
+        logger.error("Failed to fetch sheets list.")
         return None
 
     for sheet_info in sheets_list:
@@ -150,5 +146,5 @@ def fetch_and_store_spreadsheets(drive_service: DriveService, db: Db) -> Optiona
             }
             db.store_spreadsheet_info(spreadsheet_id, info_to_store)
 
-    log.debug(f"Successfully fetched and stored {len(sheets_list)} spreadsheets.")
+    logger.debug(f"Successfully fetched and stored {len(sheets_list)} spreadsheets.")
     return sheets_list
