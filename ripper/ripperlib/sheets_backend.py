@@ -132,13 +132,12 @@ def download_thumbnail(url: str) -> Optional[bytes]:
         return None
 
 
-def fetch_and_store_spreadsheets(drive_service: DriveService, db: Db) -> Optional[List[FileInfo]]:
+def fetch_and_store_spreadsheets(drive_service: DriveService) -> Optional[List[FileInfo]]:
     """
     Fetches the list of spreadsheets from Google Drive and stores relevant information in the database.
 
     Args:
         drive_service: Authenticated Google Drive API service.
-        db: An instance of the database class.
 
     Returns:
         A list of dictionaries containing information about the fetched sheets, or None if an error occurred.
@@ -164,7 +163,7 @@ def fetch_and_store_spreadsheets(drive_service: DriveService, db: Db) -> Optiona
                 "shared": sheet_info.get("shared"),
                 "thumbnailLink": sheet_info.get("thumbnailLink"),
             }
-            db.store_spreadsheet_info(spreadsheet_id, info_to_store)
+            Db().store_spreadsheet_info(spreadsheet_id, info_to_store)
             logger.debug(f"Stored info for spreadsheet {spreadsheet_id}")
 
     logger.debug(f"Successfully fetched and stored {len(sheets_list)} spreadsheets.")

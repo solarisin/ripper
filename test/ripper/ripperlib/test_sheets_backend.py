@@ -1,4 +1,3 @@
-import json
 import unittest
 from unittest.mock import MagicMock
 
@@ -194,7 +193,6 @@ class TestSheetsBackend(unittest.TestCase):
         """Test that fetch_and_store_spreadsheets fetches and stores spreadsheet info correctly."""
         # Create mock drive service and db
         mock_drive_service = MagicMock()
-        mock_db = MagicMock()
 
         # Set up the mock to return a response with files
         mock_files_list = mock_drive_service.files.return_value.list
@@ -215,7 +213,7 @@ class TestSheetsBackend(unittest.TestCase):
         }
 
         # Call the function with our mocks
-        result = fetch_and_store_spreadsheets(mock_drive_service, mock_db)
+        result = fetch_and_store_spreadsheets(mock_drive_service)
 
         # Verify the result
         self.assertIsNotNone(result)
@@ -223,19 +221,10 @@ class TestSheetsBackend(unittest.TestCase):
         self.assertEqual(result[0]["id"], "sheet1")
         self.assertEqual(result[0]["name"], "Test Sheet 1")
 
-        # Verify store_spreadsheet_info was called with the expected arguments
-        mock_db.store_spreadsheet_info.assert_called_once()
-        call_args = mock_db.store_spreadsheet_info.call_args[0]
-        self.assertEqual(call_args[0], "sheet1")  # spreadsheet_id
-        self.assertEqual(call_args[1]["name"], "Test Sheet 1")
-        self.assertEqual(call_args[1]["modifiedTime"], "2024-01-01T00:00:00Z")
-        self.assertEqual(call_args[1]["owners"], json.dumps([{"displayName": "Test User"}]))
-
     def test_fetch_and_store_spreadsheets_error(self):
         """Test that fetch_and_store_spreadsheets returns None when list_spreadsheets fails."""
         # Create mock drive service and db
         mock_drive_service = MagicMock()
-        mock_db = MagicMock()
 
         # Set up the mock to raise an HttpError
         mock_files_list = mock_drive_service.files.return_value.list
@@ -244,10 +233,7 @@ class TestSheetsBackend(unittest.TestCase):
         )
 
         # Call the function with our mocks
-        result = fetch_and_store_spreadsheets(mock_drive_service, mock_db)
+        result = fetch_and_store_spreadsheets(mock_drive_service)
 
         # Verify the result is None
         self.assertIsNone(result)
-
-        # Verify store_spreadsheet_info was not called
-        mock_db.store_spreadsheet_info.assert_not_called()

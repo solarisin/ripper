@@ -293,13 +293,12 @@ class SheetsSelectionDialog(QDialog):
     # Signal emitted when the user chooses a sheet
     sheet_selected = Signal(dict)
 
-    def __init__(self, parent: Optional[QWidget] = None, test_db_path: Optional[str] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         """
         Initialize the sheets selection dialog.
 
         Args:
             parent: Parent widget
-            test_db_path: Optional database path for testing
         """
         super().__init__(parent)
         self.setWindowTitle("Select Google Sheet")
@@ -310,7 +309,6 @@ class SheetsSelectionDialog(QDialog):
         self.selected_spreadsheet: Optional[Dict[str, Any]] = None
         self.spreadsheets_list: List[Dict[str, Any]] = []
         self.all_sheet_properties: Dict[str, List[SheetProperties]] = {}
-        self.test_db_path = test_db_path
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -409,8 +407,7 @@ class SheetsSelectionDialog(QDialog):
                 return
 
             # Fetch and store sheets using the backend function
-            db = Db(self.test_db_path) if self.test_db_path else Db()
-            self.spreadsheets_list = fetch_and_store_spreadsheets(drive_service, db) or []
+            self.spreadsheets_list = fetch_and_store_spreadsheets(drive_service) or []
             if not self.spreadsheets_list:
                 self.show_error("Failed to fetch and store sheets list. Please try again.")
                 return
