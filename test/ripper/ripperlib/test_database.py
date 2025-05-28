@@ -1,10 +1,12 @@
+import json
 import os
 import sqlite3
 import tempfile
 import unittest
-from typing import Any, Dict, cast
+from typing import Any, Dict
 
-from ripper.ripperlib.database import Db
+from ripper.ripperlib.database import RipperDb
+from ripper.ripperlib.defs import SheetProperties, SpreadsheetProperties
 
 
 class TestDatabaseIntegration(unittest.TestCase):
@@ -14,7 +16,7 @@ class TestDatabaseIntegration(unittest.TestCase):
         self.db_path = self.temp_db.name
         self.temp_db.close()
         # Use Db with the temporary path
-        self.db = Db(self.db_path)
+        self.db = RipperDb(self.db_path)
         # Ensure tables are created
         self.db.create_tables()
 
@@ -25,6 +27,10 @@ class TestDatabaseIntegration(unittest.TestCase):
 
     def test_create_table_idempotent(self) -> None:
         self.db.close()
+        self.db.open()
+
+        self.db.create_tables()
+
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -45,12 +51,26 @@ class TestDatabaseIntegration(unittest.TestCase):
 
         # Test query with parameters
         test_id = "test_id"
-        self.db.execute_query("INSERT INTO spreadsheets (spreadsheet_id) VALUES (?)", (test_id,))
+        self.db.store_spreadsheet_properties(
+            test_id,
+            SpreadsheetProperties(
+                {
+                    "id": test_id,
+                    "name": "Test",
+                    "modifiedTime": "2024-01-01",
+                    "createdTime": "2024-01-01",
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
         cursor = self.db.execute_query("SELECT spreadsheet_id FROM spreadsheets WHERE spreadsheet_id = ?", (test_id,))
         self.assertIsNotNone(cursor)
-        result = cursor.fetchone() if cursor else None
-        self.assertIsNotNone(result)
-        self.assertEqual(result[0], test_id)
+        fetched_result = cursor.fetchone() if cursor else None
+        self.assertIsNotNone(fetched_result)
+        self.assertEqual(fetched_result[0], test_id)
 
         # Test failed query (syntax error)
         cursor = self.db.execute_query("SELECT * FROM non_existent_table")
@@ -60,205 +80,194 @@ class TestDatabaseIntegration(unittest.TestCase):
         """Test retrieving sheet metadata from the database."""
         # Setup: Store sheet metadata
         spreadsheet_id = "test_spreadsheet_metadata"
-        modified_time = "2024-01-01T00:00:00Z"
+        self.db.store_spreadsheet_properties(
+            spreadsheet_id,
+            SpreadsheetProperties(
+                {
+                    "id": spreadsheet_id,
+                    "name": "Metadata Test",
+                    "modifiedTime": "2024-01-01T00:00:00Z",
+                    "createdTime": "2024-01-01T00:00:00Z",
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
         metadata: Dict[str, Any] = {
             "sheets": [
                 {
-                    "sheetId": "sheet1",
-                    "index": 0,
-                    "title": "Sheet 1",
-                    "sheetType": "GRID",
-                    "gridProperties": {"rowCount": 100, "columnCount": 26},
+                    "properties": {
+                        "sheetId": 1,
+                        "index": 0,
+                        "title": "Sheet 1",
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 100, "columnCount": 26},
+                    }
                 }
             ]
         }
-        self.db.store_sheet_metadata(spreadsheet_id, metadata, modified_time)
+        self.db.store_sheet_properties(spreadsheet_id, SheetProperties.from_api_result(metadata))
 
-        # Test: Retrieve with matching modified time
-        retrieved_metadata = self.db.get_sheet_metadata(spreadsheet_id, modified_time)
+        # Test: Retrieve with matching modified time (modified time is not used for sheet properties retrieval)
+        retrieved_metadata = self.db.get_sheet_properties_of_spreadsheet(spreadsheet_id)
         self.assertIsNotNone(retrieved_metadata)
-        self.assertIn("sheets", retrieved_metadata)
-        sheets = cast(Dict[str, Any], retrieved_metadata)["sheets"]
-        self.assertEqual(len(sheets), 1)
-        sheet = sheets[0]
-        self.assertEqual(sheet["sheetId"], "sheet1")
-        self.assertEqual(sheet["title"], "Sheet 1")
-        self.assertEqual(sheet["gridProperties"]["rowCount"], 100)
-
-        # Test: Retrieve with non-matching modified time (should return None)
-        different_time = "2024-01-02T00:00:00Z"
-        retrieved_metadata = self.db.get_sheet_metadata(spreadsheet_id, different_time)
-        self.assertIsNone(retrieved_metadata)
+        self.assertEqual(len(retrieved_metadata), 1)
+        sheet = retrieved_metadata[0]
+        self.assertEqual(sheet.id, "1")  # Note: sheetId is an integer in the API result, stored as TEXT
+        self.assertEqual(sheet.title, "Sheet 1")
+        self.assertEqual(sheet.grid.row_count, 100)
 
         # Test: Retrieve non-existent spreadsheet
-        retrieved_metadata = self.db.get_sheet_metadata("non_existent_id", modified_time)
-        self.assertIsNone(retrieved_metadata)
+        retrieved_metadata = self.db.get_sheet_properties_of_spreadsheet("non_existent_id")
+        self.assertEqual(len(retrieved_metadata), 0)
 
     def test_get_thumbnail_not_found(self) -> None:
         # Test retrieving thumbnail for a spreadsheet that exists but has no thumbnail data
         sid_no_thumbnail = "spreadsheet_no_thumb"
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        try:
-            c.execute("INSERT OR IGNORE INTO spreadsheets (spreadsheet_id) VALUES (?)", (sid_no_thumbnail,))
-            conn.commit()
-        finally:
-            conn.close()
+        self.db.store_spreadsheet_properties(
+            sid_no_thumbnail,
+            SpreadsheetProperties(
+                {
+                    "id": sid_no_thumbnail,
+                    "name": "No Thumb",
+                    "modifiedTime": "2024-01-01",
+                    "createdTime": "2024-01-01",
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
 
         retrieved_data = self.db.get_spreadsheet_thumbnail(sid_no_thumbnail)
-        self.assertIsNotNone(retrieved_data)
-        self.assertIsNone(retrieved_data["thumbnail"])
-        self.assertIsNone(retrieved_data["modifiedTime"])
+        self.assertIsNone(retrieved_data)
 
     def test_store_and_get_thumbnail(self) -> None:
         sid = "sheet1"
         data = b"imgdata"
-        mod = "2024-01-01"
-        result = self.db.store_spreadsheet_thumbnail(sid, data, mod)
-        self.assertTrue(result)
-        # After storing thumbnail, verify the data and modified time in the spreadsheets table
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        try:
-            c.execute("SELECT thumbnail, modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
-            stored_data = c.fetchone()
-        finally:
-            conn.close()
+        self.db.store_spreadsheet_properties(
+            sid,
+            SpreadsheetProperties(
+                {
+                    "id": sid,
+                    "name": "Thumb Test",
+                    "modifiedTime": "2024-01-01",
+                    "createdTime": "2024-01-01",
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
 
-        self.assertIsNotNone(stored_data)
-        self.assertEqual(stored_data[0], data)
-        self.assertEqual(stored_data[1], mod)
+        self.db.store_spreadsheet_thumbnail(sid, data)
+
+        retrieved_thumbnail = self.db.get_spreadsheet_thumbnail(sid)
+        self.assertEqual(retrieved_thumbnail, data)
 
         new_data = b"newimg"
-        # Use a new modified time, but expect the one stored during initial insert to persist
-        new_mod = "2024-01-02"
-        result2 = self.db.store_spreadsheet_thumbnail(sid, new_data, new_mod)
-        self.assertTrue(result2)
-        # After updating thumbnail, verify the new data and the original modified time
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        try:
-            c.execute("SELECT thumbnail, modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?", (sid,))
-            updated_data = c.fetchone()
-        finally:
-            conn.close()
+        self.db.store_spreadsheet_thumbnail(sid, new_data)
 
-        self.assertIsNotNone(updated_data)
-        self.assertEqual(updated_data[0], new_data)  # Thumbnail should be updated
-        self.assertEqual(updated_data[1], mod)  # Modified time should remain the initial one
+        updated_thumbnail = self.db.get_spreadsheet_thumbnail(sid)
+        self.assertEqual(updated_thumbnail, new_data)  # Thumbnail should be updated
 
     def test_store_sheet_metadata_updates_existing_sheets(self) -> None:
-        # Test that store_sheet_metadata updates existing sheets instead of deleting them
         spreadsheet_id = "test_spreadsheet"
         modified_time = "2024-01-01T00:00:00Z"
 
-        # Initial metadata with two sheets
+        self.db.store_spreadsheet_properties(
+            spreadsheet_id,
+            SpreadsheetProperties(
+                {
+                    "id": spreadsheet_id,
+                    "name": "Update Test",
+                    "modifiedTime": modified_time,
+                    "createdTime": modified_time,
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
+
         initial_metadata: Dict[str, Any] = {
             "sheets": [
                 {
-                    "sheetId": "sheet1",
-                    "index": 0,
-                    "title": "Sheet 1",
-                    "sheetType": "GRID",
-                    "gridProperties": {"rowCount": 100, "columnCount": 26},
+                    "properties": {
+                        "sheetId": 1,
+                        "index": 0,
+                        "title": "Sheet 1",
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 100, "columnCount": 26},
+                    }
                 },
                 {
-                    "sheetId": "sheet2",
-                    "index": 1,
-                    "title": "Sheet 2",
-                    "sheetType": "GRID",
-                    "gridProperties": {"rowCount": 200, "columnCount": 52},
+                    "properties": {
+                        "sheetId": 2,
+                        "index": 1,
+                        "title": "Sheet 2",
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 200, "columnCount": 52},
+                    }
                 },
             ]
         }
 
-        # Store initial metadata
-        result = self.db.store_sheet_metadata(spreadsheet_id, initial_metadata, modified_time)
-        self.assertTrue(result)
+        self.db.store_sheet_properties(spreadsheet_id, SheetProperties.from_api_result(initial_metadata))
 
-        # Verify initial metadata was stored correctly
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        try:
-            # Check sheets table
-            query = 'SELECT sheetId, title FROM sheets WHERE spreadsheet_id = ? ORDER BY "index"'
-            c.execute(query, (spreadsheet_id,))
-            sheets = c.fetchall()
-            self.assertEqual(len(sheets), 2)
-            self.assertEqual(sheets[0][0], "sheet1")
-            self.assertEqual(sheets[0][1], "Sheet 1")
-            self.assertEqual(sheets[1][0], "sheet2")
-            self.assertEqual(sheets[1][1], "Sheet 2")
+        retrieved_sheets_initial = self.db.get_sheet_properties_of_spreadsheet(spreadsheet_id)
+        self.assertEqual(len(retrieved_sheets_initial), 2)
+        self.assertEqual(retrieved_sheets_initial[0].title, "Sheet 1")
+        self.assertEqual(retrieved_sheets_initial[1].title, "Sheet 2")
 
-            # Check grid_properties table
-            c.execute("SELECT sheetId, rowCount, columnCount FROM grid_properties ORDER BY sheetId")
-            grid_props = c.fetchall()
-            self.assertEqual(len(grid_props), 2)
-            self.assertEqual(grid_props[0][0], "sheet1")
-            self.assertEqual(grid_props[0][1], 100)
-            self.assertEqual(grid_props[0][2], 26)
-            self.assertEqual(grid_props[1][0], "sheet2")
-            self.assertEqual(grid_props[1][1], 200)
-            self.assertEqual(grid_props[1][2], 52)
-        finally:
-            conn.close()
-
-        # Updated metadata with modified values for sheet1 and a new sheet3
         updated_metadata: Dict[str, Any] = {
             "sheets": [
                 {
-                    "sheetId": "sheet1",
-                    "index": 0,
-                    "title": "Updated Sheet 1",  # Title changed
-                    "sheetType": "GRID",
-                    "gridProperties": {"rowCount": 150, "columnCount": 26},  # Row count changed
+                    "properties": {
+                        "sheetId": 1,
+                        "index": 0,
+                        "title": "Sheet 1 Updated",
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 150, "columnCount": 30},
+                    }
                 },
                 {
-                    "sheetId": "sheet3",  # New sheet
-                    "index": 2,
-                    "title": "Sheet 3",
-                    "sheetType": "GRID",
-                    "gridProperties": {"rowCount": 300, "columnCount": 78},
+                    "properties": {
+                        "sheetId": 3,
+                        "index": 2,
+                        "title": "Sheet 3",
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 50, "columnCount": 10},
+                    }
                 },
             ]
         }
 
-        # Update with new metadata
-        new_modified_time = "2024-01-02T00:00:00Z"
-        result = self.db.store_sheet_metadata(spreadsheet_id, updated_metadata, new_modified_time)
-        self.assertTrue(result)
+        self.db.store_sheet_properties(spreadsheet_id, SheetProperties.from_api_result(updated_metadata))
 
-        # Verify sheets were updated, not deleted
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        try:
-            # Check sheets table - should have 2 sheets now (sheet1 updated, sheet3 new)
-            c.execute("SELECT sheetId, title FROM sheets WHERE spreadsheet_id = ? ORDER BY sheetId", (spreadsheet_id,))
-            sheets = c.fetchall()
-            self.assertEqual(len(sheets), 2)
+        retrieved_sheets_updated = self.db.get_sheet_properties_of_spreadsheet(spreadsheet_id)
+        self.assertEqual(len(retrieved_sheets_updated), 2)
 
-            # Check sheet1 was updated
-            c.execute("SELECT title FROM sheets WHERE sheetId = ?", ("sheet1",))
-            sheet1 = c.fetchone()
-            self.assertEqual(sheet1[0], "Updated Sheet 1")
+        sheet1_updated = next((s for s in retrieved_sheets_updated if s.id == "1"), None)
+        sheet3_new = next((s for s in retrieved_sheets_updated if s.id == "3"), None)
+        sheet2_old = next((s for s in retrieved_sheets_updated if s.id == "2"), None)
 
-            # Check sheet3 was added
-            c.execute("SELECT title FROM sheets WHERE sheetId = ?", ("sheet3",))
-            sheet3 = c.fetchone()
-            self.assertEqual(sheet3[0], "Sheet 3")
+        self.assertIsNotNone(sheet1_updated)
+        self.assertEqual(sheet1_updated.title, "Sheet 1 Updated")
+        self.assertEqual(sheet1_updated.grid.row_count, 150)
+        self.assertEqual(sheet1_updated.grid.column_count, 30)
 
-            # Check grid_properties were updated
-            c.execute("SELECT rowCount FROM grid_properties WHERE sheetId = ?", ("sheet1",))
-            grid_prop1 = c.fetchone()
-            self.assertEqual(grid_prop1[0], 150)  # Updated row count
+        self.assertIsNotNone(sheet3_new)
+        self.assertEqual(sheet3_new.title, "Sheet 3")
+        self.assertEqual(sheet3_new.grid.row_count, 50)
+        self.assertEqual(sheet3_new.grid.column_count, 10)
 
-            # Check grid_properties for sheet3 were added
-            c.execute("SELECT rowCount, columnCount FROM grid_properties WHERE sheetId = ?", ("sheet3",))
-            grid_prop3 = c.fetchone()
-            self.assertEqual(grid_prop3[0], 300)
-            self.assertEqual(grid_prop3[1], 78)
-        finally:
-            conn.close()
+        self.assertIsNone(sheet2_old)  # Sheet 2 should be deleted
 
     def test_store_spreadsheet_info(self) -> None:
         """Test storing and updating spreadsheet information."""
@@ -266,134 +275,146 @@ class TestDatabaseIntegration(unittest.TestCase):
 
         # Test: Store initial info
         initial_info: Dict[str, Any] = {
+            "id": spreadsheet_id,
             "name": "Test Spreadsheet",
             "modifiedTime": "2024-01-01T00:00:00Z",
             "webViewLink": "https://example.com/sheet1",
             "createdTime": "2023-12-01T00:00:00Z",
-            "owners": '["owner1"]',
+            "owners": [{"displayName": "owner1"}],
             "size": 1024,
-            "shared": 1,
+            "shared": True,
         }
-        result = self.db.store_spreadsheet_info(spreadsheet_id, initial_info)
+        result = self.db.store_spreadsheet_properties(spreadsheet_id, SpreadsheetProperties(initial_info))
         self.assertTrue(result)
 
         # Verify stored info
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         try:
-            c.execute("SELECT name, modifiedTime, size FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
+            c.execute(
+                "SELECT name, modifiedTime, webViewLink, createdTime, owners, size, shared "
+                "FROM spreadsheets WHERE spreadsheet_id = ?",
+                (spreadsheet_id,),
+            )
             stored_info = c.fetchone()
-            self.assertIsNotNone(stored_info)
-            self.assertEqual(stored_info[0], "Test Spreadsheet")
-            self.assertEqual(stored_info[1], "2024-01-01T00:00:00Z")
-            self.assertEqual(stored_info[2], 1024)
         finally:
             conn.close()
 
+        self.assertIsNotNone(stored_info)
+        self.assertEqual(stored_info[0], "Test Spreadsheet")
+        self.assertEqual(stored_info[1], "2024-01-01T00:00:00Z")
+        self.assertEqual(stored_info[2], "https://example.com/sheet1")
+        self.assertEqual(stored_info[3], "2023-12-01T00:00:00Z")
+        stored_owners = json.loads(stored_info[4])
+        self.assertEqual(stored_owners, initial_info["owners"])
+        self.assertEqual(stored_info[5], 1024)
+        self.assertEqual(bool(stored_info[6]), True)
+
         # Test: Update partial info
-        updated_info: Dict[str, Any] = {"name": "Updated Spreadsheet", "size": 2048}
-        result = self.db.store_spreadsheet_info(spreadsheet_id, updated_info)
+        updated_info: Dict[str, Any] = {
+            "id": spreadsheet_id,
+            "name": "Updated Spreadsheet",
+            "size": 2048,
+            "modifiedTime": "2024-01-01T00:00:00Z",
+        }
+        existing_props_dict = {
+            "id": spreadsheet_id,
+            "name": "Test Spreadsheet",
+            "modifiedTime": "2024-01-01T00:00:00Z",
+            "webViewLink": "https://example.com/sheet1",
+            "createdTime": "2023-12-01T00:00:00Z",
+            "owners": [{"displayName": "owner1"}],
+            "size": 1024,
+            "shared": True,
+            "thumbnailLink": None,  # Assume no thumbnail initially
+        }
+        existing_props = SpreadsheetProperties(existing_props_dict)
+        existing_props.name = updated_info["name"]
+        existing_props.size = updated_info["size"]
+        result = self.db.store_spreadsheet_properties(spreadsheet_id, existing_props)
         self.assertTrue(result)
 
-        # Verify updated info (only specified fields should change)
+        # Verify updated info
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         try:
             c.execute("SELECT name, modifiedTime, size FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
             updated_stored_info = c.fetchone()
-            self.assertIsNotNone(updated_stored_info)
-            self.assertEqual(updated_stored_info[0], "Updated Spreadsheet")  # Updated
-            self.assertEqual(updated_stored_info[1], "2024-01-01T00:00:00Z")  # Unchanged
-            self.assertEqual(updated_stored_info[2], 2048)  # Updated
         finally:
             conn.close()
 
+        self.assertIsNotNone(updated_stored_info)
+        self.assertEqual(updated_stored_info[0], "Updated Spreadsheet")
+        self.assertEqual(
+            updated_stored_info[1], "2024-01-01T00:00:00Z"
+        )  # modifiedTime should not change if not provided in update
+        self.assertEqual(updated_stored_info[2], 2048)
+
     def test_store_spreadsheet_info_invalidation_on_modified_time_change(self) -> None:
         """Test that sheets, grid_properties, and thumbnail are invalidated when modifiedTime changes."""
+
         spreadsheet_id = "invalidate_test"
         initial_info: Dict[str, Any] = {
+            "id": spreadsheet_id,
             "name": "Invalidate Test",
             "modifiedTime": "2024-01-01T00:00:00Z",
             "webViewLink": "https://example.com/sheet1",
             "createdTime": "2023-12-01T00:00:00Z",
-            "owners": '["owner1"]',
+            "owners": [{"displayName": "owner1"}],
             "size": 1024,
-            "shared": 1,
+            "shared": True,
+            "thumbnailLink": "https://example.com/thumbnail.png",  # Include thumbnail link initially
         }
         # Store initial info
-        result = self.db.store_spreadsheet_info(spreadsheet_id, initial_info)
+        result = self.db.store_spreadsheet_properties(spreadsheet_id, SpreadsheetProperties(initial_info))
         self.assertTrue(result)
 
-        # Store sheet metadata
-        metadata: Dict[str, Any] = {
+        # Add some sheets and a thumbnail
+        sheets_metadata: Dict[str, Any] = {
             "sheets": [
                 {
-                    "sheetId": "sheet1",
-                    "index": 0,
-                    "title": "Sheet 1",
-                    "sheetType": "GRID",
-                    "gridProperties": {"rowCount": 100, "columnCount": 26},
+                    "properties": {
+                        "sheetId": 10,
+                        "index": 0,
+                        "title": "Sheet 10",
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 50, "columnCount": 5},
+                    }
                 }
             ]
         }
-        result = self.db.store_sheet_metadata(spreadsheet_id, metadata, initial_info["modifiedTime"])
-        self.assertTrue(result)
+        self.db.store_sheet_properties(spreadsheet_id, SheetProperties.from_api_result(sheets_metadata))
 
         # Store a thumbnail
         thumbnail_data = b"fakeimagebytes"
-        result = self.db.store_spreadsheet_thumbnail(spreadsheet_id, thumbnail_data, initial_info["modifiedTime"])
-        self.assertTrue(result)
+        self.db.store_spreadsheet_thumbnail(spreadsheet_id, thumbnail_data)
 
-        # Confirm all are present
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        try:
-            # Enable foreign key constraints
-            c.execute("PRAGMA foreign_keys = ON")
-
-            # Check spreadsheet exists
-            c.execute("SELECT modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            self.assertEqual(c.fetchone()[0], initial_info["modifiedTime"])
-
-            # Check sheet exists
-            c.execute("SELECT COUNT(*) FROM sheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            self.assertEqual(c.fetchone()[0], 1)
-
-            # Check grid properties exist
-            c.execute("SELECT COUNT(*) FROM grid_properties")
-            self.assertGreaterEqual(c.fetchone()[0], 1)
-
-            # Check thumbnail exists
-            c.execute("SELECT thumbnail FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            self.assertIsNotNone(c.fetchone()[0])
-        finally:
-            conn.close()
+        # Verify sheets and thumbnail were stored
+        retrieved_sheets_initial = self.db.get_sheet_properties_of_spreadsheet(spreadsheet_id)
+        self.assertEqual(len(retrieved_sheets_initial), 1)
+        retrieved_thumbnail_initial = self.db.get_spreadsheet_thumbnail(spreadsheet_id)
+        self.assertEqual(retrieved_thumbnail_initial, thumbnail_data)
 
         # Update with new modifiedTime
-        updated_info: Dict[str, Any] = {"name": "Invalidate Test Updated", "modifiedTime": "2024-02-01T00:00:00Z"}
-        result = self.db.store_spreadsheet_info(spreadsheet_id, updated_info)
+        updated_info: Dict[str, Any] = {
+            "id": spreadsheet_id,
+            "name": "Invalidate Test Updated",
+            "modifiedTime": "2024-02-01T00:00:00Z",  # Modified time changes
+            "webViewLink": "https://example.com/sheet1",
+            "createdTime": "2023-12-01T00:00:00Z",
+            "owners": [{"displayName": "owner1"}],
+            "size": 1024,
+            "shared": True,
+            "thumbnailLink": "https://example.com/thumbnail.png",  # Keep thumbnail link the same
+        }
+        result = self.db.store_spreadsheet_properties(spreadsheet_id, SpreadsheetProperties(updated_info))
         self.assertTrue(result)
 
-        # Confirm sheets and grid_properties are deleted, and thumbnail is NULL
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        try:
-            # Enable foreign key constraints
-            c.execute("PRAGMA foreign_keys = ON")
-
-            # Check sheets are deleted
-            c.execute("SELECT COUNT(*) FROM sheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            self.assertEqual(c.fetchone()[0], 0)
-
-            # Check grid_properties are deleted
-            c.execute("SELECT COUNT(*) FROM grid_properties")
-            self.assertEqual(c.fetchone()[0], 0)
-
-            # Check thumbnail is NULL
-            c.execute("SELECT thumbnail FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            self.assertIsNone(c.fetchone()[0])
-        finally:
-            conn.close()
+        # Verify sheets and thumbnail are invalidated (deleted)
+        retrieved_sheets_updated = self.db.get_sheet_properties_of_spreadsheet(spreadsheet_id)
+        self.assertEqual(len(retrieved_sheets_updated), 0)
+        retrieved_thumbnail_updated = self.db.get_spreadsheet_thumbnail(spreadsheet_id)
+        self.assertIsNone(retrieved_thumbnail_updated)
 
     def test_store_spreadsheet_info_with_thumbnail_link(self) -> None:
         """Test storing and retrieving spreadsheet info with thumbnailLink."""
@@ -401,11 +422,17 @@ class TestDatabaseIntegration(unittest.TestCase):
 
         # Test: Store initial info with thumbnailLink
         initial_info: Dict[str, Any] = {
+            "id": spreadsheet_id,
             "name": "Test Spreadsheet",
             "modifiedTime": "2024-01-01T00:00:00Z",
             "thumbnailLink": "https://example.com/thumbnail.png",
+            "createdTime": "2024-01-01T00:00:00Z",
+            "webViewLink": "",
+            "owners": [],
+            "size": 0,
+            "shared": False,
         }
-        result = self.db.store_spreadsheet_info(spreadsheet_id, initial_info)
+        result = self.db.store_spreadsheet_properties(spreadsheet_id, SpreadsheetProperties(initial_info))
         self.assertTrue(result)
 
         # Verify stored info
@@ -414,154 +441,40 @@ class TestDatabaseIntegration(unittest.TestCase):
         try:
             c.execute("SELECT name, thumbnailLink FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
             stored_info = c.fetchone()
-            self.assertIsNotNone(stored_info)
-            self.assertEqual(stored_info[0], "Test Spreadsheet")
-            self.assertEqual(stored_info[1], "https://example.com/thumbnail.png")
         finally:
             conn.close()
 
+        self.assertIsNotNone(stored_info)
+        self.assertEqual(stored_info[0], "Test Spreadsheet")
+        self.assertEqual(stored_info[1], "https://example.com/thumbnail.png")
+
         # Test: Update thumbnailLink
-        updated_info: Dict[str, Any] = {"thumbnailLink": "https://example.com/new_thumbnail.png"}
-        result = self.db.store_spreadsheet_info(spreadsheet_id, updated_info)
+        existing_props_dict = {
+            "id": spreadsheet_id,
+            "name": "Test Spreadsheet",  # Keep name the same
+            "modifiedTime": "2024-01-01T00:00:00Z",  # Keep modifiedTime the same
+            "thumbnailLink": "https://example.com/thumbnail.png",  # Existing thumbnailLink
+            "createdTime": "2024-01-01T00:00:00Z",
+            "webViewLink": "",
+            "owners": [],
+            "size": 0,
+            "shared": False,
+        }
+        existing_props = SpreadsheetProperties(existing_props_dict)
+        existing_props.thumbnail_link = "https://example.com/new_thumbnail.png"
+
+        result = self.db.store_spreadsheet_properties(spreadsheet_id, existing_props)
         self.assertTrue(result)
 
-        # Verify updated info
+        # Verify updated thumbnailLink
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         try:
             c.execute("SELECT name, thumbnailLink FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
             updated_stored_info = c.fetchone()
-            self.assertIsNotNone(updated_stored_info)
-            self.assertEqual(updated_stored_info[0], "Test Spreadsheet")  # Unchanged
-            self.assertEqual(updated_stored_info[1], "https://example.com/new_thumbnail.png")  # Updated
         finally:
             conn.close()
 
-
-class TestDatabaseSingleton(unittest.TestCase):
-    """Test cases for the Db singleton class."""
-
-    def setUp(self) -> None:
-        # Create two temporary database paths
-        self.temp_db1 = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        self.db_path1 = self.temp_db1.name
-        self.temp_db1.close()
-
-        self.temp_db2 = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        self.db_path2 = self.temp_db2.name
-        self.temp_db2.close()
-
-        # Reset the Db singleton state
-        Db._instance = None
-        Db._current_path = None
-
-    def tearDown(self) -> None:
-        # Reset the Db singleton state
-        if Db._instance is not None:
-            Db._instance.close()
-            Db._instance = None
-            Db._current_path = None
-
-        # Remove temporary database files
-        try:
-            if os.path.exists(self.db_path1):
-                os.remove(self.db_path1)
-        except PermissionError:
-            pass  # Ignore permission errors during cleanup
-
-        try:
-            if os.path.exists(self.db_path2):
-                os.remove(self.db_path2)
-        except PermissionError:
-            pass  # Ignore permission errors during cleanup
-
-    def test_singleton_instance(self) -> None:
-        """Test that Db maintains a single instance."""
-        db1 = Db(self.db_path1)
-        db2 = Db(self.db_path1)
-        self.assertIs(db1, db2)
-
-    def test_path_switching(self) -> None:
-        """Test that the database path can be switched."""
-        # Create first database and store some data
-        db1 = Db(self.db_path1)
-
-        # Verify tables are created in first database
-        tables1 = db1.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
-        table_names1 = {row[0] for row in tables1.fetchall()} if tables1 else set()
-        self.assertEqual(len(table_names1), 3)
-        self.assertIn("sheets", table_names1)
-        self.assertIn("grid_properties", table_names1)
-        self.assertIn("spreadsheets", table_names1)
-
-        # Store data in first database
-        db1.store_spreadsheet_info("test_id1", {"name": "Test1", "modifiedTime": "2024-01-01"})
-
-        # Create second database with different path
-        db2 = Db(self.db_path2)
-
-        # Verify tables are created in second database
-        tables2 = db2.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
-        table_names2 = {row[0] for row in tables2.fetchall()} if tables2 else set()
-        self.assertEqual(len(table_names2), 3)
-        self.assertIn("sheets", table_names2)
-        self.assertIn("grid_properties", table_names2)
-        self.assertIn("spreadsheets", table_names2)
-
-        # Store data in second database
-        db2.store_spreadsheet_info("test_id2", {"name": "Test2", "modifiedTime": "2024-01-02"})
-
-        # Switch back to first database to verify its data
-        db1 = Db(self.db_path1)
-        db1_data = db1.execute_query("SELECT name FROM spreadsheets WHERE spreadsheet_id = ?", ("test_id1",))
-        result1 = db1_data.fetchone() if db1_data else None
-        self.assertIsNotNone(result1)
-        self.assertEqual(result1[0], "Test1")
-
-        # Switch back to second database to verify its data
-        db2 = Db(self.db_path2)
-        db2_data = db2.execute_query("SELECT name FROM spreadsheets WHERE spreadsheet_id = ?", ("test_id2",))
-        result2 = db2_data.fetchone() if db2_data else None
-        self.assertIsNotNone(result2)
-        self.assertEqual(result2[0], "Test2")
-
-        # Verify data doesn't leak between databases
-        db1 = Db(self.db_path1)
-        db1_data = db1.execute_query("SELECT name FROM spreadsheets WHERE spreadsheet_id = ?", ("test_id2",))
-        result1 = db1_data.fetchone() if db1_data else None
-        self.assertIsNone(result1)
-
-        db2 = Db(self.db_path2)
-        db2_data = db2.execute_query("SELECT name FROM spreadsheets WHERE spreadsheet_id = ?", ("test_id1",))
-        result2 = db2_data.fetchone() if db2_data else None
-        self.assertIsNone(result2)
-
-    def test_connection_switching(self) -> None:
-        """Test that database connections are properly managed when switching paths."""
-        # Create first database
-        db1 = Db(self.db_path1)
-
-        # Store the first connection
-        conn1 = db1._conn
-
-        # Switch to second database
-        db2 = Db(self.db_path2)
-
-        # Verify the connection has changed
-        self.assertIsNot(db1._conn, conn1)
-        self.assertIs(db1._conn, db2._conn)  # Since they're the same instance
-
-        # Verify both databases are usable
-        db1.store_spreadsheet_info("test_id1", {"name": "Test1", "modifiedTime": "2024-01-01"})
-        db2.store_spreadsheet_info("test_id2", {"name": "Test2", "modifiedTime": "2024-01-02"})
-
-        # Verify data was stored in the correct databases
-        db1_data = db1.execute_query("SELECT name FROM spreadsheets WHERE spreadsheet_id = ?", ("test_id1",))
-        result1 = db1_data.fetchone() if db1_data else None
-        self.assertIsNotNone(result1)
-        self.assertEqual(result1[0], "Test1")
-
-        db2_data = db2.execute_query("SELECT name FROM spreadsheets WHERE spreadsheet_id = ?", ("test_id2",))
-        result2 = db2_data.fetchone() if db2_data else None
-        self.assertIsNotNone(result2)
-        self.assertEqual(result2[0], "Test2")
+        self.assertIsNotNone(updated_stored_info)
+        self.assertEqual(updated_stored_info[0], "Test Spreadsheet")
+        self.assertEqual(updated_stored_info[1], "https://example.com/new_thumbnail.png")

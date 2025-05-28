@@ -1,15 +1,14 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from googleapiclient.errors import HttpError
 
-from ripper.ripperlib.defs import SheetProperties
+from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProperties
 from ripper.ripperlib.sheets_backend import (
-    DRIVE_FILE_FIELDS,
-    fetch_and_store_spreadsheets,
-    list_spreadsheets,
-    read_data_from_spreadsheet,
-    read_spreadsheet_metadata,
+    fetch_sheets_of_spreadsheet,
+    fetch_spreadsheets,
+    retrieve_sheets_of_spreadsheet,
+    retrieve_spreadsheets,
 )
 
 
@@ -25,215 +24,183 @@ class TestSheetsBackend(unittest.TestCase):
         mock_files_list = mock_service.files.return_value.list
         mock_files_list.return_value.execute.return_value = {
             "files": [
-                {"id": "sheet1", "name": "Test Sheet 1"},
-                {"id": "sheet2", "name": "Test Sheet 2"},
-            ],
-            "nextPageToken": None,
-        }
-
-        # Call the function with our mock
-        result = list_spreadsheets(mock_service)
-
-        # Verify the result
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["id"], "sheet1")
-        self.assertEqual(result[0]["name"], "Test Sheet 1")
-        self.assertEqual(result[1]["id"], "sheet2")
-        self.assertEqual(result[1]["name"], "Test Sheet 2")
-
-        # Verify the mock was called with the expected arguments
-        mock_files_list.assert_called_once_with(
-            q="mimeType='application/vnd.google-apps.spreadsheet'",
-            spaces="drive",
-            fields=f"nextPageToken, files({', '.join(DRIVE_FILE_FIELDS)})",
-            pageToken=None,
-        )
-
-    def test_list_sheets_error(self):
-        """Test that list_sheets returns None when an HttpError occurs."""
-        # Create a mock service
-        mock_service = MagicMock()
-
-        # Set up the mock to raise an HttpError
-        mock_files_list = mock_service.files.return_value.list
-        mock_files_list.return_value.execute.side_effect = HttpError(
-            resp=MagicMock(status=403), content=b"Access Denied"
-        )
-
-        # Call the function with our mock
-        result = list_spreadsheets(mock_service)
-
-        # Verify the result is None
-        self.assertIsNone(result)
-
-    def test_read_data_from_spreadsheet_success(self):
-        """Test that read_data_from_spreadsheet returns the expected data when successful."""
-        # Create a mock service
-        mock_service = MagicMock()
-
-        # Set up the mock to return a response with values
-        mock_sheets = mock_service.spreadsheets.return_value
-        mock_values = mock_sheets.values.return_value.get
-        mock_values.return_value.execute.return_value = {
-            "values": [
-                ["Header1", "Header2"],
-                ["Value1", "Value2"],
-            ]
-        }
-
-        # Call the function with our mock
-        result = read_data_from_spreadsheet(mock_service, "test_id", "Sheet1!A1:B2")
-
-        # Verify the result
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0][0], "Header1")
-        self.assertEqual(result[0][1], "Header2")
-        self.assertEqual(result[1][0], "Value1")
-        self.assertEqual(result[1][1], "Value2")
-
-        # Verify the mock was called with the expected arguments
-        mock_values.assert_called_once_with(spreadsheetId="test_id", range="Sheet1!A1:B2")
-
-    def test_read_data_from_spreadsheet_empty(self):
-        """Test that read_data_from_spreadsheet returns None when no data is found."""
-        # Create a mock service
-        mock_service = MagicMock()
-
-        # Set up the mock to return a response with no values
-        mock_sheets = mock_service.spreadsheets.return_value
-        mock_values = mock_sheets.values.return_value.get
-        mock_values.return_value.execute.return_value = {}
-
-        # Call the function with our mock
-        result = read_data_from_spreadsheet(mock_service, "test_id", "Sheet1!A1:B2")
-
-        # Verify the result is None
-        self.assertIsNone(result)
-
-    def test_read_data_from_spreadsheet_error(self):
-        """Test that read_data_from_spreadsheet returns None when an HttpError occurs."""
-        # Create a mock service
-        mock_service = MagicMock()
-
-        # Set up the mock to raise an HttpError
-        mock_sheets = mock_service.spreadsheets.return_value
-        mock_values = mock_sheets.values.return_value.get
-        mock_values.return_value.execute.side_effect = HttpError(resp=MagicMock(status=404), content=b"Not Found")
-
-        # Call the function with our mock
-        result = read_data_from_spreadsheet(mock_service, "test_id", "Sheet1!A1:B2")
-
-        # Verify the result is None
-        self.assertIsNone(result)
-
-    def test_read_spreadsheet_metadata_success(self):
-        """Test that read_spreadsheet_metadata returns the expected metadata when successful."""
-        # Create a mock service
-        mock_service = MagicMock()
-
-        # Set up the mock to return a response with sheet metadata
-        mock_sheets = mock_service.spreadsheets.return_value
-        mock_get = mock_sheets.get
-        mock_get.return_value.execute.return_value = {
-            "sheets": [
-                {
-                    "properties": {
-                        "sheetId": "sheet1",
-                        "index": 0,
-                        "title": "Sheet 1",
-                        "sheetType": "GRID",
-                        "gridProperties": {"rowCount": 100, "columnCount": 26},
-                    }
-                },
-                {
-                    "properties": {
-                        "sheetId": "sheet2",
-                        "index": 1,
-                        "title": "Sheet 2",
-                        "sheetType": "GRID",
-                        "gridProperties": {"rowCount": 200, "columnCount": 52},
-                    }
-                },
-            ]
-        }
-
-        # Call the function with our mock
-        result = read_spreadsheet_metadata(mock_service, "test_id")
-
-        # Verify the result
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0].id, "sheet1")
-        self.assertEqual(result[0].title, "Sheet 1")
-        self.assertEqual(result[0].grid.row_count, 100)
-        self.assertEqual(result[0].grid.column_count, 26)
-        self.assertEqual(result[1].id, "sheet2")
-        self.assertEqual(result[1].title, "Sheet 2")
-
-        # Verify the mock was called with the expected arguments
-        mock_get.assert_called_once_with(spreadsheetId="test_id", fields=SheetProperties.api_fields())
-
-    def test_read_spreadsheet_metadata_error(self):
-        """Test that read_spreadsheet_metadata returns None when an HttpError occurs."""
-        # Create a mock service
-        mock_service = MagicMock()
-
-        # Set up the mock to raise an HttpError
-        mock_sheets = mock_service.spreadsheets.return_value
-        mock_get = mock_sheets.get
-        mock_get.return_value.execute.side_effect = HttpError(resp=MagicMock(status=404), content=b"Not Found")
-
-        # Call the function with our mock
-        result = read_spreadsheet_metadata(mock_service, "test_id")
-
-        # Verify the result is None
-        self.assertIsNone(result)
-
-    def test_fetch_and_store_spreadsheets_success(self):
-        """Test that fetch_and_store_spreadsheets fetches and stores spreadsheet info correctly."""
-        # Create mock drive service and db
-        mock_drive_service = MagicMock()
-
-        # Set up the mock to return a response with files
-        mock_files_list = mock_drive_service.files.return_value.list
-        mock_files_list.return_value.execute.return_value = {
-            "files": [
                 {
                     "id": "sheet1",
                     "name": "Test Sheet 1",
+                    "createdTime": "2023-12-01T00:00:00Z",
                     "modifiedTime": "2024-01-01T00:00:00Z",
                     "webViewLink": "https://example.com/sheet1",
-                    "createdTime": "2023-12-01T00:00:00Z",
+                    "thumbnailLink": "https://example.com/thumbnail1",
                     "owners": [{"displayName": "Test User"}],
                     "size": 1024,
                     "shared": True,
-                }
+                },
+                {
+                    "id": "sheet2",
+                    "name": "Test Sheet 2",
+                    "createdTime": "2023-12-01T00:00:00Z",
+                    "modifiedTime": "2024-01-01T00:00:00Z",
+                    "webViewLink": "https://example.com/sheet2",
+                    "thumbnailLink": "https://example.com/thumbnail2",
+                    "owners": [{"displayName": "Test User"}],
+                    "size": 2048,
+                    "shared": True,
+                },
             ],
             "nextPageToken": None,
         }
 
-        # Call the function with our mocks
-        result = fetch_and_store_spreadsheets(mock_drive_service)
+        # Call the function
+        spreadsheets = fetch_spreadsheets(mock_service)
 
-        # Verify the result
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["id"], "sheet1")
-        self.assertEqual(result[0]["name"], "Test Sheet 1")
-
-    def test_fetch_and_store_spreadsheets_error(self):
-        """Test that fetch_and_store_spreadsheets returns None when list_spreadsheets fails."""
-        # Create mock drive service and db
-        mock_drive_service = MagicMock()
-
-        # Set up the mock to raise an HttpError
-        mock_files_list = mock_drive_service.files.return_value.list
-        mock_files_list.return_value.execute.side_effect = HttpError(
-            resp=MagicMock(status=403), content=b"Access Denied"
+        # Assertions
+        self.assertEqual(len(spreadsheets), 2)
+        self.assertEqual(spreadsheets[0].id, "sheet1")
+        self.assertEqual(spreadsheets[1].id, "sheet2")
+        mock_service.files.assert_called_once()
+        mock_files_list.assert_called_once_with(
+            q="mimeType='application/vnd.google-apps.spreadsheet'",
+            spaces="drive",
+            fields=f"nextPageToken, {SpreadsheetProperties.api_fields()}",
+            pageToken=None,
         )
 
-        # Call the function with our mocks
-        result = fetch_and_store_spreadsheets(mock_drive_service)
+    def test_list_sheets_http_error(self):
+        """Test that list_sheets handles HttpError correctly."""
+        # Create a mock service that raises HttpError
+        mock_service = MagicMock()
+        mock_service.files.return_value.list.return_value.execute.side_effect = HttpError(
+            MagicMock(status=404), b"Not Found"
+        )
 
-        # Verify the result is None
-        self.assertIsNone(result)
+        # Call the function
+        spreadsheets = fetch_spreadsheets(mock_service)
+
+        # Assertions
+        self.assertEqual(len(spreadsheets), 0)
+        mock_service.files.assert_called_once()
+        mock_service.files.return_value.list.assert_called_once()
+        mock_service.files.return_value.list.return_value.execute.assert_called_once()
+
+    def test_fetch_sheets_of_spreadsheet_success(self):
+        """Test fetching sheets of a spreadsheet successfully."""
+        mock_sheets_service = MagicMock()
+        spreadsheet_id = "test_spreadsheet_id"
+        mock_api_result = {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": 1,
+                        "title": "Sheet1",
+                        "index": 0,
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 100, "columnCount": 26},
+                    }
+                }
+            ]
+        }
+        mock_sheets_service.spreadsheets.return_value.get.return_value.execute.return_value = mock_api_result
+
+        sheets = fetch_sheets_of_spreadsheet(mock_sheets_service, spreadsheet_id)
+
+        self.assertEqual(len(sheets), 1)
+        self.assertEqual(sheets[0].id, 1)
+        self.assertEqual(sheets[0].title, "Sheet1")
+        self.assertEqual(sheets[0].index, 0)
+        self.assertEqual(sheets[0].type, "GRID")
+        self.assertEqual(sheets[0].grid.row_count, 100)
+        self.assertEqual(sheets[0].grid.column_count, 26)
+
+        mock_sheets_service.spreadsheets.assert_called_once()
+        mock_sheets_service.spreadsheets.return_value.get.assert_called_once_with(
+            spreadsheetId=spreadsheet_id, fields=SheetProperties.api_fields()
+        )
+
+    def test_fetch_sheets_of_spreadsheet_http_error(self):
+        """Test fetching sheets of a spreadsheet with HttpError."""
+        mock_sheets_service = MagicMock()
+        spreadsheet_id = "test_spreadsheet_id"
+        mock_sheets_service.spreadsheets.return_value.get.return_value.execute.side_effect = HttpError(
+            MagicMock(status=404), b"Not Found"
+        )
+
+        sheets = fetch_sheets_of_spreadsheet(mock_sheets_service, spreadsheet_id)
+
+        self.assertEqual(len(sheets), 0)
+        mock_sheets_service.spreadsheets.assert_called_once()
+        mock_sheets_service.spreadsheets.return_value.get.assert_called_once_with(
+            spreadsheetId=spreadsheet_id, fields=SheetProperties.api_fields()
+        )
+
+    def test_retrieve_spreadsheets_fetches_and_stores(self):
+        """Test retrieve_spreadsheets fetches from API and stores in DB when DB is empty."""
+        mock_drive_service = MagicMock()
+        mock_spreadsheet_props = [MagicMock(spec=SpreadsheetProperties, id="sheet1")]
+
+        # Mock fetch_spreadsheets to return data
+        with patch(
+            "ripper.ripperlib.sheets_backend.fetch_spreadsheets", return_value=mock_spreadsheet_props
+        ) as mock_fetch:
+            # Mock Db.store_spreadsheet_properties
+            with patch("ripper.ripperlib.sheets_backend.Db.store_spreadsheet_properties") as mock_store:
+                spreadsheets = retrieve_spreadsheets(mock_drive_service)
+
+                self.assertEqual(len(spreadsheets), 1)
+                self.assertEqual(spreadsheets[0].id, "sheet1")
+                mock_fetch.assert_called_once_with(mock_drive_service)
+                mock_store.assert_called_once_with("sheet1", mock_spreadsheet_props[0])
+
+    def test_retrieve_spreadsheets_fetch_failure(self):
+        """Test retrieve_spreadsheets handles fetch failure."""
+        mock_drive_service = MagicMock()
+        # Mock fetch_spreadsheets to return empty list (failure)
+        with patch("ripper.ripperlib.sheets_backend.fetch_spreadsheets", return_value=[]) as mock_fetch:
+            # Ensure store_spreadsheet_properties is NOT called
+            with patch("ripper.ripperlib.sheets_backend.Db.store_spreadsheet_properties") as mock_store:
+                spreadsheets = retrieve_spreadsheets(mock_drive_service)
+
+                self.assertEqual(len(spreadsheets), 0)
+                mock_fetch.assert_called_once_with(mock_drive_service)
+                mock_store.assert_not_called()
+
+    def test_retrieve_sheets_of_spreadsheet_from_db(self):
+        """Test retrieving sheets from DB when available."""
+        spreadsheet_id = "test_id"
+        mock_db_sheets = [MagicMock(spec=SheetProperties, id="sheet1")]
+
+        # Mock Db.get_sheet_properties_of_spreadsheet to return data
+        with patch(
+            "ripper.ripperlib.sheets_backend.Db.get_sheet_properties_of_spreadsheet", return_value=mock_db_sheets
+        ) as mock_get_db:
+            mock_sheets_service = MagicMock()
+            sheets = retrieve_sheets_of_spreadsheet(mock_sheets_service, spreadsheet_id)
+
+            self.assertEqual(len(sheets), 1)
+            self.assertEqual(sheets[0].id, "sheet1")
+            self.assertEqual(sheets[0].load_source, LoadSource.DATABASE)  # Ensure load_source is set
+            mock_get_db.assert_called_once_with(spreadsheet_id)
+
+    def test_retrieve_sheets_of_spreadsheet_from_api(self):
+        """Test retrieving sheets from API when DB is empty."""
+        spreadsheet_id = "test_id"
+        mock_api_sheets = [MagicMock(spec=SheetProperties, id="sheet1")]
+
+        # Mock Db.get_sheet_properties_of_spreadsheet to return empty list
+        with patch(
+            "ripper.ripperlib.sheets_backend.Db.get_sheet_properties_of_spreadsheet", return_value=[]
+        ) as mock_get_db:
+            # Mock fetch_sheets_of_spreadsheet to return data
+            with patch(
+                "ripper.ripperlib.sheets_backend.fetch_sheets_of_spreadsheet", return_value=mock_api_sheets
+            ) as mock_fetch_api:
+                # Mock Db.store_sheet_properties
+                with patch("ripper.ripperlib.sheets_backend.Db.store_sheet_properties") as mock_store_db:
+                    mock_sheets_service = MagicMock()
+                    sheets = retrieve_sheets_of_spreadsheet(mock_sheets_service, spreadsheet_id)
+
+                    self.assertEqual(len(sheets), 1)
+                    self.assertEqual(sheets[0].id, "sheet1")
+                    self.assertEqual(sheets[0].load_source, LoadSource.API)  # Ensure load_source is set
+                    mock_get_db.assert_called_once_with(spreadsheet_id)
+                    mock_fetch_api.assert_called_once_with(mock_sheets_service, spreadsheet_id)
+                    mock_store_db.assert_called_once_with(spreadsheet_id, mock_api_sheets)
