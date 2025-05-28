@@ -124,7 +124,7 @@ def cli(
     # Only execute if this is the main command (no subcommand)
     if ctx.invoked_subcommand is None:
         # Initialize the database
-        Db().open()
+        Db.open()
 
         # Clear the credential cache if requested
         if clear_credential_cache:
@@ -140,7 +140,7 @@ def cli(
         try:
             return app.exec()
         finally:
-            Db().close()
+            Db.close()
     return 0
 
 
@@ -171,9 +171,9 @@ def create(ctx: click.Context) -> None:
     if not db_path.exists():
         try:
             logger.debug(f"Creating database at {db_path}")
-            Db(db_file_path=ctx.obj["DB_PATH"]).open()
+            Db.open()
         finally:
-            Db().close()
+            Db.close()
     else:
         logger.debug(f"Database at {db_path} already exists, skipping create")
 
