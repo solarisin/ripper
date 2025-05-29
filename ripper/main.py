@@ -1,3 +1,10 @@
+"""
+Main entry point and CLI for the ripper application.
+
+This module sets up logging, version retrieval, and provides a Click-based command line interface
+for launching the GUI, managing the database, and other developer/maintenance tasks.
+"""
+
 import importlib.metadata
 import sys
 from pathlib import Path
@@ -75,6 +82,12 @@ def get_version() -> str:
 
 
 def log_context(ctx: click.Context) -> None:
+    """
+    Recursively log the context and parameters for debugging CLI execution.
+
+    Args:
+        ctx (click.Context): The Click context object.
+    """
     if ctx.obj is not None and "DEBUG_CLI" in ctx.obj and ctx.obj["DEBUG_CLI"]:
         if ctx.parent is not None:
             log_context(ctx.parent)
@@ -114,7 +127,11 @@ def cli(
     clear_credential_cache: bool = False,
     debug_cli: bool = False,
 ) -> int:
-    """Ripper application command line interface."""
+    """
+    Ripper application command line interface.
+
+    This command launches the main GUI application or delegates to subcommands for database management.
+    """
     # Always executed first, even for subcommands
     configure_logging(log_level)
     ctx.ensure_object(dict)
@@ -153,7 +170,13 @@ def cli(
     help="Path to the database file to operate on",
 )
 def db(ctx: click.Context, file_path: Path | None) -> None:
-    """Database management commands."""
+    """
+    Database management commands group.
+
+    Args:
+        ctx (click.Context): The Click context object.
+        file_path (Path | None): Optional path to the database file.
+    """
     if file_path is None:
         ctx.obj["DB_PATH"] = ripper.ripperlib.database.default_db_path()
     else:
@@ -163,7 +186,12 @@ def db(ctx: click.Context, file_path: Path | None) -> None:
 @db.command()
 @click.pass_context
 def create(ctx: click.Context) -> None:
-    """Create database tables."""
+    """
+    Create database tables if the database does not already exist.
+
+    Args:
+        ctx (click.Context): The Click context object.
+    """
     log_context(ctx)
     db_path: Path = ctx.obj["DB_PATH"]
     logger.debug(f"db absolute path: {db_path.absolute()}")
@@ -181,7 +209,12 @@ def create(ctx: click.Context) -> None:
 @db.command()
 @click.pass_context
 def clean(ctx: click.Context) -> None:
-    """Create database tables."""
+    """
+    Remove the database file if it exists.
+
+    Args:
+        ctx (click.Context): The Click context object.
+    """
     log_context(ctx)
     db_path: Path = ctx.obj["DB_PATH"]
     if db_path.exists():

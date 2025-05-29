@@ -1,3 +1,11 @@
+"""
+Database management for the ripper project.
+
+This module provides the RipperDb class for managing SQLite-based storage of spreadsheet and sheet metadata,
+including schema creation, CRUD operations, and thumbnail storage. It also provides a singleton instance `Db` for
+application-wide use.
+"""
+
 import json
 import os
 import sqlite3 as sqlite
@@ -16,12 +24,18 @@ def default_db_path() -> Path:
 
 
 class RipperDb:
+    """
+    SQLite database manager for spreadsheet and sheet metadata, thumbnails, and related data.
+
+    Handles connection management, schema creation, and CRUD operations for the ripper application.
+    """
+
     def __init__(self, db_file_path: str = str(default_db_path())) -> None:
         """
-        Initialize the database implementation.
+        Initialize the database implementation and open a connection.
 
         Args:
-            db_file_path: Path to the database file
+            db_file_path (str): Path to the database file.
         """
         self._db_file_path = db_file_path
         self._db_identifier = self.generate_db_identifier()
@@ -41,6 +55,9 @@ class RipperDb:
     def open(self) -> None:
         """
         Open the database connection and create tables if they don't exist.
+
+        Raises:
+            sqlite.Error: If the database cannot be opened or initialized.
         """
         if self._conn:
             logger.debug(f"Database {self._db_file_path} already open")
@@ -60,6 +77,9 @@ class RipperDb:
             raise
 
     def close(self) -> None:
+        """
+        Close the database connection if open.
+        """
         if self._conn:
             self._conn.close()
             self._conn = None
@@ -109,7 +129,12 @@ class RipperDb:
                 logger.error(f"Error deleting database file {self._db_file_path}: {e}")
 
     def create_tables(self) -> None:
-        """Create database tables if they don't exist."""
+        """
+        Create database tables if they don't exist.
+
+        Raises:
+            sqlite.Error: If there is an error creating tables.
+        """
         if self._conn is None:
             logger.error("Database not open")
             return

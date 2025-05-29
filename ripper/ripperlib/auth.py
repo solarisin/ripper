@@ -1,3 +1,13 @@
+"""
+Authentication and OAuth management for the ripper project.
+
+This module provides:
+- AuthState enum and AuthInfo container for authentication state
+- TokenStore for secure token and user info storage via keyring
+- AuthManager singleton for managing authentication, credentials, and Google API service objects
+- Integration with Qt signals for GUI updates
+"""
+
 import enum
 import json
 import os
@@ -56,7 +66,7 @@ class AuthInfo:
     """
     Container for authentication state and user information.
 
-    This class holds the current authentication state and user information
+    Holds the current authentication state and user information
     and provides methods to access them.
     """
 
@@ -96,7 +106,7 @@ class TokenStore:
     """
     Manages token storage and retrieval through keyring.
 
-    This class handles the storage and retrieval of OAuth tokens and user information
+    Handles the storage and retrieval of OAuth tokens and user information
     using the system keyring.
     """
 
@@ -112,6 +122,9 @@ class TokenStore:
     def invalidate(self) -> None:
         """
         Clear the current token and erase entry from keyring.
+
+        Side effects:
+            Removes token and user info from keyring for the current user.
         """
         self._current_token = None
         self._current_userinfo = None
@@ -130,8 +143,11 @@ class TokenStore:
         Store token and user info in keyring.
 
         Args:
-            token: The OAuth token as a JSON string, or None to invalidate
-            userinfo: The user info as a JSON string, or None to remove user info
+            token (Optional[str]): The OAuth token as a JSON string, or None to invalidate.
+            userinfo (Optional[str]): The user info as a JSON string, or None to remove user info.
+
+        Side effects:
+            Updates keyring entries for token and user info.
         """
         if token is None:
             self.invalidate()
@@ -157,13 +173,13 @@ class TokenStore:
         Load token and user info from keyring.
 
         Args:
-            force: If True, always load from keyring even if already cached
+            force (bool): If True, always load from keyring even if already cached.
 
         Returns:
-            Tuple of (token, userinfo) where userinfo may be None
+            Tuple[str, Optional[str]]: Tuple of (token, userinfo) where userinfo may be None.
 
         Raises:
-            ValueError: If no token is found in keyring
+            ValueError: If no token is found in keyring.
         """
         if self._current_token is None or force:
             self._current_token = keyring.get_password(self.TOKEN_KEY, self._token_user_id)
@@ -211,7 +227,12 @@ class TokenStore:
 
 
 class AuthManager(QObject):
-    """Manages authentication state and provides signals for state changes."""
+    """
+    Singleton manager for authentication state, credentials, and Google API service objects.
+
+    Provides Qt signals for state changes and manages token storage, credential loading,
+    and user info updates for the ripper application.
+    """
 
     authStateChanged = Signal(AuthInfo)  # Signal emitted when auth state changes
 
@@ -241,7 +262,12 @@ class AuthManager(QObject):
         self._load_credentials()
 
     def _load_credentials(self) -> None:
-        """Load credentials from the token file."""
+        """
+        Load credentials from the token file if it exists.
+
+        Side effects:
+            Updates self._credentials and user info if credentials are valid.
+        """
         token_path = self._get_token_path()
         if os.path.exists(token_path):
             try:
@@ -254,7 +280,12 @@ class AuthManager(QObject):
                 self._credentials = None
 
     def _save_credentials(self) -> None:
-        """Save credentials to the token file."""
+        """
+        Save credentials to the token file.
+
+        Side effects:
+            Writes credentials to disk at the token path.
+        """
         if self._credentials:
             token_path = self._get_token_path()
             token_dir = os.path.dirname(token_path)
@@ -265,7 +296,12 @@ class AuthManager(QObject):
                 json.dump(cred_data, token)
 
     def _update_user_info(self) -> None:
-        """Update user information using the OAuth2 API."""
+        """
+        Update user information using the OAuth2 API.
+
+        Side effects:
+            Updates self._user_email and emits authStateChanged signal.
+        """
         if not self._credentials:
             return
 
@@ -278,11 +314,21 @@ class AuthManager(QObject):
             logger.error(f"Error getting user info: {e}")
 
     def _get_token_path(self) -> str:
-        """Get the path to the token file."""
+        """
+        Get the path to the token file.
+
+        Returns:
+            str: Path to the token file.
+        """
         return os.path.join(os.environ.get("APPDATA", ""), "ripper", "token.json")
 
     def _get_client_secret_path(self) -> str:
-        """Get the path to the client secret file."""
+        """
+        Get the path to the client secret file.
+
+        Returns:
+            str: Path to the client secret file.
+        """
         return os.path.join(os.environ.get("APPDATA", ""), "ripper", "client_secret.json")
 
     def has_oauth_client_credentials(self) -> bool:

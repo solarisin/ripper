@@ -1,15 +1,26 @@
+"""
+Widget for displaying a Google Spreadsheet thumbnail and name in the ripper application.
+
+This module provides SpreadsheetThumbnailWidget, a Qt widget that displays a spreadsheet's thumbnail image and name,
+emits signals when the thumbnail is loaded or the widget is selected, and handles thumbnail loading from cache or API.
+"""
+
+from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QMouseEvent, QPixmap
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
-from loguru import logger
 
-from ripper.ripperlib.defs import SpreadsheetProperties, LoadSource
+from ripper.ripperlib.defs import LoadSource, SpreadsheetProperties
 from ripper.ripperlib.sheets_backend import retrieve_thumbnail
 
 
 class SpreadsheetThumbnailWidget(QFrame):
     """
-    Widget to display a Google Spreadsheet thumbnail with its name.
+    Widget to display a Google Spreadsheet thumbnail and its name.
+
+    Signals:
+        thumbnail_loaded (LoadSource): Emitted when the thumbnail is loaded (from cache, API, or not found).
+        spreadsheet_selected (SpreadsheetProperties): Emitted when the widget is selected by the user.
 
     This widget shows a thumbnail image of a Google Spreadsheet along with its name.
     It loads the thumbnail from cache if available, or from the Google API if not.
@@ -23,11 +34,14 @@ class SpreadsheetThumbnailWidget(QFrame):
 
     def __init__(self, spreadsheet_properties: SpreadsheetProperties, parent: QWidget) -> None:
         """
-        Initialize the thumbnail widget.
+        Initialize the thumbnail widget, set up UI, and load the thumbnail image.
 
         Args:
-            spreadsheet_properties: SheetProperties object containing spreadsheet information
-            parent: Parent widget
+            spreadsheet_properties (SpreadsheetProperties): Object containing spreadsheet information.
+            parent (QWidget): Parent widget.
+
+        Side effects:
+            Sets up the widget UI, loads the thumbnail, and emits thumbnail_loaded signal.
         """
         super().__init__(parent)
         self.spreadsheet_properties: SpreadsheetProperties = spreadsheet_properties
@@ -115,7 +129,7 @@ class SpreadsheetThumbnailWidget(QFrame):
         """
         Set a default thumbnail for the sheet.
 
-        Creates a simple colored rectangle as a placeholder.
+        Creates a simple colored rectangle as a placeholder if no thumbnail is available.
         """
         pixmap = QPixmap(180, 150)
         pixmap.fill(Qt.GlobalColor.lightGray)

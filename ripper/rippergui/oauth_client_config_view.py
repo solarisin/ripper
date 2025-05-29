@@ -1,3 +1,11 @@
+"""
+OAuth Client Configuration View for the ripper application.
+
+This module provides AuthView, a Qt widget for registering Google API OAuth client credentials
+either by manual entry or by selecting a client_secret.json file. It handles UI state, validation,
+and emits a signal when registration is successful.
+"""
+
 import logging
 import os
 from pathlib import Path
@@ -25,21 +33,43 @@ log = logging.getLogger("ripper:oauth_client_config_view")
 
 class AuthView(QWidget):
     """
-    A view that allows users to either enter Google Console client ID and client secret,
-    or select a client_secret.json file.
+    Widget for registering Google API OAuth client credentials.
+
+    Signals:
+        oauth_client_registered (): Emitted when OAuth client is registered successfully.
+
+    Allows users to either enter Google Console client ID and client secret manually,
+    or select a client_secret.json file. Handles UI state, validation, and registration.
     """
 
     # Signal emitted when authentication is successful
     oauth_client_registered = Signal()  # Signal emitted when OAuth client is registered
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        """Initialize the auth view."""
+        """
+        Initialize the auth view and set up the UI.
+
+        Args:
+            parent (Optional[QWidget]): Parent widget.
+
+        Side effects:
+            Sets up the widget UI and loads any stored credentials.
+        """
         super().__init__(parent)
         self.setup_ui()
         self.load_credentials()
 
     def store_credentials(self, client_id: Optional[str] = None, client_secret: Optional[str] = None) -> None:
-        """Store client ID and secret in AuthManager, handling exceptions."""
+        """
+        Store client ID and secret in AuthManager, handling exceptions.
+
+        Args:
+            client_id (Optional[str]): Google API client ID.
+            client_secret (Optional[str]): Google API client secret.
+
+        Raises:
+            Shows a warning dialog if storing credentials fails.
+        """
         client_id = client_id or self.client_id_edit.text()
         client_secret = client_secret or self.client_secret_edit.text()
         if client_id and client_secret:
@@ -49,7 +79,9 @@ class AuthView(QWidget):
                 QMessageBox.warning(self, "OAuth Client Error", f"Failed to store credentials: {e}")
 
     def load_credentials(self) -> None:
-        """Load client ID and secret from AuthManager and populate fields"""
+        """
+        Load client ID and secret from AuthManager and populate fields.
+        """
         client_id, client_secret = AuthManager().load_oauth_client_credentials()
         self.client_id_edit.setText(client_id or "")
         self.client_secret_edit.setText(client_secret or "")
@@ -59,6 +91,9 @@ class AuthView(QWidget):
             self.manual_radio.setChecked(True)
 
     def setup_ui(self) -> None:
+        """
+        Set up the UI components for OAuth client registration.
+        """
         # Main layout
         main_layout = QVBoxLayout(self)
 
@@ -136,12 +171,16 @@ class AuthView(QWidget):
         self.setLayout(main_layout)
 
     def update_ui(self) -> None:
-        """Update UI based on selected option"""
+        """
+        Update UI based on selected option (file/manual).
+        """
         self.file_group.setEnabled(self.file_radio.isChecked())
         self.manual_group.setEnabled(self.manual_radio.isChecked())
 
     def browse_file(self) -> None:
-        """Open file dialog to select client_secret.json file"""
+        """
+        Open file dialog to select client_secret.json file.
+        """
 
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select client_secret.json file", str(Path.home()), "JSON Files (*.json)"
@@ -151,7 +190,12 @@ class AuthView(QWidget):
             self.file_path_edit.setText(file_path)
 
     def register_client(self) -> None:
-        """Process oauth client registry based on selected method"""
+        """
+        Process OAuth client registry based on selected method (file/manual).
+
+        Raises:
+            Shows a warning dialog if registration fails or input is invalid.
+        """
         if self.file_radio.isChecked():
             # File selection method
             file_path = self.file_path_edit.text()
@@ -189,5 +233,10 @@ class AuthView(QWidget):
             self.oauth_client_registered.emit()
 
     def _get_client_secret_path(self) -> str:
-        """Get the path to the client secret file."""
+        """
+        Get the path to the client secret file.
+
+        Returns:
+            str: Path to the client secret file.
+        """
         return os.path.join(os.environ.get("APPDATA", ""), "ripper", "client_secret.json")

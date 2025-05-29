@@ -1,9 +1,25 @@
-import urllib.request
+"""
+This module provides backend functions for interacting with Google Sheets and Drive APIs,
+caching results in a local database, and handling spreadsheet metadata and thumbnails.
 
+Functions include:
+- Fetching and retrieving spreadsheet and sheet metadata
+- Downloading and caching spreadsheet thumbnails
+- Fetching spreadsheet cell data
+
+All API interactions are logged, and errors are handled gracefully.
+"""
+
+# Standard library imports
+import urllib.request
+from urllib.error import URLError
+
+# Third-party imports
 from beartype.typing import Any, cast
 from googleapiclient.errors import HttpError
 from loguru import logger
 
+# Local imports
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import (
     DriveService,
@@ -18,10 +34,16 @@ from ripper.ripperlib.defs import (
 def fetch_sheets_of_spreadsheet(service: SheetsService, spreadsheet_id: str) -> list[SheetProperties]:
     """
     Fetches the list of sheets of a spreadsheet from the Google Sheets API.
-    Args:
-        service: Authenticated Google Sheets API service
-        spreadsheet_id: The ID of the spreadsheet to fetch sheets from
 
+    Args:
+        service (SheetsService): Authenticated Google Sheets API service.
+        spreadsheet_id (str): The ID of the spreadsheet to fetch sheets from.
+
+    Returns:
+        list[SheetProperties]: List of sheet properties, or an empty list if an error occurs.
+
+    Raises:
+        Any exception raised by the SheetsService if not caught (e.g., authentication errors).
     """
     try:
         # Create a Sheets API instance
@@ -36,7 +58,18 @@ def fetch_sheets_of_spreadsheet(service: SheetsService, spreadsheet_id: str) -> 
 
 def retrieve_sheets_of_spreadsheet(service: SheetsService, spreadsheet_id: str) -> list[SheetProperties]:
     """
-    Retrieves the list of sheets of a spreadsheet from the database.
+    Retrieves the list of sheets of a spreadsheet from the database if available,
+    otherwise fetches from the API and caches the result.
+
+    Args:
+        service (SheetsService): Authenticated Google Sheets API service.
+        spreadsheet_id (str): The ID of the spreadsheet to fetch sheets from.
+
+    Returns:
+        list[SheetProperties]: List of sheet properties.
+
+    Raises:
+        Any exception raised by the database or SheetsService if not caught.
     """
     sheets = Db.get_sheet_properties_of_spreadsheet(spreadsheet_id)
     if len(sheets) > 0:
@@ -56,22 +89,36 @@ def fetch_thumbnail(url: str) -> bytes:
     Download thumbnail image data from a URL.
 
     Args:
-        url: URL to download the thumbnail from
+        url (str): URL to download the thumbnail from.
 
     Returns:
-        The thumbnail image data as bytes, or an empty bytes object if download failed
+        bytes: The thumbnail image data, or an empty bytes object if download failed.
+
+    Raises:
+        Any exception raised by urllib.request.urlopen if not caught (e.g., invalid URL, network issues).
     """
     try:
         with urllib.request.urlopen(url) as response:
             return cast(bytes, response.read())
-    except urllib.error.URLError as e:
+    except URLError as e:
         logger.error(f"Error downloading thumbnail from url '{url}': {e}")
         return b""
 
 
 def retrieve_thumbnail(spreadsheet_id: str, thumbnail_link: str) -> tuple[bytes, LoadSource]:
     """
-    Retrieves the thumbnail of a spreadsheet from the database.
+    Retrieves the thumbnail of a spreadsheet from the database if available,
+    otherwise downloads it and caches the result.
+
+    Args:
+        spreadsheet_id (str): The ID of the spreadsheet.
+        thumbnail_link (str): The URL to download the thumbnail from if not cached.
+
+    Returns:
+        tuple[bytes, LoadSource]: The thumbnail data and the source (DATABASE or API).
+
+    Raises:
+        Any exception raised by the database or fetch_thumbnail if not caught.
     """
     thumbnail = Db.get_spreadsheet_thumbnail(spreadsheet_id)
     if thumbnail:
@@ -89,11 +136,13 @@ def fetch_spreadsheets(service: DriveService) -> list[SpreadsheetProperties]:
     Fetches the list of spreadsheets from the Google Drive API.
 
     Args:
-        service: Authenticated Google Drive API service
+        service (DriveService): Authenticated Google Drive API service.
 
     Returns:
-        A list of dictionaries containing information about the spreadsheets
+        list[SpreadsheetProperties]: List of spreadsheet properties, or an empty list if an error occurs.
 
+    Raises:
+        Any exception raised by the DriveService if not caught (e.g., authentication errors).
     """
     try:
         # Use the Drive API to list files with additional fields
@@ -133,10 +182,14 @@ def retrieve_spreadsheets(drive_service: DriveService) -> list[SpreadsheetProper
     Retrieves the list of spreadsheets from the Google Drive API and stores relevant information in the database.
 
     Args:
-        drive_service: Authenticated Google Drive API service.
+        drive_service (DriveService): Authenticated Google Drive API service.
 
     Returns:
-        A list of dictionaries containing information about the fetched sheets, or None if an error occurred.
+        list[SpreadsheetProperties]: List of spreadsheet properties, or an empty list if an error occurs.
+
+    Raises:
+        ValueError: If a spreadsheet property is missing an ID.
+        Any exception raised by the database or DriveService if not caught.
     """
     properties_list = fetch_spreadsheets(drive_service)
 
@@ -168,12 +221,15 @@ def fetch_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, ran
     Fetches data from specific cells in the spreadsheet.
 
     Args:
-        service: Authenticated Google Sheets API service
-        spreadsheet_id: The ID of the spreadsheet to read from
-        range_name: The A1 notation of the range to read (includes sheet name and cell range)
+        service (SheetsService): Authenticated Google Sheets API service.
+        spreadsheet_id (str): The ID of the spreadsheet to read from.
+        range_name (str): The A1 notation of the range to read (includes sheet name and cell range).
 
     Returns:
-        A list of lists containing the values, or an empty list if no data was found or an error occurred
+        SheetData: A list of lists containing the values, or an empty list if no data was found or an error occurred.
+
+    Raises:
+        Any exception raised by the SheetsService if not caught (e.g., authentication errors).
     """
     try:
         # Create a Sheets API instance
