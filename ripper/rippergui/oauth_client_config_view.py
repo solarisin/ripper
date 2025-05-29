@@ -39,11 +39,14 @@ class AuthView(QWidget):
         self.load_credentials()
 
     def store_credentials(self, client_id: Optional[str] = None, client_secret: Optional[str] = None) -> None:
-        """Store client ID and secret in AuthManager"""
+        """Store client ID and secret in AuthManager, handling exceptions."""
         client_id = client_id or self.client_id_edit.text()
         client_secret = client_secret or self.client_secret_edit.text()
         if client_id and client_secret:
-            AuthManager().store_oauth_client_credentials(client_id, client_secret)
+            try:
+                AuthManager().store_oauth_client_credentials(client_id, client_secret)
+            except Exception as e:
+                QMessageBox.warning(self, "OAuth Client Error", f"Failed to store credentials: {e}")
 
     def load_credentials(self) -> None:
         """Load client ID and secret from AuthManager and populate fields"""
