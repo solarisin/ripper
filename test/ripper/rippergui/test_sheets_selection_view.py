@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtWidgets import QWidget
 
-from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog, col_to_letter, parse_cell
+from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
 from ripper.rippergui.spreadsheet_thumbnail_widget import SpreadsheetThumbnailWidget
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProperties
@@ -33,34 +33,6 @@ def setup_database(tmp_path, monkeypatch):
 
     # Restore the original database path
     Db._db_file_path = original_db_file_path
-
-
-def test_col_to_letter():
-    """Test the col_to_letter function."""
-    assert col_to_letter(1) == "A"
-    assert col_to_letter(26) == "Z"
-    assert col_to_letter(27) == "AA"
-    assert col_to_letter(52) == "AZ"
-    assert col_to_letter(53) == "BA"
-    assert col_to_letter(702) == "ZZ"
-    assert col_to_letter(703) == "AAA"
-
-
-def test_parse_cell():
-    """Test the parse_cell function."""
-    # Test valid cell references
-    assert parse_cell("A1") == (1, 1)
-    assert parse_cell("Z10") == (10, 26)
-    assert parse_cell("AA1") == (1, 27)
-    assert parse_cell("AB20") == (20, 28)
-
-    # Test invalid cell references
-    with pytest.raises(ValueError):
-        parse_cell("1A")  # Invalid format
-    with pytest.raises(ValueError):
-        parse_cell("A")  # Missing row
-    with pytest.raises(ValueError):
-        parse_cell("1")  # Missing column
 
 
 @pytest.mark.qt

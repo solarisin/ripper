@@ -1,8 +1,18 @@
-import re
+"""
+Dialog for selecting and validating Google Sheets and ranges in the ripper application.
+
+This module provides SheetsSelectionDialog, a Qt dialog for browsing, selecting, and validating Google Sheets
+and their ranges. It includes input validation, error feedback, and emits a signal when a sheet and range are selected.
+
+"""
+
 import traceback
 
+from beartype.typing import Optional
+from loguru import logger
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -16,64 +26,25 @@ from PySide6.QtWidgets import (
     QSplitter,
     QVBoxLayout,
     QWidget,
-    QApplication,
 )
-from beartype.typing import Optional
-from loguru import logger
 
 import ripper.ripperlib.sheets_backend as sheets_backend
+from ripper.rippergui.sheet_utils import col_to_letter
 from ripper.rippergui.spreadsheet_thumbnail_widget import SpreadsheetThumbnailWidget
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.defs import SheetProperties, SpreadsheetProperties
 
 
-def col_to_letter(col_index: int) -> str:
-    """
-    Convert column index to letter (A=1, B=2, etc.).
-    """
-    letter = ""
-    while col_index > 0:
-        col_index, remainder = divmod(col_index - 1, 26)
-        letter = chr(65 + remainder) + letter
-    return letter
-
-
-def parse_cell(cell_text: str) -> tuple[int, int]:
-    """
-    Basic parsing of cell like A1, B5.
-
-    Args:
-        cell_text: The cell text (e.g., "A1").
-
-    Returns:
-        A tuple containing the row number (1-indexed) and column number (1-indexed).
-
-    Raises:
-        ValueError: If the cell format is invalid.
-    """
-    # Check that the cell format is valid (letters followed by numbers)
-    if not re.match(r"^[A-Za-z]+\d+$", cell_text):
-        raise ValueError("Invalid cell format")
-
-    col_str = "".join(filter(str.isalpha, cell_text))
-    row_str = "".join(filter(str.isdigit, cell_text))
-    if not col_str or not row_str:
-        raise ValueError("Invalid cell format")
-
-    # Convert column letter to number (A=1, B=2, ...)
-    col_num = 0
-    for char in col_str.upper():
-        col_num = col_num * 26 + (ord(char) - ord("A") + 1)
-    row_num = int(row_str)
-    return row_num, col_num
-
-
 class SheetsSelectionDialog(QDialog):
     """
-    Dialog for selecting Google Sheets.
+    Dialog for selecting Google Sheets and specifying a range.
+
+    Signals:
+        sheet_selected (dict): Emitted when the user confirms a sheet and range selection.
 
     This dialog displays a grid of thumbnails for all Google Sheets in the user's Drive,
-    and allows the user to select one to view details and get information about it.
+    allows the user to select one, view details, and specify a range for further operations.
+    Input is validated and errors are shown in the dialog.
     """
 
     # Signal emitted when the user chooses a sheet
@@ -178,7 +149,7 @@ class SheetsSelectionDialog(QDialog):
 
     def load_spreadsheets(self) -> None:
         """
-        Load Google Spreadsheets from Drive.
+        Load Google Spreadsheets from Drive and display them in the grid.
 
         Fetches the list of Google Spreadsheets from the user's Drive and displays them
         in the grid. Shows an error message if authentication fails or an error occurs.
@@ -238,13 +209,13 @@ class SheetsSelectionDialog(QDialog):
 
     def select_spreadsheet(self, spreadsheet_properties: SpreadsheetProperties) -> None:
         """
-        Handle spreadsheet selection.
+        Handle spreadsheet selection from the grid.
 
         Updates the UI to show details about the selected spreadsheet and enables
-        the select button.  Called directly from the thumbnail widget.
+        the select button. Called directly from the thumbnail widget.
 
         Args:
-            spreadsheet_properties: SpreadsheetProperties object containing the spreadsheet information.
+            spreadsheet_properties (SpreadsheetProperties): Spreadsheet information.
         """
         self.selected_spreadsheet = spreadsheet_properties
         self.select_button.setEnabled(True)
@@ -310,6 +281,9 @@ class SheetsSelectionDialog(QDialog):
     def _sheet_name_selected(self, index: int) -> None:
         """
         Handle sheet name selection from the combobox and update the range input.
+
+        Args:
+            index (int): Index of the selected sheet in the combobox.
         """
         if 0 <= index < len(self.sheet_properties_list) and self.selected_spreadsheet:
             selected_sheet_props = self.sheet_properties_list[index]
@@ -334,101 +308,54 @@ class SheetsSelectionDialog(QDialog):
 
     def _validate_sheet_range(self, text: str) -> None:
         """
-        Validates the sheet range input by checking if it's empty,
-        has a valid format, and is within the sheet dimensions.
+        Validate the sheet range input using SheetRangeValidator.
+
+        Args:
+            text (str): The range string to validate.
         """
-        if not self._is_range_empty(text):
+        from ripper.rippergui.sheet_utils import SheetRangeValidator
+
+        if not SheetRangeValidator.is_range_empty(text):
+            self.show_error("Sheet range cannot be empty.")
+            self.select_button.setEnabled(False)
             return
 
-        if not self._is_range_format_valid(text):
+        if not SheetRangeValidator.is_range_format_valid(text):
+            self.show_error(f"Invalid range format. Expected 'A1:B5', found {text}.")
+            self.select_button.setEnabled(False)
             return
 
         # Get sheet dimensions for bounds check
         sheet_row_count = 0
         sheet_col_count = 0
-        if self.selected_spreadsheet:
-            if len(self.sheet_properties_list) > 0:
-                current_sheet_name = self.sheet_name_combobox.currentText().strip()
-                for sheet_props in self.sheet_properties_list:
-                    if sheet_props.title == current_sheet_name:
-                        sheet_row_count = sheet_props.grid.row_count
-                        sheet_col_count = sheet_props.grid.column_count
-                        break
+        if self.selected_spreadsheet and len(self.sheet_properties_list) > 0:
+            current_sheet_name = self.sheet_name_combobox.currentText().strip()
+            for sheet_props in self.sheet_properties_list:
+                if sheet_props.title == current_sheet_name:
+                    sheet_row_count = sheet_props.grid.row_count
+                    sheet_col_count = sheet_props.grid.column_count
+                    break
 
         # Only perform bounds check if dimensions are available
         if sheet_row_count > 0 and sheet_col_count > 0:
-            if not self._is_range_within_bounds(text, sheet_row_count, sheet_col_count):
+            if not SheetRangeValidator.is_range_within_bounds(text, sheet_row_count, sheet_col_count):
+                self.show_error(
+                    f"Range ({text}) outside dimensions (A1:{col_to_letter(sheet_col_count)}{sheet_row_count})."
+                )
+                self.select_button.setEnabled(False)
                 return
             # If bounds are valid, proceed to enable button
             self.details_content.setText(self.details_text)  # Restore original details text
             self.select_button.setEnabled(True)
         else:
             # If dimensions are not available, format is valid, but bounds can't be checked.
-            # Treat as valid for now, but this might need refinement based on desired UX.
+
             self.details_content.setText("Warning: Cannot validate range bounds (sheet dimensions not available).")
             self.select_button.setEnabled(True)
 
-    def _is_range_empty(self, text: str) -> bool:
-        """
-        Checks if the range input is empty.
-        Returns True if the range is NOT empty.
-        """
-        if not text.strip():
-            self.show_error("Sheet range cannot be empty.")
-            self.select_button.setEnabled(False)
-            return False
-        return True
-
-    def _is_range_format_valid(self, text: str) -> bool:
-        """
-        Checks if the range input matches the expected A1:B5 format.
-        """
-        range_pattern = r"^[a-zA-Z]+\d+:[a-zA-Z]+\d+$"
-        if not re.match(range_pattern, text):
-            self.show_error(f"Invalid range format. Expected 'A1:B5', found {text}.")
-            self.select_button.setEnabled(False)
-            return False
-        return True
-
-    def _is_range_within_bounds(self, text: str, sheet_row_count: int, sheet_col_count: int) -> bool:
-        """
-        Checks if the range is within the sheet dimensions.
-        """
-        try:
-            parts = text.split(":")
-            start_cell_text = parts[0]
-            end_cell_text = parts[1]
-
-            start_row, start_col = parse_cell(start_cell_text)
-            end_row, end_col = parse_cell(end_cell_text)
-
-            # Check if the range is within the sheet dimensions and is valid (start <= end)
-            if (
-                start_row < 1
-                or start_col < 1
-                or end_row > sheet_row_count
-                or end_col > sheet_col_count
-                or start_row > end_row
-                or start_col > end_col
-            ):
-                self.show_error(
-                    f"Range ({text}) outside dimensions (A1:{col_to_letter(sheet_col_count)}{sheet_row_count})."
-                )
-                self.select_button.setEnabled(False)
-                return False
-
-        except ValueError:
-            # If parsing fails, it's an invalid format for bounds check
-            self.show_error("Could not parse range for bounds check. Use A1:B5 format.")
-            self.select_button.setEnabled(False)
-            return False
-
-        return True
-
     def print_spreadsheet_info(self) -> None:
         """
-        Gets the sheet name and range from the advanced options and
-        logs details about the selected sheet.
+        Log details about the selected spreadsheet, sheet, and range.
         """
         if not self.selected_spreadsheet:
             logger.error("No selected spreadsheet")
@@ -486,7 +413,7 @@ class SheetsSelectionDialog(QDialog):
         Display error message in the dialog.
 
         Args:
-            message: The error message to display
+            message (str): The error message to display.
         """
         # Append the error message below the existing text
         current_text = self.details_text
@@ -494,4 +421,5 @@ class SheetsSelectionDialog(QDialog):
             # Add a line break if the current text doesn't end with one
             current_text += "<br>"
         self.details_content.setText(f"{current_text}<br><br><br><span style='color: red;'>{message}</span>")
+        logger.error(message)
         logger.error(message)
