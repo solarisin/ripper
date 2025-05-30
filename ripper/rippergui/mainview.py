@@ -317,16 +317,7 @@ class MainView(QMainWindow):
         Creates a new transaction table view in a dock widget.
         """
         logger.debug("New source selected")
-
-        from ripper.rippergui import table_view
-
-        table_widget = table_view.TransactionTableViewWidget(None, simulate=True)
-
-        dock = QDockWidget("Table", self)
-        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        dock.setWidget(table_widget)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        self._view_menu.addAction(dock.toggleViewAction())
+        # TODO plan and implement the new source functionality
 
     def show_auth_view(self) -> None:
         """
@@ -527,11 +518,42 @@ class MainView(QMainWindow):
         Returns:
             None
         """
-
-        # TODO attempt to get the sheet data from the database cache, if it exists, or from the Google API
-
         # Close the sheet selection dialog if it is open
         if self._sheet_selection_dialog:
             self._sheet_selection_dialog.accept()
 
         logger.info(f"Data source selected: {source_info}")
+
+        # Fetch data from Google Sheets API for the selected range
+        import ripper.ripperlib.sheets_backend as sheets_backend
+        from ripper.ripperlib.auth import AuthManager
+
+        spreadsheet_id = source_info["spreadsheet_id"]
+        sheet_name = source_info["sheet_name"]
+        sheet_range = source_info["sheet_range"]
+        range_name = f"{sheet_name}!{sheet_range}" if sheet_range else sheet_name
+
+        sheets_service = AuthManager().create_sheets_service()
+        if not sheets_service:
+            QMessageBox.warning(self, "Google Sheets", "Could not authenticate with Google Sheets API.")
+            return
+
+        # Fetch the data (SheetData is list[list[Any]])
+        sheet_data = sheets_backend.fetch_data_from_spreadsheet(sheets_service, spreadsheet_id, range_name)
+        if not sheet_data:
+            QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
+            return
+
+        # Convert SheetData to list of dicts for TransactionTableViewWidget
+        headers = sheet_data[0] if sheet_data else []
+        records = [dict(zip(headers, row)) for row in sheet_data[1:]] if len(sheet_data) > 1 else []
+
+        # Create and show the table view
+        from ripper.rippergui import table_view
+
+        table_widget = table_view.TransactionTableViewWidget(records)
+        dock = QDockWidget(f"Table: {source_info['spreadsheet_name']} - {sheet_name}", self)
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        dock.setWidget(table_widget)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self._view_menu.addAction(dock.toggleViewAction())

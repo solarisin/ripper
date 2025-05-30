@@ -10,7 +10,6 @@ from ripper.rippergui.table_view import (
     TransactionModel,
     TransactionSortFilterProxyModel,
     TransactionTableViewWidget,
-    sample_transactions,
 )
 
 
@@ -279,14 +278,53 @@ class TestTransactionSortFilterProxyModel(unittest.TestCase):
 class TestTransactionTableViewWidget:
     """Test cases for the TransactionTableViewWidget class."""
 
+    @pytest.fixture(autouse=True)
+    def setup_sample_transactions(self):
+        self.sample_transactions = [
+            {
+                "ID": "t1",
+                "Date": QDate(2025, 5, 1),
+                "Description": "Coffee Shop",
+                "Category": "Food & Drink",
+                "Amount": -5.75,
+                "Account": "Checking",
+            },
+            {
+                "ID": "t2",
+                "Date": QDate(2025, 5, 1),
+                "Description": "Grocery Store",
+                "Category": "Groceries",
+                "Amount": -75.20,
+                "Account": "Credit Card",
+            },
+            {
+                "ID": "t3",
+                "Date": QDate(2025, 5, 2),
+                "Description": "Salary Deposit",
+                "Category": "Income",
+                "Amount": 2500.00,
+                "Account": "Checking",
+            },
+            {
+                "ID": "t4",
+                "Date": QDate(2025, 5, 3),
+                "Description": "Online Subscription",
+                "Category": "Software",
+                "Amount": -15.00,
+                "Account": "Credit Card",
+            },
+        ]
+
     def test_initialization(self, qtbot):
         """Test that the widget initializes correctly."""
+        # Create sample transactions to pass into the view
+
         # Create the widget with sample data
-        widget = TransactionTableViewWidget(simulate=True)
+        widget = TransactionTableViewWidget(self.sample_transactions)
         qtbot.addWidget(widget)
 
         # Check that the model was initialized with sample data
-        assert widget.source_model.rowCount() == len(sample_transactions)
+        assert widget.source_model.rowCount() == len(self.sample_transactions)
 
         # Check that the table view was set up correctly
         assert widget.table_view.isSortingEnabled()
@@ -295,7 +333,7 @@ class TestTransactionTableViewWidget:
     def test_clear_all_filters(self, qtbot):
         """Test clearing all filters."""
         # Create the widget with sample data
-        widget = TransactionTableViewWidget(simulate=True)
+        widget = TransactionTableViewWidget(self.sample_transactions)
         qtbot.addWidget(widget)
 
         # Set a filter
