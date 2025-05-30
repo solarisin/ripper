@@ -125,15 +125,9 @@ class RipperDb:
             try:
                 Path(self._db_file_path).unlink()
             except PermissionError:
-                logger.warning(
-                    f"Could not delete database file {
-                        self._db_file_path} - it may be in use"
-                )
+                logger.warning(f"Could not delete database file {self._db_file_path} - it may be in use")
             except Exception as e:
-                logger.error(
-                    f"Error deleting database file {
-                        self._db_file_path}: {e}"
-                )
+                logger.error(f"Error deleting database file {self._db_file_path}: {e}")
 
     def create_tables(self) -> None:
         """

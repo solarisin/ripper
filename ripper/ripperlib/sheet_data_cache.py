@@ -203,15 +203,9 @@ class SheetDataCache:
         )
 
         if range_id:
-            logger.debug(
-                f"Stored range {
-                    cell_range.to_a1_notation()} with ID {range_id}"
-            )
+            logger.debug(f"Stored range {cell_range.to_a1_notation()} with ID {range_id}")
         else:
-            logger.warning(
-                f"Failed to store range {
-                    cell_range.to_a1_notation()}"
-            )
+            logger.warning(f"Failed to store range {cell_range.to_a1_notation()}")
 
     def _combine_range_data(
         self,
