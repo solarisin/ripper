@@ -536,13 +536,17 @@ class MainView(QMainWindow):
         sheets_service = AuthManager().create_sheets_service()
         if not sheets_service:
             QMessageBox.warning(self, "Google Sheets", "Could not authenticate with Google Sheets API.")
-            return
-
-        # Fetch the data (SheetData is list[list[Any]])
-        sheet_data = sheets_backend.fetch_data_from_spreadsheet(sheets_service, spreadsheet_id, range_name)
+            return  # Fetch the data with caching (SheetData is list[list[Any]])
+        sheet_data, load_source = sheets_backend.retrieve_sheet_data(sheets_service, spreadsheet_id, range_name)
         if not sheet_data:
             QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
             return
+
+        # Log the data source for debugging
+        from ripper.ripperlib.defs import LoadSource
+
+        source_text = "database cache" if load_source == LoadSource.DATABASE else "Google Sheets API"
+        logger.info(f"Loaded {len(sheet_data)} rows from {source_text}")
 
         # Convert SheetData to list of dicts for TransactionTableViewWidget
         headers = sheet_data[0] if sheet_data else []
