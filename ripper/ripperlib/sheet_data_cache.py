@@ -51,10 +51,7 @@ class SheetDataCache:
         try:
             # Parse the requested range
             requested_range = CellRange.from_a1_notation(range_str)
-            logger.debug(
-                f"Requested range: {
-                    requested_range.to_a1_notation()}"
-            )
+            logger.debug(f"Requested range: {requested_range.to_a1_notation()}")
 
             # Get cached ranges for this sheet
             cached_ranges = self._get_cached_ranges(spreadsheet_id, sheet_name)

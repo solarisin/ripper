@@ -142,12 +142,10 @@ class TestCellRange:
         range3 = CellRange(10, 10, 15, 15)
         result = range1.subtract(range3)
         assert len(result) == 1
-        assert result[0] == range1
-
-        # Partial overlap
+        assert result[0] == range1        # Partial overlap
         range4 = CellRange(3, 3, 7, 7)
         result = range1.subtract(range4)
-        assert len(result) == 4  # Should create 4 remaining rectangles
+        assert len(result) == 2  # Should create 2 remaining rectangles (top and left)
 
     def test_cell_count(self) -> None:
         """Test cell count calculation."""

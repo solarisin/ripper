@@ -131,8 +131,7 @@ class TestSheetDataCache(unittest.TestCase):
             mock_fetch.assert_called_once_with(
                 self.mock_sheets_service,
                 self.test_spreadsheet_id,
-                f"{
-                    self.test_sheet_name}!{range_a1}",
+                f"{self.test_sheet_name}!{range_a1}",
             )
 
             # Verify data was cached
