@@ -66,16 +66,12 @@ class SheetDataCache:
             overlapping_cached = RangeOptimizer.find_overlapping_cached_ranges(requested_range, cached_ranges)
 
             logger.debug(f"Missing ranges: {[r.to_a1_notation() for r in missing_ranges]}")
-            logger.debug(
-                f"Overlapping cached ranges: {
-                    len(overlapping_cached)}"
-            )
+            logger.debug(f"Overlapping cached ranges: {len(overlapping_cached)}")
 
             # Fetch missing data from API
             api_data = {}
             for missing_range in missing_ranges:
-                range_notation = f"{sheet_name}!{
-                    missing_range.to_a1_notation()}"
+                range_notation = f"{sheet_name}!{missing_range.to_a1_notation()}"
                 logger.debug(f"Fetching from API: {range_notation}")
                 # Import here to avoid circular imports
                 from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet

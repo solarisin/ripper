@@ -40,10 +40,8 @@ class RipperDb:
         self._db_file_path = db_file_path
         self._db_identifier = self.generate_db_identifier()
         logger.info(
-            f"Creating new RipperDb instance {
-                self._db_identifier} targeting database file: {
-                str(
-                    self._db_file_path)}"
+            f"Creating new RipperDb instance {self._db_identifier}"
+            f" targeting database file: {str(self._db_file_path)}"
         )
         self._conn: sqlite.Connection | None = None
         self.open()
