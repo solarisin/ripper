@@ -248,18 +248,14 @@ class RipperDb:
             # Store new sheet metadata
             for sheet in sheet_properties:
                 if sheet.type != "GRID":
-                    logger.warning(
-                        f"Sheet {
-                            sheet.id} of spreadsheet {spreadsheet_id} is not a grid sheet. Skipping."
-                    )
+                    logger.warning(f"Sheet {sheet.id} of spreadsheet {spreadsheet_id} is not a grid sheet. Skipping.")
                     continue
 
                 grid_props = sheet.grid
                 if not grid_props:
                     raise ValueError(
-                        f"""Sheet {
-                            sheet.id} of spreadsheet {spreadsheet_id} is a grid sheet but has no
-                        grid properties."""
+                        f"Sheet {sheet.id} of spreadsheet {spreadsheet_id}"
+                        " is a grid sheet but has no grid properties."
                     )
                 c.execute(
                     """INSERT INTO sheets (spreadsheet_id, sheetId, "index", title, sheetType)
