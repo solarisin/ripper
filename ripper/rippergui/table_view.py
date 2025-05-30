@@ -680,7 +680,6 @@ class TransactionTableViewWidget(QWidget):
         self.setWindowTitle("Tiller Transaction Viewer")
         self.setGeometry(100, 100, 1000, 600)
 
-        # transactions_data is always provided as a list, so this is unreachable
         self._unique_accounts: List[str] = sorted(
             list(set(t.get("Account", "") for t in transactions_data if t.get("Account")))
         )
