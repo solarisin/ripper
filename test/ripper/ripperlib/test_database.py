@@ -35,10 +35,14 @@ class TestDatabaseIntegration(unittest.TestCase):
         c = conn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in c.fetchall()}
-        self.assertEqual(len(tables), 3)
+        # Original 3 tables + 2 new caching tables + sqlite_sequence (auto-created) = 6
+        self.assertEqual(len(tables), 6)
         self.assertIn("sheets", tables)
         self.assertIn("grid_properties", tables)
         self.assertIn("spreadsheets", tables)
+        self.assertIn("sheet_data_ranges", tables)
+        self.assertIn("sheet_data_cells", tables)
+        self.assertIn("sqlite_sequence", tables)  # Auto-created by SQLite for AUTOINCREMENT
         conn.close()
 
     def test_execute_query(self) -> None:

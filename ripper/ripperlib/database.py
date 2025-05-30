@@ -40,7 +40,8 @@ class RipperDb:
         self._db_file_path = db_file_path
         self._db_identifier = self.generate_db_identifier()
         logger.info(
-            f"Creating new RipperDb instance {self._db_identifier} targeting database file: {str(self._db_file_path)}"
+            f"Creating new RipperDb instance {self._db_identifier}"
+            f" targeting database file: {str(self._db_file_path)}"
         )
         self._conn: sqlite.Connection | None = None
         self.open()
@@ -141,7 +142,8 @@ class RipperDb:
 
         with self._conn:
             c = self._conn.cursor()
-            c.execute("PRAGMA foreign_keys = ON")  # Enable foreign key constraints
+            # Enable foreign key constraints
+            c.execute("PRAGMA foreign_keys = ON")
 
             c.execute(
                 """CREATE TABLE IF NOT EXISTS spreadsheets (
@@ -174,6 +176,40 @@ class RipperDb:
                     columnCount INTEGER,
                     FOREIGN KEY (sheetId) REFERENCES sheets(sheetId) ON DELETE CASCADE
                 );"""
+            )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS sheet_data_ranges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    spreadsheet_id TEXT NOT NULL,
+                    sheet_name TEXT NOT NULL,
+                    start_row INTEGER NOT NULL,
+                    start_col INTEGER NOT NULL,
+                    end_row INTEGER NOT NULL,
+                    end_col INTEGER NOT NULL,
+                    cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE,
+                    UNIQUE(spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
+                );"""
+            )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS sheet_data_cells (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    range_id INTEGER NOT NULL,
+                    row_num INTEGER NOT NULL,
+                    col_num INTEGER NOT NULL,
+                    cell_value TEXT,
+                    FOREIGN KEY (range_id) REFERENCES sheet_data_ranges(id) ON DELETE CASCADE,
+                    UNIQUE(range_id, row_num, col_num)
+                );"""
+            )
+            # Create indices for efficient querying
+            c.execute(
+                """CREATE INDEX IF NOT EXISTS idx_sheet_data_ranges_lookup
+                   ON sheet_data_ranges(spreadsheet_id, sheet_name);"""
+            )
+            c.execute(
+                """CREATE INDEX IF NOT EXISTS idx_sheet_data_cells_position
+                   ON sheet_data_cells(range_id, row_num, col_num);"""
             )
             logger.info("Database tables created successfully")
 
@@ -218,8 +254,8 @@ class RipperDb:
                 grid_props = sheet.grid
                 if not grid_props:
                     raise ValueError(
-                        f"""Sheet {sheet.id} of spreadsheet {spreadsheet_id} is a grid sheet but has no
-                        grid properties."""
+                        f"Sheet {sheet.id} of spreadsheet {spreadsheet_id}"
+                        " is a grid sheet but has no grid properties."
                     )
                 c.execute(
                     """INSERT INTO sheets (spreadsheet_id, sheetId, "index", title, sheetType)
@@ -312,7 +348,8 @@ class RipperDb:
             c.execute("SELECT COUNT(*) FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
             if c.rowcount == 0:
                 raise ValueError(
-                    f"Spreadsheet {spreadsheet_id} not found in database. Cannot store thumbnail without a spreadsheet."
+                    f"Spreadsheet {spreadsheet_id} not found in database. "
+                    "Cannot store thumbnail without a spreadsheet."
                 )
 
             c.execute(
@@ -361,19 +398,25 @@ class RipperDb:
         with self._conn:
             c = self._conn.cursor()
 
-            # Check if spreadsheet exists and get the current modifiedTime if so
+            # Check if spreadsheet exists and get the current modifiedTime if
+            # so
             c.execute("SELECT modifiedTime FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
             result = c.fetchone()
             if result:
-                # If modifiedTime is being updated and is different, invalidate related data
+                # If modifiedTime is being updated and is different, invalidate
+                # related data
                 current_modified_time = result[0]
                 if spreadsheet_properties.modified_time != current_modified_time:
-                    # Delete sheets first (this will cascade to grid_properties due to ON DELETE CASCADE)
+                    # Delete sheets first (this will cascade to grid_properties
+                    # due to ON DELETE CASCADE)
                     c.execute("DELETE FROM sheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
                     # Set thumbnail to NULL
                     c.execute("UPDATE spreadsheets SET thumbnail = NULL WHERE spreadsheet_id = ?", (spreadsheet_id,))
+                    # Invalidate sheet data cache
+                    c.execute("DELETE FROM sheet_data_ranges WHERE spreadsheet_id = ?", (spreadsheet_id,))
 
-            # Check if spreadsheet exists and if it does, update it, otherwise insert it
+            # Check if spreadsheet exists and if it does, update it, otherwise
+            # insert it
             c.execute(
                 """INSERT INTO spreadsheets
                    (spreadsheet_id, name, modifiedTime, createdTime, owners, size, shared, webViewLink, thumbnailLink)
@@ -400,6 +443,238 @@ class RipperDb:
             )
         return True
 
+    def store_sheet_data_range(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        start_row: int,
+        start_col: int,
+        end_row: int,
+        end_col: int,
+        cell_data: list[list[Any]],
+    ) -> Optional[int]:
+        """
+        Store sheet data for a specific range in the database.
 
-# Primary database instance
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: The name of the sheet
+            start_row: Starting row (1-based)
+            start_col: Starting column (1-based)
+            end_row: Ending row (1-based)
+            end_col: Ending column (1-based)
+            cell_data: 2D list of cell values
+
+        Returns:
+            Range ID if successful, None otherwise
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return None
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+
+                # Insert or update the range record
+                c.execute(
+                    """INSERT OR REPLACE INTO sheet_data_ranges
+                       (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col, cached_at)
+                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                    (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col),
+                )
+
+                range_id = c.lastrowid
+
+                # Delete existing cell data for this range
+                c.execute("DELETE FROM sheet_data_cells WHERE range_id = ?", (range_id,))
+
+                # Insert cell data
+                for row_offset, row_data in enumerate(cell_data):
+                    for col_offset, cell_value in enumerate(row_data):
+                        row_num = start_row + row_offset
+                        col_num = start_col + col_offset
+
+                        # Convert cell value to string for storage
+                        cell_str = str(cell_value) if cell_value is not None else None
+
+                        c.execute(
+                            """INSERT INTO sheet_data_cells (range_id, row_num, col_num, cell_value)
+                               VALUES (?, ?, ?, ?)""",
+                            (range_id, row_num, col_num, cell_str),
+                        )
+
+                logger.debug(
+                    f"Stored sheet data range {start_row},{start_col}:{end_row},{end_col} "
+                    f"for {spreadsheet_id}!{sheet_name}"
+                )
+                return range_id
+
+        except sqlite.Error as e:
+            logger.error(f"Error storing sheet data range: {e}")
+            return None
+
+    def get_cached_ranges(self, spreadsheet_id: str, sheet_name: str) -> list[dict[str, Any]]:
+        """
+        Get all cached ranges for a specific sheet.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: The name of the sheet
+
+        Returns:
+            List of range dictionaries with metadata
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return []
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+                c.execute(
+                    """SELECT id, start_row, start_col, end_row, end_col, cached_at
+                       FROM sheet_data_ranges
+                       WHERE spreadsheet_id = ? AND sheet_name = ?
+                       ORDER BY cached_at DESC""",
+                    (spreadsheet_id, sheet_name),
+                )
+
+                ranges = []
+                for row in c.fetchall():
+                    ranges.append(
+                        {
+                            "range_id": row[0],
+                            "start_row": row[1],
+                            "start_col": row[2],
+                            "end_row": row[3],
+                            "end_col": row[4],
+                            "cached_at": row[5],
+                        }
+                    )
+
+                return ranges
+
+        except sqlite.Error as e:
+            logger.error(f"Error getting cached ranges: {e}")
+            return []
+
+    def get_sheet_data_from_cache(
+        self, spreadsheet_id: str, sheet_name: str, start_row: int, start_col: int, end_row: int, end_col: int
+    ) -> Optional[list[list[Any]]]:
+        """
+        Retrieve sheet data from cache for a specific range.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: The name of the sheet
+            start_row: Starting row (1-based)
+            start_col: Starting column (1-based)
+            end_row: Ending row (1-based)
+            end_col: Ending column (1-based)
+
+        Returns:
+            2D list of cell values, or None if not fully cached
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return None
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+
+                # Find all ranges that intersect with the requested range
+                c.execute(
+                    """SELECT id, start_row, start_col, end_row, end_col
+                       FROM sheet_data_ranges
+                       WHERE spreadsheet_id = ? AND sheet_name = ?
+                       AND NOT (end_row < ? OR start_row > ? OR end_col < ? OR start_col > ?)""",
+                    (spreadsheet_id, sheet_name, start_row, end_row, start_col, end_col),
+                )
+
+                overlapping_ranges = c.fetchall()
+                if not overlapping_ranges:
+                    return None
+
+                # Initialize result matrix
+                rows = end_row - start_row + 1
+                cols = end_col - start_col + 1
+                result = [[None for _ in range(cols)] for _ in range(rows)]
+                covered = [[False for _ in range(cols)] for _ in range(rows)]
+
+                # Fill in data from overlapping ranges
+                for range_row in overlapping_ranges:
+                    range_id = range_row[0]
+
+                    # Get cell data for this range that intersects with
+                    # requested range
+                    c.execute(
+                        """SELECT row_num, col_num, cell_value
+                           FROM sheet_data_cells
+                           WHERE range_id = ?
+                           AND row_num BETWEEN ? AND ?
+                           AND col_num BETWEEN ? AND ?""",
+                        (range_id, start_row, end_row, start_col, end_col),
+                    )
+
+                    for cell_row in c.fetchall():
+                        cell_row_num, cell_col_num, cell_value = cell_row
+                        result_row = cell_row_num - start_row
+                        result_col = cell_col_num - start_col
+
+                        if 0 <= result_row < rows and 0 <= result_col < cols:
+                            result[result_row][result_col] = cell_value
+                            covered[result_row][result_col] = True
+
+                # Check if the entire requested range is covered
+                all_covered = all(all(row) for row in covered)
+                if not all_covered:
+                    return None  # Not fully cached
+
+                return result
+
+        except sqlite.Error as e:
+            logger.error(f"Error getting sheet data from cache: {e}")
+            return None
+
+    def invalidate_sheet_data_cache(self, spreadsheet_id: str, sheet_name: Optional[str] = None) -> bool:
+        """
+        Invalidate cached sheet data for a spreadsheet or specific sheet.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: The name of the sheet (if None, invalidates all sheets)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+
+                if sheet_name is None:
+                    # Invalidate all sheets for this spreadsheet
+                    c.execute("DELETE FROM sheet_data_ranges WHERE spreadsheet_id = ?", (spreadsheet_id,))
+                    logger.debug(f"Invalidated all sheet data cache for spreadsheet {spreadsheet_id}")
+                else:
+                    # Invalidate specific sheet
+                    c.execute(
+                        "DELETE FROM sheet_data_ranges WHERE spreadsheet_id = ? AND sheet_name = ?",
+                        (spreadsheet_id, sheet_name),
+                    )
+                    logger.debug(f"Invalidated sheet data cache for {spreadsheet_id}!{sheet_name}")
+
+                return True
+
+        except sqlite.Error as e:
+            logger.error(f"Error invalidating sheet data cache: {e}")
+            return False
+
+
+# Global singleton instance for application-wide use
 Db = RipperDb()

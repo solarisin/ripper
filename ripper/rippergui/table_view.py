@@ -1,4 +1,6 @@
 import logging
+import re
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from beartype.typing import Any, Dict, List, Optional, Set, cast
@@ -30,95 +32,101 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# Configure module logger
 log = logging.getLogger("ripper:table_view")
+# --- Helper functions for parsing numbers and dates ---
+"""
+Helper functions for parsing numbers and dates for TransactionModel and sorting.
+"""
 
-# --- Sample Data (Simulating Tiller Spreadsheet Data) ---
-sample_transactions = [
-    {
-        "ID": "t1",
-        "Date": QDate(2025, 5, 1),
-        "Description": "Coffee Shop",
-        "Category": "Food & Drink",
-        "Amount": -5.75,
-        "Account": "Checking",
-    },
-    {
-        "ID": "t2",
-        "Date": QDate(2025, 5, 1),
-        "Description": "Grocery Store",
-        "Category": "Groceries",
-        "Amount": -75.20,
-        "Account": "Credit Card",
-    },
-    {
-        "ID": "t3",
-        "Date": QDate(2025, 5, 2),
-        "Description": "Salary Deposit",
-        "Category": "Income",
-        "Amount": 2500.00,
-        "Account": "Checking",
-    },
-    {
-        "ID": "t4",
-        "Date": QDate(2025, 5, 3),
-        "Description": "Online Subscription",
-        "Category": "Software",
-        "Amount": -15.00,
-        "Account": "Credit Card",
-    },
-    {
-        "ID": "t5",
-        "Date": QDate(2025, 5, 4),
-        "Description": "Book Purchase",
-        "Category": "Shopping",
-        "Amount": -25.99,
-        "Account": "Checking",
-    },
-    {
-        "ID": "t6",
-        "Date": QDate(2025, 5, 5),
-        "Description": "Restaurant Dinner",
-        "Category": "Food & Drink",
-        "Amount": -60.00,
-        "Account": "Credit Card",
-    },
-    {
-        "ID": "t7",
-        "Date": QDate(2025, 5, 5),
-        "Description": "Gasoline",
-        "Category": "Transportation",
-        "Amount": -45.50,
-        "Account": "Credit Card",
-    },
-    {
-        "ID": "t8",
-        "Date": QDate(2025, 5, 6),
-        "Description": "ATM Withdrawal",
-        "Category": "Cash",
-        "Amount": -100.00,
-        "Account": "Checking",
-    },
-    {
-        "ID": "t9",
-        "Date": QDate(2025, 5, 7),
-        "Description": "Refund from Store",
-        "Category": "Shopping",
-        "Amount": 10.50,
-        "Account": "Credit Card",
-    },
-    {
-        "ID": "t10",
-        "Date": QDate(2025, 5, 8),
-        "Description": "Utility Bill",
-        "Category": "Bills",
-        "Amount": -120.30,
-        "Account": "Checking",
-    },
-]
+
+def parse_number(val: object) -> Optional[float]:
+    if isinstance(val, (int, float)):
+        return float(val)
+    if val is None:
+        return None
+    s = str(val).replace(",", "").replace("(", "-").replace(")", "")
+    s = s.strip()
+    s = re.sub(r"[^0-9.\-]", "", s)
+    s = re.sub(r"(?<!^)-", "", s)
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def is_number(val: object) -> bool:
+    return parse_number(val) is not None
+
+
+def parse_date(val: object) -> Optional[QDate]:
+    if val is None:
+        return None
+    if isinstance(val, QDate):
+        return val if val.isValid() else None
+    s = str(val).strip()
+    d = QDate.fromString(s, "yyyy-MM-dd")
+    if d.isValid():
+        return d
+    try:
+        dt = datetime.strptime(s, "%m/%d/%Y")
+        return QDate(dt.year, dt.month, dt.day)
+    except Exception:
+        pass
+    try:
+        dt = datetime.strptime(s, "%d/%m/%Y")
+        return QDate(dt.year, dt.month, dt.day)
+    except Exception:
+        pass
+    return None
+
+
+def is_date(val: object) -> bool:
+    return parse_date(val) is not None
 
 
 class TransactionModel(QAbstractTableModel):
+    _col_type_cache: Dict[int, str]
+
+    def infer_column_type(self, col: int, sample_size: int = 20) -> str:
+        """
+        Infer the type of data in a column: 'number', 'date', or 'string'.
+        Caches the result for efficiency.
+        """
+        if not hasattr(self, "_col_type_cache"):
+            self._col_type_cache = {}
+        if col in self._col_type_cache:
+            return self._col_type_cache[col]
+
+        num_count = 0
+        date_count = 0
+        str_count = 0
+        checked = 0
+        for row in range(len(self._data)):
+            val = self.get_raw_value(row, col)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                continue
+            checked += 1
+            if is_date(val):
+                date_count += 1
+            elif is_number(val):
+                num_count += 1
+            else:
+                str_count += 1
+            if checked >= sample_size:
+                break
+        if num_count >= max(date_count, str_count):
+            typ = "number"
+        elif date_count >= max(num_count, str_count):
+            typ = "date"
+        else:
+            typ = "string"
+        self._col_type_cache[col] = typ
+        return typ
+
+    def clear_type_cache(self) -> None:
+        if hasattr(self, "_col_type_cache"):
+            self._col_type_cache.clear()
+
     """
     Model for displaying transaction data in a table view.
 
@@ -136,6 +144,15 @@ class TransactionModel(QAbstractTableModel):
         super().__init__()
         self._data: List[Dict[str, Any]] = data if data is not None else []
         self._headers: List[str] = ["ID", "Date", "Description", "Category", "Amount", "Account"]
+
+    def get_raw_value(self, row: int, col: int) -> Any:
+        """
+        Return the raw value for a given row and column (for sorting).
+        """
+        if 0 <= row < len(self._data) and 0 <= col < len(self._headers):
+            header = self._headers[col]
+            return self._data[row].get(header)
+        return None
 
     def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         """
@@ -391,55 +408,59 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
 
     def lessThan(self, left: QModelIndex | QPersistentModelIndex, right: QModelIndex | QPersistentModelIndex) -> bool:
         """
-        Compare two items in the model for sorting purposes.
-        This method is called by Qt's sorting mechanism to determine the order of rows.
-
-        Args:
-            left: The left model index to compare
-            right: The right model index to compare
-
-        Returns:
-            True if the left item is less than the right item, False otherwise
+        Compare two items in the model for sorting purposes, inferring type by column content.
         """
         source_model = self.sourceModel()
         if not isinstance(source_model, TransactionModel):
-            raise ValueError("Source model is not a TransactionModel")
-        return self._compare_items_lessthan(source_model, left, right)
+            return super().lessThan(left, right)
 
-    def _compare_items_lessthan(
-        self,
-        source_model: TransactionModel,
-        left: QModelIndex | QPersistentModelIndex,
-        right: QModelIndex | QPersistentModelIndex,
-    ) -> bool:
-        left_data = source_model.data(left, Qt.ItemDataRole.EditRole)
-        right_data = source_model.data(right, Qt.ItemDataRole.EditRole)
-
-        # First check each side for None, if either is None, we can evaluate the comparison now
-        if left_data is None or right_data is None:
-            if left_data is None and right_data is not None:
-                return True
-            return False
-
-        # Based on the column index, we can determine the type of data we are comparing
         col = left.column()
-        if col == source_model._headers.index("Amount"):
-            return self._compare_decimal(left_data, right_data)
-        if col == source_model._headers.index("Date"):
-            return self._compare_dates(left_data, right_data)
-        return self._compare_strings(left_data, right_data)
+        left_raw = source_model.get_raw_value(left.row(), col)
+        right_raw = source_model.get_raw_value(right.row(), col)
 
-    def _compare_decimal(self, left_data: float | Decimal, right_data: float | Decimal) -> bool:
-        try:
-            return Decimal(str(left_data)) < Decimal(str(right_data))
-        except (InvalidOperation, TypeError):
+        # Handle None values
+        if left_raw is None and right_raw is not None:
+            return True
+        if left_raw is None or right_raw is None:
             return False
 
-    def _compare_dates(self, left_data: QDate, right_data: QDate) -> bool:
-        return left_data < right_data
-
-    def _compare_strings(self, left_data: str, right_data: str) -> bool:
-        return left_data.lower() < right_data.lower()
+        col_type = source_model.infer_column_type(col)
+        log.debug(
+            "Comparing column %d (%s) of type '%s' between '%s' and '%s'",
+            col,
+            source_model.headerData(col, Qt.Orientation.Horizontal),
+            col_type,
+            left_raw,
+            right_raw,
+        )
+        if col_type == "number":
+            left_num = parse_number(left_raw)
+            right_num = parse_number(right_raw)
+            # None values are treated as less
+            if left_num is None and right_num is not None:
+                return True
+            if left_num is None or right_num is None:
+                return False
+            return left_num < right_num
+        if col_type == "date":
+            ldate = parse_date(left_raw)
+            rdate = parse_date(right_raw)
+            if ldate is None and rdate is not None:
+                return True
+            if ldate is None or rdate is None:
+                return False
+            return ldate < rdate
+        # Default: string comparison (case-insensitive)
+        is_less: bool = str(left_raw).lower() < str(right_raw).lower()
+        log.debug(
+            "String comparison for column %d (%s): '%s' < '%s' = %s",
+            col,
+            source_model.headerData(col, Qt.Orientation.Horizontal),
+            left_raw,
+            right_raw,
+            is_less,
+        )
+        return is_less
 
 
 # --- Filter Dialog ---
@@ -648,22 +669,17 @@ class TransactionTableViewWidget(QWidget):
     capabilities, along with controls for managing filters.
     """
 
-    def __init__(self, transactions_data: Optional[List[Dict[str, Any]]] = None, *, simulate: bool = False):
+    def __init__(self, transactions_data: list[dict[str, Any]]):
         """
         Initialize the transaction table view widget.
 
         Args:
             transactions_data: List of dictionaries containing transaction data
-            simulate: If True and transactions_data is empty, use sample data
         """
         super().__init__()
         self.setWindowTitle("Tiller Transaction Viewer")
         self.setGeometry(100, 100, 1000, 600)
 
-        if not transactions_data and simulate:
-            transactions_data = sample_transactions
-        if transactions_data is None:
-            transactions_data = []
         self._unique_accounts: List[str] = sorted(
             list(set(t.get("Account", "") for t in transactions_data if t.get("Account")))
         )

@@ -44,6 +44,7 @@ google-auth-stubs = "^0.3.0"
 google-api-python-client-stubs = "^1.29.0"
 types-oauthlib = "^3.2.0.20250516"
 pytest-beartype = "^0.2.0"
+autopep8 = "^2.3.2"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

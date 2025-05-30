@@ -256,3 +256,45 @@ def fetch_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, ran
             {error}"""
         )
         return []
+
+
+def retrieve_sheet_data(service: SheetsService, spreadsheet_id: str, range_name: str) -> tuple[SheetData, LoadSource]:
+    """
+    Retrieve sheet data from cache or API with intelligent caching.
+
+    This function implements smart caching logic:
+    1. Check if the exact range or a super-range is cached
+    2. For sub-ranges, return subset from cache
+    3. For overlapping ranges, combine cached data with API calls for missing parts
+    4. For completely new ranges, fetch from API and cache the result
+
+    Args:
+        service: Authenticated Google Sheets API service
+        spreadsheet_id: The ID of the spreadsheet to read from
+        range_name: The A1 notation of the range to read (includes sheet name and cell range)
+
+    Returns:
+        Tuple of (sheet_data, load_source) where sheet_data is a list of lists containing
+        the values and load_source indicates whether data came from DATABASE or API
+
+    Raises:
+        ValueError: If the range format is invalid
+    """
+    try:
+        # Parse sheet name and range from the range_name
+        if "!" not in range_name:
+            raise ValueError(f"Range must include sheet name (e.g., 'Sheet1!A1:B5'): {range_name}")
+
+        sheet_name, range_part = range_name.split("!", 1)
+
+        # Use the sheet data cache
+        from ripper.ripperlib.sheet_data_cache import SheetDataCache
+
+        cache = SheetDataCache()
+
+        return cache.get_sheet_data(service, spreadsheet_id, sheet_name, range_part)
+
+    except Exception as e:
+        logger.error(f"Error in retrieve_sheet_data: {e}")
+        # Fallback to direct API call
+        return fetch_data_from_spreadsheet(service, spreadsheet_id, range_name), LoadSource.API
