@@ -8,11 +8,12 @@
 8. prefer typing constructs from the beartype.typing module
 9. prefer | over Union for type hints
 10. when changes are made to the code, ensure that the tests are updated accordingly
-11. after all changes are complete run "poetry run flake8 && poetry run mypy && poetry run pytest" to validate. Fix any errors that arise.
-12. use descriptive names for functions and variables
-13. avoid using global variables, prefer passing parameters to functions
-14. avoid using mutable default arguments in function definitions
-15. ensure that all functions have docstrings explaining their purpose and usage
-16. use f-strings for string formatting
-17. avoid using print statements for debugging, use loguru instead
-18. avoid imports inside functions, prefer placing them at the top of the file
+11. when adding tests, only start fixing flake8 or mypy errors in tests after all tests are passing, unless they are causing the tests to fail
+12. after all changes are complete run "poetry run flake8 && poetry run mypy" to validate structure. Fix any errors that arise.
+13. use descriptive names for functions and variables
+14. avoid using global variables, prefer passing parameters to functions
+15. avoid using mutable default arguments in function definitions
+16. ensure that all functions have docstrings explaining their purpose and usage
+17. use f-strings for string formatting
+18. avoid using print statements for debugging, use loguru instead
+19. avoid imports inside functions, prefer placing them at the top of the file
