@@ -54,8 +54,8 @@ jobs:
         poetry run pytest -m "not qt" \
           --ignore=test/ripper/test_main.py \
           --ignore=test/ripper/rippergui/test_table_view.py \
-          --ignore=test/ripper/ripperlib/test_main.py \
-          --ignore=test/ripper/ripperlib/test_mainview.py \
+          --ignore=test/ripper/rippergui/test_mainview.py \
+          --ignore=test/ripper/rippergui/test_oauth_client_config_view.py \
           --ignore=test/ripper/rippergui/test_sheets_selection_view.py
 
     - name: Upload coverage report
