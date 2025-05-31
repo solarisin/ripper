@@ -149,6 +149,13 @@ def cli(
 
         # Initialize the main window
         app = QApplication(sys.argv)
+
+        # Set application properties
+        app.setApplicationName("ripper")
+        app.setOrganizationName("ripper")
+        app.setApplicationVersion(ctx.obj["VERSION"])
+        app.setStyle("Fusion")
+
         main_window = MainView()
         AuthManager().check_stored_credentials()
         main_window.show()

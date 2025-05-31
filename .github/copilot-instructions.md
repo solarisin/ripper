@@ -17,3 +17,13 @@
 17. use f-strings for string formatting
 18. avoid using print statements for debugging, use loguru instead
 19. avoid imports inside functions, prefer placing them at the top of the file
+20. ensure no blank lines contain any whitespace
+21. ensure there is no whitespace at the end of lines
+22. Use PySide6 (Qt6) instead of PyQt5 or other Qt bindings
+23. Follow Qt best practices for widget creation and layout management
+24. Include proper signal-slot connections where appropriate
+25. Use modern Python type hints
+26. Create clean, modular widget classes that can be easily tested
+27. Include proper error handling for GUI operations
+28. Use Qt's resource system when dealing with images or icons
+29. Follow Qt styling conventions and use Qt Style Sheets (QSS) when needed
