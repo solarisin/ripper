@@ -13,10 +13,13 @@ from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QScrollArea,
+    QSplitter,
     QToolBar,
     QToolTip,
     QWidget,
@@ -25,6 +28,7 @@ from PySide6.QtWidgets import (
 from ripper.rippergui.fonts import FontId, FontManager
 from ripper.rippergui.oauth_client_config_view import AuthView
 from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
+from ripper.rippergui.widgets.accordion_widget import AccordionWidget
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
 
 
@@ -147,19 +151,13 @@ class MainView(QMainWindow):
             | QMainWindow.DockOption.AnimatedDocks
             | QMainWindow.DockOption.AllowNestedDocks
         )
-        self.resize(QSize(1200, 600))
-
-        # Create UI elements
+        self.resize(QSize(1200, 600))  # Create UI elements
         self.create_menus()
         self.create_tool_bars()
         self.create_status_bar()
 
-        # Ensure we have a central widget, then hide it
-        grid_layout = QGridLayout()
-        widget = QWidget()
-        widget.setLayout(grid_layout)
-        self.setCentralWidget(widget)
-        self.centralWidget().hide()
+        # Create the main layout with fixed accordion sidebar
+        self.create_main_layout()
 
         # Check if OAuth client is configured and update UI accordingly
         self.update_oauth_ui()
@@ -219,13 +217,92 @@ class MainView(QMainWindow):
         self.statusBar().showMessage("Ready")
 
         # Create a permanent widget for auth status
-        self.statusBar().addPermanentWidget(self._auth_status_label)
-
-        # Connect to auth state changed signal
+        self.statusBar().addPermanentWidget(self._auth_status_label)  # Connect to auth state changed signal
         AuthManager().authStateChanged.connect(self.update_auth_status)
 
         # Initialize auth status display
         self.update_auth_status(AuthManager().auth_info())
+
+    def create_main_layout(self) -> None:
+        """
+        Create the main layout with a fixed accordion sidebar on the left and dockable area on the right.
+        """
+        # Create the main central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)  # Create horizontal splitter for sidebar and main content
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)  # Create accordion sidebar with scroll area
+        self._accordion_widget = AccordionWidget(self)
+
+        # Wrap accordion in a scroll area for when panels become too tall
+        accordion_scroll_area = QScrollArea()
+        accordion_scroll_area.setWidget(self._accordion_widget)
+        accordion_scroll_area.setWidgetResizable(True)
+        accordion_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        accordion_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        accordion_scroll_area.setMaximumWidth(300)
+        accordion_scroll_area.setMinimumWidth(200)
+
+        # Add placeholder panels to the accordion
+        self._add_placeholder_accordion_panels()
+
+        # Create main content area (empty widget that will hold dockable content)
+        self._main_content_area = QWidget()
+        self._main_content_area.setStyleSheet("background-color: #222222; border: 1px solid;")
+
+        # Add a label to indicate this is the dockable area
+        placeholder_layout = QHBoxLayout(self._main_content_area)
+        placeholder_label = QLabel("Nothing, yet!")
+        placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # placeholder_label.setStyleSheet("font-size: 14px; border: none;")
+        placeholder_label.setStyleSheet("color: #666; font-size: 14px; border: none;")
+        placeholder_layout.addWidget(placeholder_label)
+
+        # Add widgets to splitter
+        main_splitter.addWidget(accordion_scroll_area)
+        main_splitter.addWidget(self._main_content_area)
+
+        # Set splitter proportions (sidebar smaller than main content)
+        main_splitter.setSizes([250, 950])
+
+        # Set the main layout
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(main_splitter)
+
+    def _add_placeholder_accordion_panels(self) -> None:
+        """
+        Add placeholder panels to the accordion widget for demonstration.
+        """  # Create first panel - Navigation
+        navigation_panel_content = QWidget()
+        nav_layout = QGridLayout(navigation_panel_content)
+        nav_layout.setContentsMargins(5, 5, 5, 5)
+
+        # Add some placeholder navigation items
+        nav_items = ["📊 Data Sources", "📈 Charts", "🔍 Filters", "⚙️ Settings"]
+
+        for i, item in enumerate(nav_items):
+            label = QLabel(item)
+            label.setStyleSheet("padding: 5px; border: 1px solid;")
+            label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            nav_layout.addWidget(label, i, 0)
+
+        self._accordion_widget.add_panel("Navigation", navigation_panel_content, expanded=True)
+
+        # Create second panel - Tools
+        tools_panel_content = QWidget()
+        tools_layout = QGridLayout(tools_panel_content)
+        tools_layout.setContentsMargins(5, 5, 5, 5)
+
+        # Add some placeholder tool items
+        tool_items = ["🔧 Data Cleanup", "📋 Export", "🔄 Refresh", "📤 Share"]
+
+        for i, item in enumerate(tool_items):
+            label = QLabel(item)
+            label.setStyleSheet("padding: 5px; border: 1px solid;")
+            label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            tools_layout.addWidget(label, i, 0)
+
+        self._accordion_widget.add_panel("Tools", tools_panel_content, expanded=False)
 
     # Actions ###########################################################################
 
@@ -540,9 +617,7 @@ class MainView(QMainWindow):
         sheet_data, load_source = sheets_backend.retrieve_sheet_data(sheets_service, spreadsheet_id, range_name)
         if not sheet_data:
             QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
-            return
-
-        # Log the data source for debugging
+            return  # Log the data source for debugging
         from ripper.ripperlib.defs import LoadSource
 
         source_text = "database cache" if load_source == LoadSource.DATABASE else "Google Sheets API"
@@ -552,12 +627,15 @@ class MainView(QMainWindow):
         headers = sheet_data[0] if sheet_data else []
         records = [dict(zip(headers, row)) for row in sheet_data[1:]] if len(sheet_data) > 1 else []
 
-        # Create and show the table view
+        # Create and show the table view as a dockable widget
         from ripper.rippergui import table_view
 
         table_widget = table_view.TransactionTableViewWidget(records)
-        dock = QDockWidget(f"Table: {source_info['spreadsheet_name']} - {sheet_name}", self)
+        dock_title = f"Table: {source_info['spreadsheet_name']} - {sheet_name}"
+        dock = QDockWidget(dock_title, self)
         dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         dock.setWidget(table_widget)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+
+        # Add the dock to the right side (away from the fixed accordion sidebar)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         self._view_menu.addAction(dock.toggleViewAction())
