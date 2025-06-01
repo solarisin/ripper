@@ -14,9 +14,13 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from ripper.ripperlib.range_manager import CachedRange, CellRange, RangeOptimizer
-from ripper.ripperlib.range_manager import _cell_reference_to_a1 as _cell_ref_to_a1
-from ripper.ripperlib.range_manager import _parse_cell_reference
+from ripper.ripperlib.range_manager import (
+    CachedRange,
+    CellRange,
+    RangeOptimizer,
+    _cell_reference_to_a1,
+    _parse_cell_reference,
+)
 
 # Test timestamp for consistent testing
 TEST_TIMESTAMP = datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -42,23 +46,6 @@ def valid_cell_range() -> st.SearchStrategy[tuple[int, int, int, int]]:
     return st.tuples(positive_ints, positive_ints, positive_ints, positive_ints).filter(
         lambda x: x[0] <= x[2] and x[1] <= x[3]
     )
-
-
-def _cell_reference_to_a1(row: int, col: int) -> str:
-    """Convert row and column indices to A1 notation.
-
-    Args:
-        row: 1-based row index
-        col: 1-based column index (A=1, B=2, ..., Z=26, AA=27, etc.)
-
-    Returns:
-        A1 notation string (e.g., "A1", "B2", "AA1")
-    """
-    col_str = ""
-    while col > 0:
-        col, remainder = divmod(col - 1, 26)
-        col_str = chr(65 + remainder) + col_str
-    return f"{col_str}{row}"
 
 
 # Fixtures for test data
@@ -293,6 +280,8 @@ class TestCellRange:
         assert range_obj.end_col == end_col
         assert range_obj.start_row == start_row
         assert range_obj.start_col == start_col
+        assert range_obj.row_count == end_row - start_row + 1
+        assert range_obj.col_count == end_col - start_col + 1
 
     @pytest.mark.parametrize(
         "start_row,start_col,end_row,end_col,expected_valid",
@@ -572,10 +561,10 @@ class TestUtilityFunctions:
 
     def test_cell_reference_to_a1(self) -> None:
         """Test converting coordinates to A1 notation."""
-        assert _cell_ref_to_a1(1, 1) == "A1"
-        assert _cell_ref_to_a1(26, 26) == "Z26"
-        assert _cell_ref_to_a1(1, 27) == "AA1"
-        assert _cell_ref_to_a1(1048576, 16384) == "XFD1048576"  # Max Excel range
+        assert _cell_reference_to_a1(1, 1) == "A1"
+        assert _cell_reference_to_a1(26, 26) == "Z26"
+        assert _cell_reference_to_a1(1, 27) == "AA1"
+        assert _cell_reference_to_a1(1048576, 16384) == "XFD1048576"  # Max Excel range
 
 
 class TestRangeOptimizer:

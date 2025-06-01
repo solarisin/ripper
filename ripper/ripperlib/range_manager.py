@@ -98,6 +98,16 @@ class CellRange:
             and self.end_col >= other.end_col
         )
 
+    @property
+    def row_count(self) -> int:
+        """Get the number of rows in this range."""
+        return self.end_row - self.start_row + 1
+
+    @property
+    def col_count(self) -> int:
+        """Get the number of columns in this range."""
+        return self.end_col - self.start_col + 1
+
     def overlaps_with(self, other: "CellRange") -> bool:
         """
         Check if this range overlaps with another range.
