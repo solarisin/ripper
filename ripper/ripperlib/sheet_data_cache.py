@@ -31,7 +31,7 @@ class SheetDataCache:
 
     def get_sheet_data(
         self, service: SheetsService, spreadsheet_id: str, sheet_name: str, range_str: str
-    ) -> tuple[SheetData, LoadSource]:
+    ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
         """
         Get sheet data from cache or API, with intelligent range optimization.
 
@@ -50,53 +50,53 @@ class SheetDataCache:
         """
         try:
             # Parse the requested range
-            requested_range = CellRange.from_a1_notation(range_str)
-            logger.debug(f"Requested range: {requested_range.to_a1_notation()}")
-
-            # Get cached ranges for this sheet
+            requested_range = CellRange.from_a1_notation(range_str)  # Get cached ranges for this sheet
             cached_ranges = self._get_cached_ranges(spreadsheet_id, sheet_name)
 
             # Check if we can satisfy the request entirely from cache
             if RangeOptimizer.can_satisfy_from_cache(requested_range, cached_ranges):
-                logger.debug("Request can be satisfied entirely from cache")
-                return self._get_data_from_cache(spreadsheet_id, sheet_name, requested_range), LoadSource.DATABASE
-
-            # Find what ranges we need to fetch from API
+                data = self._get_data_from_cache(spreadsheet_id, sheet_name, requested_range)
+                range_sources = [(LoadSource.DATABASE, range_str)]
+                return data, range_sources  # Find what ranges we need to fetch from API
             missing_ranges = RangeOptimizer.find_missing_ranges(requested_range, cached_ranges)
             overlapping_cached = RangeOptimizer.find_overlapping_cached_ranges(requested_range, cached_ranges)
-
-            logger.debug(f"Missing ranges: {[r.to_a1_notation() for r in missing_ranges]}")
-            logger.debug(f"Overlapping cached ranges: {len(overlapping_cached)}")
 
             # Fetch missing data from API
             api_data = {}
             for missing_range in missing_ranges:
                 range_notation = f"{sheet_name}!{missing_range.to_a1_notation()}"
-                logger.debug(f"Fetching from API: {range_notation}")
                 # Import here to avoid circular imports
                 from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
 
                 data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
                 # Store in cache regardless of whether data is empty
                 api_data[missing_range] = data
-                if data:
-                    # Only store non-empty data in cache
+                if data:  # Only store non-empty data in cache
                     self._store_range_data(spreadsheet_id, sheet_name, missing_range, data)
 
             # Combine cached and API data to build the final result
             result_data = self._combine_range_data(
                 spreadsheet_id, sheet_name, requested_range, overlapping_cached, api_data
             )
+            # Build range sources list based on what was fetched
+            range_sources = []
 
-            # Determine load source based on what was fetched
-            if not missing_ranges:
-                load_source = LoadSource.DATABASE
-            elif not overlapping_cached:
-                load_source = LoadSource.API
-            else:
-                load_source = LoadSource.API  # Mixed, but API took precedence
+            # Add cached ranges
+            for cached_range in overlapping_cached:
+                range_sources.append((LoadSource.DATABASE, cached_range.range_obj.to_a1_notation()))
 
-            return result_data, load_source
+            # Add API ranges
+            for missing_range in missing_ranges:
+                range_sources.append((LoadSource.API, missing_range.to_a1_notation()))
+
+            # If no specific ranges, use the original request
+            if not range_sources:
+                if not missing_ranges:
+                    range_sources = [(LoadSource.DATABASE, range_str)]
+                else:
+                    range_sources = [(LoadSource.API, range_str)]
+
+            return result_data, range_sources
 
         except Exception as e:
             logger.error(f"Error getting sheet data: {e}")
@@ -105,7 +105,7 @@ class SheetDataCache:
 
             range_notation = f"{sheet_name}!{range_str}"
             data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
-            return data, LoadSource.API
+            return data, [(LoadSource.API, range_str)]
 
     def invalidate_cache(self, spreadsheet_id: str, sheet_name: Optional[str] = None) -> bool:
         """
@@ -131,6 +131,19 @@ class SheetDataCache:
         Returns:
             List of CachedRange objects
         """
+        # First, detect and clean up incomplete ranges
+        incomplete_ranges = self._db.detect_incomplete_ranges(spreadsheet_id, sheet_name)
+
+        if incomplete_ranges:
+            logger.info(f"Found {len(incomplete_ranges)} incomplete ranges, cleaning up...")
+            for range_id in incomplete_ranges:
+                self._db.delete_range_data(range_id)
+
+        # Clean up orphaned ranges
+        orphaned_count = self._db.clean_orphaned_ranges(spreadsheet_id, sheet_name)
+        if orphaned_count > 0:
+            logger.debug(f"Cleaned up {orphaned_count} orphaned ranges")
+
         cached_data = self._db.get_cached_ranges(spreadsheet_id, sheet_name)
 
         ranges = []
@@ -203,7 +216,10 @@ class SheetDataCache:
         )
 
         if range_id:
-            logger.debug(f"Stored range {cell_range.to_a1_notation()} with ID {range_id}")
+            logger.debug(
+                f"Successfully stored range {cell_range.to_a1_notation()}"
+                f" for sheet '{sheet_name}' in spreadsheet '{spreadsheet_id}'"
+            )
         else:
             logger.warning(f"Failed to store range {cell_range.to_a1_notation()}")
 
@@ -304,3 +320,48 @@ class SheetDataCache:
                     result_col = result_start_col + col_offset
                     if 0 <= result_col < len(result[result_row]):
                         result[result_row][result_col] = cell_value
+
+    def validate_cache_integrity(self, spreadsheet_id: str, sheet_name: str) -> bool:
+        """
+        Validate the integrity of cached data for a sheet.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: The name of the sheet
+
+        Returns:
+            True if cache is valid, False if there are integrity issues
+        """
+        try:
+            # Get cached ranges
+            cached_ranges = self._get_cached_ranges(spreadsheet_id, sheet_name)
+
+            if not cached_ranges:
+                return True  # Empty cache is valid
+
+            # Validate each range has cell data
+            for cached_range in cached_ranges:
+                range_obj = cached_range.range_obj
+
+                # Try to get a small sample from this range to verify it has data
+                test_data = self._db.get_sheet_data_from_cache(
+                    spreadsheet_id,
+                    sheet_name,
+                    range_obj.start_row,
+                    range_obj.start_col,
+                    min(range_obj.start_row + 2, range_obj.end_row),  # Just test first few rows
+                    min(range_obj.start_col + 2, range_obj.end_col),  # Just test first few cols
+                )
+
+                if test_data is None:
+                    logger.warning(
+                        f"Cache integrity issue: Range {cached_range.range_id} "
+                        f"({range_obj.to_a1_notation()}) has no accessible data"
+                    )
+                    return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error validating cache integrity: {e}")
+            return False

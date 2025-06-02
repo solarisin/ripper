@@ -258,7 +258,9 @@ def fetch_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, ran
         return []
 
 
-def retrieve_sheet_data(service: SheetsService, spreadsheet_id: str, range_name: str) -> tuple[SheetData, LoadSource]:
+def retrieve_sheet_data(
+    service: SheetsService, spreadsheet_id: str, range_name: str
+) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
     """
     Retrieve sheet data from cache or API with intelligent caching.
 
@@ -271,11 +273,10 @@ def retrieve_sheet_data(service: SheetsService, spreadsheet_id: str, range_name:
     Args:
         service: Authenticated Google Sheets API service
         spreadsheet_id: The ID of the spreadsheet to read from
-        range_name: The A1 notation of the range to read (includes sheet name and cell range)
-
-    Returns:
-        Tuple of (sheet_data, load_source) where sheet_data is a list of lists containing
-        the values and load_source indicates whether data came from DATABASE or API
+        range_name: The A1 notation of the range to read (includes sheet name and cell range)    Returns:
+        Tuple of (sheet_data, range_sources) where sheet_data is a list of lists containing
+        the values and range_sources is a list of (LoadSource, range_str) pairs indicating
+        which ranges came from which sources
 
     Raises:
         ValueError: If the range format is invalid
@@ -297,4 +298,4 @@ def retrieve_sheet_data(service: SheetsService, spreadsheet_id: str, range_name:
     except Exception as e:
         logger.error(f"Error in retrieve_sheet_data: {e}")
         # Fallback to direct API call
-        return fetch_data_from_spreadsheet(service, spreadsheet_id, range_name), LoadSource.API
+        return fetch_data_from_spreadsheet(service, spreadsheet_id, range_name), [(LoadSource.API, range_name)]

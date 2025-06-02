@@ -69,6 +69,18 @@ class CellRange:
         end_cell = _cell_reference_to_a1(self.end_row, self.end_col)
         return f"{start_cell}:{end_cell}"
 
+    def __contains__(self, other: "CellRange") -> bool:
+        """
+        Support the 'in' operator for range containment.
+
+        Args:
+            other: The range to check
+
+        Returns:
+            True if this range contains the other range
+        """
+        return self.contains(other)
+
     def contains(self, other: "CellRange") -> bool:
         """
         Check if this range completely contains another range.
@@ -85,6 +97,16 @@ class CellRange:
             and self.end_row >= other.end_row
             and self.end_col >= other.end_col
         )
+
+    @property
+    def row_count(self) -> int:
+        """Get the number of rows in this range."""
+        return self.end_row - self.start_row + 1
+
+    @property
+    def col_count(self) -> int:
+        """Get the number of columns in this range."""
+        return self.end_col - self.start_col + 1
 
     def overlaps_with(self, other: "CellRange") -> bool:
         """
@@ -140,6 +162,40 @@ class CellRange:
 
         return CellRange(start_row, start_col, end_row, end_col)
 
+    def _subtract_single_cell(self, intersection: "CellRange") -> list["CellRange"]:
+        """
+        Calculate the remaining regions when a single cell is subtracted from this range.
+
+        This method handles the special case where a single cell needs to be removed from
+        a larger range. It returns up to 4 rectangular regions that represent the areas
+        remaining after the cell is removed: left, right, top, and bottom parts.
+
+        Args:
+            intersection: A CellRange representing a single cell (start == end)
+
+        Returns:
+            List of CellRange objects representing the remaining rectangular areas
+            after the single cell is subtracted. May return 0-4 ranges depending
+            on the position of the cell within this range.
+        """
+        remaining_ranges = []
+        row, col = intersection.start_row, intersection.start_col
+
+        # Left part
+        if col > self.start_col:
+            remaining_ranges.append(CellRange(self.start_row, self.start_col, self.end_row, col - 1))
+        # Right part
+        if col < self.end_col:
+            remaining_ranges.append(CellRange(self.start_row, col + 1, self.end_row, self.end_col))
+        # Top part
+        if row > self.start_row:
+            remaining_ranges.append(CellRange(self.start_row, col, row - 1, col))
+        # Bottom part
+        if row < self.end_row:
+            remaining_ranges.append(CellRange(row + 1, col, self.end_row, col))
+
+        return remaining_ranges
+
     def subtract(self, other: "CellRange") -> list["CellRange"]:
         """
         Subtract another range from this range, returning remaining rectangles.
@@ -162,6 +218,11 @@ class CellRange:
 
         remaining_ranges = []
 
+        # Special case: subtracting a single cell
+        if intersection.start_row == intersection.end_row and intersection.start_col == intersection.end_col:
+            return self._subtract_single_cell(intersection)
+
+        # Original logic for non-single cell ranges
         # Top rectangle
         if self.start_row < intersection.start_row:
             remaining_ranges.append(CellRange(self.start_row, self.start_col, intersection.start_row - 1, self.end_col))
@@ -173,13 +234,23 @@ class CellRange:
         # Left rectangle (only the middle section)
         if self.start_col < intersection.start_col:
             remaining_ranges.append(
-                CellRange(intersection.start_row, self.start_col, intersection.end_row, intersection.start_col - 1)
+                CellRange(
+                    max(self.start_row, intersection.start_row),
+                    self.start_col,
+                    min(self.end_row, intersection.end_row),
+                    intersection.start_col - 1,
+                )
             )
 
         # Right rectangle (only the middle section)
         if self.end_col > intersection.end_col:
             remaining_ranges.append(
-                CellRange(intersection.start_row, intersection.end_col + 1, intersection.end_row, self.end_col)
+                CellRange(
+                    max(self.start_row, intersection.start_row),
+                    intersection.end_col + 1,
+                    min(self.end_row, intersection.end_row),
+                    self.end_col,
+                )
             )
 
         return remaining_ranges
@@ -305,12 +376,16 @@ class RangeOptimizer:
             cached_ranges: List of all cached ranges
 
         Returns:
-            List of cached ranges that overlap with the requested range
+            List of cached ranges that overlap with the requested range,
+            sorted by most recent first (descending order of cached_at)
         """
         overlapping = []
         for cached_range in cached_ranges:
             if cached_range.range_obj.overlaps_with(requested_range):
                 overlapping.append(cached_range)
+
+        # Sort by most recent first (descending order of cached_at)
+        overlapping.sort(key=lambda x: x.cached_at, reverse=True)
         return overlapping
 
     @staticmethod
@@ -326,4 +401,22 @@ class RangeOptimizer:
             True if the requested range can be completely satisfied from cache
         """
         missing_ranges = RangeOptimizer.find_missing_ranges(requested_range, cached_ranges)
-        return len(missing_ranges) == 0
+
+        # Be more conservative - if there are any missing ranges, don't claim it can be satisfied from cache
+        # This helps avoid issues where ranges exist but don't have cell data
+        if len(missing_ranges) > 0:
+            return False
+
+        # Additional validation: ensure cached ranges actually overlap meaningfully
+        # Check that we have overlapping ranges that cover the entire requested area
+        overlapping = RangeOptimizer.find_overlapping_cached_ranges(requested_range, cached_ranges)
+        if not overlapping:
+            return False
+
+        # Create a union of all overlapping ranges to see if they fully contain the requested range
+        if len(overlapping) == 1:
+            return overlapping[0].range_obj.contains(requested_range)
+
+        # For multiple ranges, we rely on the missing_ranges calculation
+        # If missing_ranges is empty, then the ranges should cover everything
+        return True

@@ -4,9 +4,15 @@ Pytest configuration file.
 This file contains fixtures and configuration for pytest.
 """
 
-import sys
-from pathlib import Path
+from datetime import datetime, timezone
 
-# Add the project root to the Python path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+import pytest
+
+# Fixed timestamp for testing
+TEST_TIMESTAMP = datetime.now(timezone.utc)
+
+
+@pytest.fixture
+def test_timestamp() -> datetime:
+    """Return a fixed timestamp for testing."""
+    return TEST_TIMESTAMP

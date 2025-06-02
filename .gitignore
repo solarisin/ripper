@@ -10,3 +10,4 @@ coverage.xml
 monkeytype.sqlite3
 .mypy_cache/
 test/test.db
+.hypothesis/
