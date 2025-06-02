@@ -625,10 +625,16 @@ class RipperDb:
                         expected_rows = min(range_end_row, end_row) - max(range_start_row, start_row) + 1
                         expected_cols = min(range_end_col, end_col) - max(range_start_col, start_col) + 1
                         expected_cells = expected_rows * expected_cols
+                        actual_start_row = max(range_start_row, start_row)
+                        actual_end_row = min(range_end_row, end_row)
+                        actual_start_col = max(range_start_col, start_col)
+                        actual_end_col = min(range_end_col, end_col)
                         logger.warning(
-                            f"Range {range_id} has no cell data but should cover {expected_cells} cells "
-                            f"(rows {max(range_start_row, start_row)}-{min(range_end_row, end_row)}, "
-                            f"cols {max(range_start_col, start_col)}-{min(range_end_col, end_col)})"
+                            f"Range {range_id} has no cell data but should cover {expected_cells} cells. "
+                            f"Expected boundaries: rows {actual_start_row}-{actual_end_row} "
+                            f"({expected_rows} rows), cols {actual_start_col}-{actual_end_col} "
+                            f"({expected_cols} cols). Range definition: rows {range_start_row}-{range_end_row}, "
+                            f"cols {range_start_col}-{range_end_col}"
                         )
 
                     for cell_row in cells:

@@ -163,6 +163,21 @@ class CellRange:
         return CellRange(start_row, start_col, end_row, end_col)
 
     def _subtract_single_cell(self, intersection: "CellRange") -> list["CellRange"]:
+        """
+        Calculate the remaining regions when a single cell is subtracted from this range.
+
+        This method handles the special case where a single cell needs to be removed from
+        a larger range. It returns up to 4 rectangular regions that represent the areas
+        remaining after the cell is removed: left, right, top, and bottom parts.
+
+        Args:
+            intersection: A CellRange representing a single cell (start == end)
+
+        Returns:
+            List of CellRange objects representing the remaining rectangular areas
+            after the single cell is subtracted. May return 0-4 ranges depending
+            on the position of the cell within this range.
+        """
         remaining_ranges = []
         row, col = intersection.start_row, intersection.start_col
 
