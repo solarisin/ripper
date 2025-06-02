@@ -4,7 +4,6 @@ Script to find test files that import from PySide6 modules.
 Used in CI to automatically generate the list of test files to ignore.
 """
 
-import os
 import re
 from pathlib import Path
 
