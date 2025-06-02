@@ -30,8 +30,8 @@ def configure_logging(log_level: str = "DEBUG") -> None:
         filter=lambda record: record["level"].no < 40,  # 40 is ERROR
         format=(
             "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-            "<level>{level: <8}</level> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{level: <7}</level> | "
+            "<cyan>{file.path}</cyan>:<cyan>{line}</cyan> <light-magenta>{function}</light-magenta> - "
             "<level>{message}</level>"
         ),
     )
@@ -41,8 +41,8 @@ def configure_logging(log_level: str = "DEBUG") -> None:
         level=stderr_level,
         format=(
             "<red>{time:YYYY-MM-DD HH:mm:ss}</red> | "
-            "<level>{level: <8}</level> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{level: <7}</level> | "
+            "<cyan>{file.path}</cyan>:<cyan>{line}</cyan> <light-magenta>{function}</light-magenta> - "
             "<level>{message}</level>"
         ),
     )
@@ -75,8 +75,6 @@ def get_version() -> str:
         version = importlib.metadata.version("ripper")
         return str(version)
     except importlib.metadata.PackageNotFoundError:
-        # Fall back to reading from pyproject.toml
-        logger.debug("Package not installed, reading version from pyproject.toml")
         pyproject_toml = toml.load(str(project_path / "pyproject.toml"))
         return str(pyproject_toml["project"]["version"])
 
@@ -222,6 +220,7 @@ def clean(ctx: click.Context) -> None:
     Args:
         ctx (click.Context): The Click context object.
     """
+    Db.close()
     log_context(ctx)
     db_path: Path = ctx.obj["DB_PATH"]
     if db_path.exists():

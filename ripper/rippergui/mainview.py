@@ -25,11 +25,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import ripper.ripperlib.sheets_backend as sheets_backend
+from ripper.rippergui import table_view
 from ripper.rippergui.fonts import FontId, FontManager
 from ripper.rippergui.oauth_client_config_view import AuthView
 from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
 from ripper.rippergui.widgets.accordion_widget import AccordionWidget
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
+from ripper.ripperlib.defs import LoadSource
 
 
 class MainView(QMainWindow):
@@ -602,9 +605,6 @@ class MainView(QMainWindow):
         logger.info(f"Data source selected: {source_info}")
 
         # Fetch data from Google Sheets API for the selected range
-        import ripper.ripperlib.sheets_backend as sheets_backend
-        from ripper.ripperlib.auth import AuthManager
-
         spreadsheet_id = source_info["spreadsheet_id"]
         sheet_name = source_info["sheet_name"]
         sheet_range = source_info["sheet_range"]
@@ -614,22 +614,31 @@ class MainView(QMainWindow):
         if not sheets_service:
             QMessageBox.warning(self, "Google Sheets", "Could not authenticate with Google Sheets API.")
             return  # Fetch the data with caching (SheetData is list[list[Any]])
-        sheet_data, load_source = sheets_backend.retrieve_sheet_data(sheets_service, spreadsheet_id, range_name)
+        sheet_data, range_sources = sheets_backend.retrieve_sheet_data(sheets_service, spreadsheet_id, range_name)
         if not sheet_data:
             QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
             return  # Log the data source for debugging
-        from ripper.ripperlib.defs import LoadSource
 
-        source_text = "database cache" if load_source == LoadSource.DATABASE else "Google Sheets API"
-        logger.info(f"Loaded {len(sheet_data)} rows from {source_text}")
+        # Generate appropriate message based on sources
+        if len(range_sources) == 1 or all(s == range_sources[0][0] for s, _ in range_sources):
+            # Single source, or all sources are from the same origin
+            source, range_str = range_sources[0]
+            source_text = "database cache" if source == LoadSource.DATABASE else "Google Sheets API"
+            logger.info(f"Loaded {len(sheet_data)} rows from {source_text} (range: {range_str})")
+        else:
+            # Multiple sources from different origins
+            logger.info(
+                f"Loaded {len(sheet_data)} total rows from selected sheet across {len(range_sources)} separate ranges."
+            )
+            for source, range_str in range_sources:
+                source_text = "database cache" if source == LoadSource.DATABASE else "Google Sheets API"
+                logger.debug(f"Range '{range_str}' loaded from {source_text}")
 
         # Convert SheetData to list of dicts for TransactionTableViewWidget
         headers = sheet_data[0] if sheet_data else []
         records = [dict(zip(headers, row)) for row in sheet_data[1:]] if len(sheet_data) > 1 else []
 
         # Create and show the table view as a dockable widget
-        from ripper.rippergui import table_view
-
         table_widget = table_view.TransactionTableViewWidget(records)
         dock_title = f"Table: {source_info['spreadsheet_name']} - {sheet_name}"
         dock = QDockWidget(dock_title, self)
