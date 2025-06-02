@@ -216,7 +216,7 @@ class SheetDataCache:
         )
 
         if range_id:
-            pass  # Successfully stored
+            logger.debug(f"Successfully stored range {cell_range.to_a1_notation()} for sheet '{sheet_name}' in spreadsheet '{spreadsheet_id}'")
         else:
             logger.warning(f"Failed to store range {cell_range.to_a1_notation()}")
 
