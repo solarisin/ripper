@@ -386,4 +386,22 @@ class RangeOptimizer:
             True if the requested range can be completely satisfied from cache
         """
         missing_ranges = RangeOptimizer.find_missing_ranges(requested_range, cached_ranges)
-        return len(missing_ranges) == 0
+
+        # Be more conservative - if there are any missing ranges, don't claim it can be satisfied from cache
+        # This helps avoid issues where ranges exist but don't have cell data
+        if len(missing_ranges) > 0:
+            return False
+
+        # Additional validation: ensure cached ranges actually overlap meaningfully
+        # Check that we have overlapping ranges that cover the entire requested area
+        overlapping = RangeOptimizer.find_overlapping_cached_ranges(requested_range, cached_ranges)
+        if not overlapping:
+            return False
+
+        # Create a union of all overlapping ranges to see if they fully contain the requested range
+        if len(overlapping) == 1:
+            return overlapping[0].range_obj.contains(requested_range)
+
+        # For multiple ranges, we rely on the missing_ranges calculation
+        # If missing_ranges is empty, then the ranges should cover everything
+        return True

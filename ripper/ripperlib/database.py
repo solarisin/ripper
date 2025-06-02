@@ -571,9 +571,7 @@ class RipperDb:
             start_row: Starting row (1-based)
             start_col: Starting column (1-based)
             end_row: Ending row (1-based)
-            end_col: Ending column (1-based)
-
-        Returns:
+            end_col: Ending column (1-based)        Returns:
             2D list of cell values, or None if not fully cached
         """
         if self._conn is None:
@@ -594,6 +592,7 @@ class RipperDb:
                 )
 
                 overlapping_ranges = c.fetchall()
+
                 if not overlapping_ranges:
                     return None
 
@@ -606,6 +605,7 @@ class RipperDb:
                 # Fill in data from overlapping ranges
                 for range_row in overlapping_ranges:
                     range_id = range_row[0]
+                    range_start_row, range_start_col, range_end_row, range_end_col = range_row[1:5]
 
                     # Get cell data for this range that intersects with
                     # requested range
@@ -618,16 +618,27 @@ class RipperDb:
                         (range_id, start_row, end_row, start_col, end_col),
                     )
 
-                    for cell_row in c.fetchall():
+                    cells = c.fetchall()
+
+                    if len(cells) == 0:
+                        # Check if this range should have cells in the requested area
+                        expected_rows = min(range_end_row, end_row) - max(range_start_row, start_row) + 1
+                        expected_cols = min(range_end_col, end_col) - max(range_start_col, start_col) + 1
+                        expected_cells = expected_rows * expected_cols
+                        logger.warning(
+                            f"Range {range_id} has no cell data but should cover {expected_cells} cells "
+                            f"(rows {max(range_start_row, start_row)}-{min(range_end_row, end_row)}, "
+                            f"cols {max(range_start_col, start_col)}-{min(range_end_col, end_col)})"
+                        )
+
+                    for cell_row in cells:
                         cell_row_num, cell_col_num, cell_value = cell_row
                         result_row = cell_row_num - start_row
                         result_col = cell_col_num - start_col
 
                         if 0 <= result_row < rows and 0 <= result_col < cols:
                             result[result_row][result_col] = cell_value
-                            covered[result_row][result_col] = True
-
-                # Check if the entire requested range is covered
+                            covered[result_row][result_col] = True  # Check if the entire requested range is covered
                 all_covered = all(all(row) for row in covered)
                 if not all_covered:
                     return None  # Not fully cached
@@ -673,6 +684,204 @@ class RipperDb:
 
         except sqlite.Error as e:
             logger.error(f"Error invalidating sheet data cache: {e}")
+            return False
+
+    def validate_cached_range_data(self, spreadsheet_id: str, sheet_name: str) -> bool:
+        """
+        Validate that all cached ranges have corresponding cell data.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: The name of the sheet
+
+        Returns:
+            True if all ranges have cell data, False otherwise
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+
+                # Get all ranges for this sheet
+                c.execute(
+                    """SELECT range_id, start_row, start_col, end_row, end_col
+                       FROM sheet_data_ranges
+                       WHERE spreadsheet_id = ? AND sheet_name = ?""",
+                    (spreadsheet_id, sheet_name),
+                )
+
+                ranges = c.fetchall()
+                all_valid = True
+
+                for range_row in ranges:
+                    range_id, start_row, start_col, end_row, end_col = range_row
+
+                    # Count cells in this range
+                    c.execute(
+                        """SELECT COUNT(*)
+                           FROM sheet_data_cells
+                           WHERE range_id = ?""",
+                        (range_id,),
+                    )
+
+                    cell_count = c.fetchone()[0]
+                    expected_cells = (end_row - start_row + 1) * (end_col - start_col + 1)
+
+                    if cell_count == 0 and expected_cells > 0:
+                        logger.warning(
+                            f"Range {range_id} has no cell data but should have {expected_cells} cells "
+                            f"(rows {start_row}-{end_row}, cols {start_col}-{end_col})"
+                        )
+                        all_valid = False
+                    elif cell_count < expected_cells:
+                        logger.warning(
+                            f"Range {range_id} has only {cell_count}/{expected_cells} cells "
+                            f"(rows {start_row}-{end_row}, cols {start_col}-{end_col})"
+                        )
+                        # This might be OK if the range had empty cells
+
+                return all_valid
+
+        except sqlite.Error as e:
+            logger.error(f"Error validating cached range data: {e}")
+            return False
+
+    def clean_orphaned_ranges(self, spreadsheet_id: str, sheet_name: str) -> int:
+        """
+        Remove ranges that have no corresponding cell data.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: The name of the sheet
+
+        Returns:
+            Number of ranges removed
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return 0
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+
+                # Find ranges with no cell data
+                c.execute(
+                    """SELECT r.range_id
+                       FROM sheet_data_ranges r
+                       LEFT JOIN sheet_data_cells c ON r.range_id = c.range_id
+                       WHERE r.spreadsheet_id = ? AND r.sheet_name = ?
+                       GROUP BY r.range_id
+                       HAVING COUNT(c.range_id) = 0""",
+                    (spreadsheet_id, sheet_name),
+                )
+
+                orphaned_ranges = c.fetchall()
+
+                if not orphaned_ranges:
+                    return 0
+
+                # Delete orphaned ranges
+                orphaned_ids = [row[0] for row in orphaned_ranges]
+                placeholders = ",".join("?" for _ in orphaned_ids)
+
+                c.execute(f"DELETE FROM sheet_data_ranges WHERE range_id IN ({placeholders})", orphaned_ids)
+
+                deleted_count = len(orphaned_ids)
+                logger.info(f"Cleaned up {deleted_count} orphaned ranges for {spreadsheet_id}!{sheet_name}")
+
+                return deleted_count
+
+        except sqlite.Error as e:
+            logger.error(f"Error cleaning orphaned ranges: {e}")
+            return 0
+
+    def detect_incomplete_ranges(self, spreadsheet_id: str, sheet_name: str) -> list[int]:
+        """
+        Detect ranges that have significantly fewer cells than expected.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet
+            sheet_name: The name of the sheet
+
+        Returns:
+            List of range IDs that appear to be incomplete
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return []
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+
+                # Get all ranges with their expected and actual cell counts
+                c.execute(
+                    """SELECT r.id, r.start_row, r.start_col, r.end_row, r.end_col,
+                              COUNT(c.range_id) as actual_cells
+                       FROM sheet_data_ranges r
+                       LEFT JOIN sheet_data_cells c ON r.id = c.range_id
+                       WHERE r.spreadsheet_id = ? AND r.sheet_name = ?
+                       GROUP BY r.id, r.start_row, r.start_col, r.end_row, r.end_col""",
+                    (spreadsheet_id, sheet_name),
+                )
+
+                incomplete_ranges = []
+
+                for row in c.fetchall():
+                    range_id, start_row, start_col, end_row, end_col, actual_cells = row
+                    expected_cells = (end_row - start_row + 1) * (end_col - start_col + 1)
+
+                    # Consider a range incomplete if it has less than 50% of expected cells
+                    # and the missing amount is significant (more than 5 cells)
+                    if actual_cells < expected_cells * 0.5 and (expected_cells - actual_cells) > 5:
+                        logger.warning(
+                            f"Range {range_id} appears incomplete: "
+                            f"{actual_cells}/{expected_cells} cells "
+                            f"(rows {start_row}-{end_row}, cols {start_col}-{end_col})"
+                        )
+                        incomplete_ranges.append(range_id)
+
+                return incomplete_ranges
+
+        except sqlite.Error as e:
+            logger.error(f"Error detecting incomplete ranges: {e}")
+            return []
+
+    def delete_range_data(self, range_id: int) -> bool:
+        """
+        Delete a specific range and all its cell data.
+
+        Args:
+            range_id: The ID of the range to delete
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+
+                # Delete the range (cells will be deleted by CASCADE)
+                c.execute("DELETE FROM sheet_data_ranges WHERE id = ?", (range_id,))
+
+                deleted_count = c.rowcount
+                if deleted_count > 0:
+                    logger.info(f"Deleted range {range_id}")
+                    return True
+                else:
+                    logger.warning(f"Range {range_id} not found for deletion")
+                    return False
+
+        except sqlite.Error as e:
+            logger.error(f"Error deleting range {range_id}: {e}")
             return False
 
 
