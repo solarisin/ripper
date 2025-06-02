@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 from beartype.typing import List
+from loguru import logger
 
 
 def find_qt_test_files(test_dir: Path) -> List[str]:
@@ -22,6 +23,7 @@ def find_qt_test_files(test_dir: Path) -> List[str]:
     Returns:
         List of relative paths to test files that import PySide6 GUI modules
     """
+    logger.debug("Searching for Qt test files in {test_dir}", test_dir=test_dir)
     qt_test_files = []
 
     # GUI-related PySide6 modules that require a display
@@ -83,7 +85,7 @@ def generate_pytest_ignore_args(qt_test_files: List[str]) -> str:
     for test_file in qt_test_files:
         ignore_args.append(f"--ignore={test_file}")
 
-    return " \\\n          ".join(ignore_args)
+    return " ".join(ignore_args)
 
 
 def main() -> None:
