@@ -51,8 +51,7 @@ jobs:
 
     - name: Run tests
       run: | # ignore any test files that import a Qt GUI library
-        QT_IGNORE_ARGS=$(poetry run python scripts/find_qt_tests.py)
-        poetry run pytest -m "not qt" --ignore=test/ripper/test_main.py $QT_IGNORE_ARGS
+        poetry run pytest -m "not qt" --ignore=test/ripper/test_main.py --ignore=test/ripper/rippergui/
 
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
