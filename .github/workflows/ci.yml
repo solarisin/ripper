@@ -47,7 +47,7 @@ jobs:
 
     - name: Lint code
       run: |
-        poetry run flake8 --config=pyproject.toml    - name: Run tests
+        poetry run flake8 --config=pyproject.toml
 
     - name: Run tests
       run: | # ignore any test files that import a Qt GUI library
