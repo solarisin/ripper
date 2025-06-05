@@ -24,6 +24,7 @@ click = "^8.2.0"
 loguru = "^0.7.3"
 ruff = "^0.15.12"
 platformdirs = "^4.9.6"
+pandas = "^2.2.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
@@ -44,6 +45,7 @@ types-oauthlib = "^3.2.0.20250516"
 pytest-beartype = "^0.2.0"
 autopep8 = "^2.3.2"
 hypothesis = "^6.132.0"
+pandas-stubs = "^2.2.3.250527"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

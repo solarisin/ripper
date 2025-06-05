@@ -27,16 +27,10 @@ def run_command(command: List[str], description: str) -> Tuple[bool, str]:
         description: Human-readable description of the command
 
     Returns:
-        Tuple of (success: bool, output: str)    """
+        Tuple of (success: bool, output: str)"""
     print(f"🔍 Running {description}...")
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=Path(__file__).parent.parent
-        )
+        result = subprocess.run(command, capture_output=True, text=True, check=False, cwd=Path(__file__).parent.parent)
 
         if result.returncode == 0:
             print(f"✅ {description} passed")
