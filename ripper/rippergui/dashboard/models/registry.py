@@ -1,6 +1,6 @@
 """Widget registry for dashboard widgets."""
 
-from typing import Dict, Type, Optional, TYPE_CHECKING, Callable, TypeVar
+from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, TypeVar
 
 from .widget_types import WidgetType
 

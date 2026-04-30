@@ -163,7 +163,9 @@ class DashboardView(QWidget):
                     if widget_view:
                         # Validate and adjust position/size
                         pos, size = self._validate_widget_position(
-                            widget.config.position, widget.config.size, grid_size  # type: ignore[attr-defined]
+                            widget.config.position,
+                            widget.config.size,
+                            grid_size,  # type: ignore[attr-defined]
                         )
                         # Update widget config with validated values
                         widget.config.position = pos  # type: ignore[attr-defined]
@@ -271,7 +273,7 @@ class DashboardView(QWidget):
         reply = QMessageBox.question(
             self,
             "Delete Dashboard",
-            "Are you sure you want to delete the dashboard " f"'{self.current_dashboard.name}'?",
+            f"Are you sure you want to delete the dashboard '{self.current_dashboard.name}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

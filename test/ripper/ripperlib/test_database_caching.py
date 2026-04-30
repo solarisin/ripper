@@ -288,7 +288,12 @@ class TestDatabaseCaching(unittest.TestCase):
 
         # Request larger range that extends beyond cached data
         cached_data = self.db.get_sheet_data_from_cache(
-            self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 3, 3  # Extends to row 3, col 3
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            1,
+            1,
+            3,
+            3,  # Extends to row 3, col 3
         )
 
         # Should return None because not fully cached

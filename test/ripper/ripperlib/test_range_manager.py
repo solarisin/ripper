@@ -655,9 +655,9 @@ class TestRangeOptimizer:
             # If there are missing ranges, they should not overlap with any cached range
             for cr in cached_ranges:
                 for m in missing:
-                    assert not cr.range_obj.overlaps_with(
-                        m
-                    ), f"Missing range {m} should not overlap with cached range {cr.range_obj}"
+                    assert not cr.range_obj.overlaps_with(m), (
+                        f"Missing range {m} should not overlap with cached range {cr.range_obj}"
+                    )
 
     @pytest.mark.parametrize(
         ("requested_range_str", "expected_count"),
@@ -706,7 +706,7 @@ class TestRangeOptimizer:
             )
 
         assert len(overlapping) == expected_count, (
-            f"Expected {expected_count} overlapping ranges, " f"got {len(overlapping)}"
+            f"Expected {expected_count} overlapping ranges, got {len(overlapping)}"
         )
 
         # Verify all returned ranges actually overlap with the requested range
@@ -745,7 +745,7 @@ class TestRangeOptimizer:
         # If we can satisfy from cache, there should be no missing ranges
         if result:
             missing = RangeOptimizer.find_missing_ranges(requested, single_cached_range)
-            assert not missing, f"Should have no missing ranges if cache can satisfy request, " f"but got {missing}"
+            assert not missing, f"Should have no missing ranges if cache can satisfy request, but got {missing}"
 
     def test_cache_priority(self, cached_range_factory: Callable[..., CachedRange]) -> None:
         """Test that the most recently cached range is used for cache satisfaction."""

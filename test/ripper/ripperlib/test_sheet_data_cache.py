@@ -445,7 +445,13 @@ class TestSheetDataCache(unittest.TestCase):
         ]
 
         self.db.store_sheet_data_range(
-            self.test_spreadsheet_id, self.test_sheet_name, 10, 1, 14, 5, large_range_data  # A10:E14
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            10,
+            1,
+            14,
+            5,
+            large_range_data,  # A10:E14
         )
 
         # Test various sub-range extractions
@@ -470,8 +476,7 @@ class TestSheetDataCache(unittest.TestCase):
                 self.assertEqual(
                     result_data,
                     expected_data,
-                    f"Sub-range extraction failed for {requested_range}. "
-                    f"Expected {expected_data}, got {result_data}",
+                    f"Sub-range extraction failed for {requested_range}. Expected {expected_data}, got {result_data}",
                 )
 
                 # Should come from cache

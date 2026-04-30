@@ -40,8 +40,7 @@ class RipperDb:
         self._db_file_path = db_file_path
         self._db_identifier = self.generate_db_identifier()
         logger.info(
-            f"Creating new RipperDb instance {self._db_identifier}"
-            f" targeting database file: {str(self._db_file_path)}"
+            f"Creating new RipperDb instance {self._db_identifier} targeting database file: {str(self._db_file_path)}"
         )
         self._conn: sqlite.Connection | None = None
         self.open()
@@ -254,8 +253,7 @@ class RipperDb:
                 grid_props = sheet.grid
                 if not grid_props:
                     raise ValueError(
-                        f"Sheet {sheet.id} of spreadsheet {spreadsheet_id}"
-                        " is a grid sheet but has no grid properties."
+                        f"Sheet {sheet.id} of spreadsheet {spreadsheet_id} is a grid sheet but has no grid properties."
                     )
                 c.execute(
                     """INSERT INTO sheets (spreadsheet_id, sheetId, "index", title, sheetType)
@@ -348,8 +346,7 @@ class RipperDb:
             c.execute("SELECT COUNT(*) FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
             if c.rowcount == 0:
                 raise ValueError(
-                    f"Spreadsheet {spreadsheet_id} not found in database. "
-                    "Cannot store thumbnail without a spreadsheet."
+                    f"Spreadsheet {spreadsheet_id} not found in database. Cannot store thumbnail without a spreadsheet."
                 )
 
             c.execute(

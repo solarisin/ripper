@@ -19,12 +19,13 @@ Use Poetry for project commands.
 
 ```bash
 poetry install
+poetry sync
+$(poetry env activate)
 poetry run python -m ripper.main
 poetry run pytest
 poetry run flake8
 poetry run mypy
-poetry run black .
-poetry run isort .
+poetry run ruff check
 poetry run python scripts/pre-commit.py
 ```
 

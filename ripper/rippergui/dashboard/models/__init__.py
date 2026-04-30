@@ -2,21 +2,20 @@
 
 # Import financial widgets to register them
 from . import financial_widgets  # noqa: F401
-
-from .data_source import DataSource, DataSourceType, DateRange, DateRangePreset
 from .dashboard import Dashboard, DashboardManager
-from .widgets import (
-    BaseWidget,
-    WidgetConfig,
-    LineChartWidget,
-    BarChartWidget,
-    PieChartWidget,
-    DataTableWidget,
-    KPIWidget,
-    GaugeWidget,
-)
+from .data_source import DataSource, DataSourceType, DateRange, DateRangePreset
 from .registry import WIDGET_REGISTRY, register_widget
 from .widget_types import WidgetType
+from .widgets import (
+    BarChartWidget,
+    BaseWidget,
+    DataTableWidget,
+    GaugeWidget,
+    KPIWidget,
+    LineChartWidget,
+    PieChartWidget,
+    WidgetConfig,
+)
 
 __all__ = [
     # Core classes
