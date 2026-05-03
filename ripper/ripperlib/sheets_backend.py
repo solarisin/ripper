@@ -305,21 +305,17 @@ def get_tiller_transactions(
     service: Any,
     spreadsheet_id: str,
     sheet_name: str = "Transactions",
-    start_date: Any = None,
-    end_date: Any = None,
-    accounts: Any = None,
-    categories: Any = None,
 ) -> list[dict[str, Any]]:
     """Get transaction data from Tiller spreadsheet.
+
+    Retrieves all rows from the configured sheet and returns them as a list of
+    dictionaries with normalized header keys. Date range and account/category
+    filtering is handled by the caller (e.g. ``DashboardDataService._apply_filters``).
 
     Args:
         service: Google Sheets API service instance
         spreadsheet_id: The ID of the spreadsheet
         sheet_name: Name of the transactions sheet (default: "Transactions")
-        start_date: Optional start date filter
-        end_date: Optional end date filter
-        accounts: Optional list of account filters
-        categories: Optional list of category filters
 
     Returns:
         List of transaction dictionaries

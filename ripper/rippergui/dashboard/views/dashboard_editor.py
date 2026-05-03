@@ -708,8 +708,11 @@ class DashboardEditor(QWidget):
         self._on_add_widget_requested(widget_type, row, col, 3, 3)
 
     def _next_widget_position(self) -> tuple[int, int]:
+        """Return the next available grid position, clamped to the 12x12 canvas."""
         count = len(self.dashboard.widgets)
-        return ((count // 3) * 3, (count % 3) * 3)
+        row = min((count // 3) * 3, 9)  # widget default size is 3; max start row = 12-3 = 9
+        col = min((count % 3) * 3, 9)  # widget default size is 3; max start col = 12-3 = 9
+        return (row, col)
 
     def _on_add_transaction_source(self) -> None:
         dialog = SheetsSelectionDialog(self)

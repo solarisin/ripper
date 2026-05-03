@@ -199,9 +199,6 @@ class MainView(QMainWindow):
 
         self.menuBar().addSeparator()
 
-        self.menuBar().addMenu(self._dashboard_menu)
-        self._dashboard_menu.addAction(self._show_dashboard_act)
-
         self.menuBar().addMenu(self._help_menu)
         self._help_menu.addAction(self._about_act)
         self._help_menu.addAction(self._about_qt_act)

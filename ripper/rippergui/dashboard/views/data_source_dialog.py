@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime
 from typing import Dict, Optional, cast
 
@@ -107,13 +108,13 @@ class DataSourceDialog(QDialog):
         date_layout.addWidget(self.preset_combo)
 
         # Custom date range
-        custom_group = QGroupBox("Custom Range")
-        custom_group.setCheckable(True)
-        custom_group.setChecked(False)
-        custom_group.toggled.connect(self._on_custom_range_toggled)
+        self.custom_range_group = QGroupBox("Custom Range")
+        self.custom_range_group.setCheckable(True)
+        self.custom_range_group.setChecked(False)
+        self.custom_range_group.toggled.connect(self._on_custom_range_toggled)
 
         custom_layout = QHBoxLayout()
-        custom_group.setLayout(custom_layout)
+        self.custom_range_group.setLayout(custom_layout)
 
         self.start_date_edit = QDateEdit()
         self.start_date_edit.setCalendarPopup(True)
@@ -127,7 +128,7 @@ class DataSourceDialog(QDialog):
         custom_layout.addWidget(QLabel("To:"))
         custom_layout.addWidget(self.end_date_edit)
 
-        date_layout.addWidget(custom_group)
+        date_layout.addWidget(self.custom_range_group)
 
         # Filters group
         filters_group = QGroupBox("Filters")
@@ -220,11 +221,7 @@ class DataSourceDialog(QDialog):
         """Handle date range preset change."""
         preset = self.preset_combo.currentData()
         is_custom = preset == DateRangePreset.CUSTOM
-
-        # Enable/disable custom date range group
-        custom_group = cast(QGroupBox, self.sender().parent().findChild(QGroupBox))
-        if custom_group:
-            custom_group.setChecked(is_custom)
+        self.custom_range_group.setChecked(is_custom)
 
     def _on_custom_range_toggled(self, checked: bool) -> None:
         """Handle custom range toggle."""
@@ -260,7 +257,7 @@ class DataSourceDialog(QDialog):
         # Create or update data source
         if not self.data_source:
             self.data_source = DataSource(
-                id=f"ds_{hash(datetime.now())}",
+                id=str(uuid.uuid4()),
                 type=self.type_combo.currentData(),
                 name=name,
                 spreadsheet_id=sheet_id,

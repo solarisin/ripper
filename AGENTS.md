@@ -31,7 +31,7 @@ poetry run python scripts/pre-commit.py
 
 Notes:
 
-- `pyproject.toml` supports Python `>=3.11,<3.14`; mypy is configured with `python_version = "3.13"`.
+- `pyproject.toml` supports Python `>=3.11,<3.14`; mypy is configured with `python_version = "3.12"`.
 - Pytest is configured with `testpaths = ["test"]`, `pythonpath = ["."]`, coverage for `ripper`, and strict markers.
 - The `qt` pytest marker is declared for Qt-specific tests.
 - Flake8 is configured through `pyproject.toml` via `flake8-pyproject`.

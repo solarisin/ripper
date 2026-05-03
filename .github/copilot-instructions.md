@@ -1,7 +1,7 @@
 1. use the command "poetry run pytest" to run the tests
 2. use the command "poetry run mypy" to check the type hints
 3. use the command "poetry run flake8" to check the code style
-4. use the command "poetry run black" to fix any whitespace or formatting issues
+4. use the command "poetry run ruff check" to run ruff linting; use "poetry run ruff format" to fix whitespace or formatting issues
 5. generated tests should be placed in the "test" directory
 6. tests that are written should never make network requests, tested code should be mocked
 7. all flake8, mypy and pytest errors should be fixed automatically when introduced in new code
