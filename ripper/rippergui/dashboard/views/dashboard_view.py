@@ -225,7 +225,9 @@ class DashboardView(QWidget):
                 runtime_widget = widget_class(widget_config, dashboard)
                 widget_view = runtime_widget.create_widget(container)
                 runtime_widget.update_data(self.refresh_result.data)
-                pos, size = self._validate_widget_position(widget_config.position, widget_config.size, (12, 12))
+                pos, size = self._validate_widget_position(
+                    widget_config.position, widget_config.size, dashboard.grid_size
+                )
                 container_layout.addWidget(widget_view, pos[0], pos[1], size[1], size[0])
             except Exception as e:
                 logger.error(f"Failed to create widget {widget_id}: {e}")

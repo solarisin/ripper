@@ -187,7 +187,7 @@ class DashboardCanvas(QFrame):
         self.setStyleSheet("background-color: #f0f0f0;")
 
         # Grid layout for widgets
-        self.grid_size = (12, 12)  # rows, columns
+        self.grid_size = dashboard.grid_size  # rows, columns
         self.cell_size = 60  # pixels
 
         # Calculate size based on grid
@@ -708,10 +708,13 @@ class DashboardEditor(QWidget):
         self._on_add_widget_requested(widget_type, row, col, 3, 3)
 
     def _next_widget_position(self) -> tuple[int, int]:
-        """Return the next available grid position, clamped to the 12x12 canvas."""
+        """Return the next available grid position, clamped to the canvas grid."""
         count = len(self.dashboard.widgets)
-        row = min((count // 3) * 3, 9)  # widget default size is 3; max start row = 12-3 = 9
-        col = min((count % 3) * 3, 9)  # widget default size is 3; max start col = 12-3 = 9
+        default_widget_size = 3
+        max_row = max(0, self.dashboard.grid_size[0] - default_widget_size)
+        max_col = max(0, self.dashboard.grid_size[1] - default_widget_size)
+        row = min((count // 3) * default_widget_size, max_row)
+        col = min((count % 3) * default_widget_size, max_col)
         return (row, col)
 
     def _on_add_transaction_source(self) -> None:

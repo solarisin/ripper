@@ -329,12 +329,11 @@ def get_tiller_transactions(
         transactions = []
 
         for row in data[1:]:
-            if len(row) >= len(headers):
-                transaction = {}
-                for i, header in enumerate(headers):
-                    if i < len(row):
-                        transaction[header] = row[i]
-                transactions.append(transaction)
+            transaction = {}
+            for i, header in enumerate(headers):
+                if i < len(row):
+                    transaction[header] = row[i]
+            transactions.append(transaction)
 
         return transactions
     except Exception as e:
@@ -362,12 +361,11 @@ def get_tiller_categories(service: Any, spreadsheet_id: str, sheet_name: str = "
         categories = []
 
         for row in data[1:]:
-            if len(row) >= len(headers):
-                category = {}
-                for i, header in enumerate(headers):
-                    if i < len(row):
-                        category[header] = row[i]
-                categories.append(category)
+            category = {}
+            for i, header in enumerate(headers):
+                if i < len(row):
+                    category[header] = row[i]
+            categories.append(category)
 
         return categories
     except Exception as e:
@@ -395,12 +393,11 @@ def get_tiller_budget(service: Any, spreadsheet_id: str, sheet_name: str = "Budg
         budget_items = []
 
         for row in data[1:]:
-            if len(row) >= len(headers):
-                budget_item = {}
-                for i, header in enumerate(headers):
-                    if i < len(row):
-                        budget_item[header] = row[i]
-                budget_items.append(budget_item)
+            budget_item = {}
+            for i, header in enumerate(headers):
+                if i < len(row):
+                    budget_item[header] = row[i]
+            budget_items.append(budget_item)
 
         return budget_items
     except Exception as e:

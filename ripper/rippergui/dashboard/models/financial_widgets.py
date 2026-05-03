@@ -524,7 +524,9 @@ class TopExpensesWidget(BaseWidget):
                 self._show_empty_state()
                 return
 
-            # Clear existing rows
+            # Clear existing rows; reset spans first so the empty-state span
+            # set by _show_empty_state() does not persist into the data view.
+            self.table.clearSpans()
             self.table.clearContents()
             self.table.setSortingEnabled(False)  # Disable sorting while updating
             self.table.setRowCount(len(top_expenses))
