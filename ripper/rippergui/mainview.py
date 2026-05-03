@@ -236,6 +236,8 @@ class MainView(QMainWindow):
 
         # Initialize auth status display
         self.update_auth_status(AuthManager().auth_info())
+        # Dashboard tab widget; set to None until _init_dashboard_tab() succeeds.
+        self.dashboard_tab: QWidget | None = None
 
     def _init_dashboard_tab(self) -> None:
         """Initialize the dashboard tab."""
@@ -256,8 +258,10 @@ class MainView(QMainWindow):
 
     def show_dashboard_tab(self) -> None:
         """Show the dashboard tab."""
-        if hasattr(self, "dashboard_tab"):
+        if self.dashboard_tab is not None:
             self.tab_widget.setCurrentWidget(self.dashboard_tab)
+        else:
+            QMessageBox.warning(self, "Dashboard", "The dashboard tab is not available.")
 
     def create_main_layout(self) -> None:
         """

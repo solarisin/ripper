@@ -344,7 +344,8 @@ class RipperDb:
 
             # Check if spreadsheet exists
             c.execute("SELECT COUNT(*) FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            if c.rowcount == 0:
+            row = c.fetchone()
+            if row is None or row[0] == 0:
                 raise ValueError(
                     f"Spreadsheet {spreadsheet_id} not found in database. Cannot store thumbnail without a spreadsheet."
                 )
