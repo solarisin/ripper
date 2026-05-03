@@ -166,9 +166,6 @@ class MainView(QMainWindow):
         # Create the main layout with fixed accordion sidebar
         self.create_main_layout()
 
-        # Initialize dashboard tab
-        self._init_dashboard_tab()
-
         # Check if OAuth client is configured and update UI accordingly
         self.update_oauth_ui()
 

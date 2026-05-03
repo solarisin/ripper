@@ -264,6 +264,8 @@ class DataSourceDialog(QDialog):
                 type=self.type_combo.currentData(),
                 name=name,
                 spreadsheet_id=sheet_id,
+                sheet_name="Transactions",
+                range_a1="A1:Z1000",
                 date_range=DateRange(preset=preset, start_date=start_date, end_date=end_date),
                 filters={},
             )
@@ -271,6 +273,10 @@ class DataSourceDialog(QDialog):
             self.data_source.name = name
             self.data_source.type = self.type_combo.currentData()
             self.data_source.spreadsheet_id = sheet_id
+            if not self.data_source.sheet_name:
+                self.data_source.sheet_name = "Transactions"
+            if not self.data_source.range_a1:
+                self.data_source.range_a1 = "A1:Z1000"
             self.data_source.date_range = DateRange(preset=preset, start_date=start_date, end_date=end_date)
 
         # Get selected accounts and categories

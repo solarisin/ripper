@@ -10,7 +10,7 @@ The most complete workflow is the main Google Sheets browser:
 4. Choose a worksheet and A1 range.
 5. Load the data into a sortable, filterable table view.
 
-For a fuller architecture and usage walkthrough, see [Project Purpose And Usage](docs/PROJECT_PURPOSE_AND_USAGE.md).
+For a fuller architecture and usage walkthrough, see [Project Purpose And Usage](docs/PROJECT_PURPOSE_AND_USAGE.md). For dashboard design notes, see [Dashboard System Status And Path Forward](docs/DASHBOARD_SYSTEM_STATUS.md).
 
 ## Features
 
@@ -21,14 +21,14 @@ For a fuller architecture and usage walkthrough, see [Project Purpose And Usage]
 - SQLite-backed cache for spreadsheet metadata, sheet metadata, thumbnails, and cell ranges.
 - Smart sheet-data cache that can reuse cached ranges and fetch only missing sub-ranges.
 - Dockable transaction-style table view with sorting and filters.
-- Dashboard subsystem for JSON-backed financial dashboards and Tiller-style data widgets.
+- Embedded dashboard subsystem for JSON-backed financial dashboards and Tiller-style data widgets.
 
 ## Project Layout
 
 - `ripper/main.py`: Click CLI, logging setup, database subcommands, and main GUI startup.
 - `ripper/ripperlib/`: Auth, Google API access, SQLite cache, data models, and range/cache logic.
 - `ripper/rippergui/`: Main Qt window, OAuth setup UI, sheet selection UI, thumbnails, table view, and reusable widgets.
-- `ripper/rippergui/dashboard/`: Dashboard models, editor/view widgets, financial widgets, and standalone dashboard entry point.
+- `ripper/rippergui/dashboard/`: Dashboard models, editor/view widgets, financial widgets, and data refresh service.
 - `test/`: Pytest suite.
 - `scripts/`: Developer helper scripts.
 - `res/`: Image/resource helpers.
@@ -67,12 +67,6 @@ Useful launch options:
 poetry run python -m ripper.main --log-level INFO
 poetry run python -m ripper.main --clear-credential-cache
 poetry run python -m ripper.main --debug-cli
-```
-
-Start the standalone dashboard application:
-
-```bash
-poetry run python -m ripper.rippergui.dashboard
 ```
 
 ## OAuth And Sheet Loading

@@ -6,6 +6,7 @@ from typing import Optional
 from loguru import logger
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -22,6 +23,8 @@ from PySide6.QtWidgets import (
 
 from ripper.rippergui.dashboard.models import DashboardManager
 from ripper.rippergui.dashboard.models.dashboard import Dashboard
+from ripper.rippergui.dashboard.models.registry import get_widget_class
+from ripper.rippergui.dashboard.services import DashboardDataService, DashboardRefreshResult
 
 
 class DashboardView(QWidget):
@@ -29,7 +32,9 @@ class DashboardView(QWidget):
 
     dashboard_changed = Signal()
 
-    def __init__(self, storage_dir: Path, parent: Optional[QWidget] = None):
+    def __init__(
+        self, storage_dir: Path, parent: Optional[QWidget] = None, data_service: Optional[DashboardDataService] = None
+    ):
         """Initialize the dashboard view.
 
         Args:
@@ -40,6 +45,8 @@ class DashboardView(QWidget):
         self.storage_dir = storage_dir
         self.current_dashboard: Optional[Dashboard] = None
         self.dashboard_manager = DashboardManager(storage_dir)
+        self.data_service = data_service or DashboardDataService()
+        self.refresh_result = DashboardRefreshResult()
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -54,9 +61,11 @@ class DashboardView(QWidget):
         toolbar = QHBoxLayout()
         layout.addLayout(toolbar)
 
-        # Dashboard selection dropdown will be added here
-        self.dashboard_label = QLabel("No dashboard selected")
-        toolbar.addWidget(self.dashboard_label)
+        toolbar.addWidget(QLabel("Dashboard:"))
+        self.dashboard_combo = QComboBox()
+        self.dashboard_combo.setMinimumWidth(240)
+        self.dashboard_combo.currentIndexChanged.connect(self._on_dashboard_selected)
+        toolbar.addWidget(self.dashboard_combo)
 
         # Add spacer
         toolbar.addStretch()
@@ -72,11 +81,20 @@ class DashboardView(QWidget):
         self.edit_dashboard_btn.clicked.connect(self._on_edit_dashboard)
         toolbar.addWidget(self.edit_dashboard_btn)
 
+        self.refresh_dashboard_btn = QPushButton("Refresh")
+        self.refresh_dashboard_btn.setEnabled(False)
+        self.refresh_dashboard_btn.clicked.connect(self.refresh)
+        toolbar.addWidget(self.refresh_dashboard_btn)
+
         # Delete dashboard button
         self.delete_dashboard_btn = QPushButton("Delete")
         self.delete_dashboard_btn.setEnabled(False)
         self.delete_dashboard_btn.clicked.connect(self._on_delete_dashboard)
         toolbar.addWidget(self.delete_dashboard_btn)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
 
         # Dashboard content area
         self.content_widget = QWidget()
@@ -89,10 +107,29 @@ class DashboardView(QWidget):
     def _load_dashboards(self) -> None:
         """Load dashboards from the storage directory."""
         self.dashboards = self.dashboard_manager.get_all_dashboards()
+        if not self.dashboards:
+            dashboard = self.dashboard_manager.create_dashboard("My Dashboard")
+            self.dashboard_manager.save_dashboard(dashboard)
+            self.dashboards = self.dashboard_manager.get_all_dashboards()
+
+        self._refresh_dashboard_combo()
 
         # If we have dashboards, load the first one
         if self.dashboards:
             self._set_current_dashboard(self.dashboards[0])
+
+    def _refresh_dashboard_combo(self) -> None:
+        """Refresh the dashboard selector."""
+        current_id = self.current_dashboard.id if self.current_dashboard else None
+        self.dashboard_combo.blockSignals(True)
+        self.dashboard_combo.clear()
+        for dashboard in self.dashboards:
+            self.dashboard_combo.addItem(dashboard.name, dashboard.id)
+        if current_id:
+            index = self.dashboard_combo.findData(current_id)
+            if index >= 0:
+                self.dashboard_combo.setCurrentIndex(index)
+        self.dashboard_combo.blockSignals(False)
 
     def _validate_widget_position(
         self, pos: tuple[int, int], size: tuple[int, int], grid: tuple[int, int]
@@ -123,82 +160,103 @@ class DashboardView(QWidget):
             dashboard: Dashboard to display, or None to clear the view
         """
         self.current_dashboard = dashboard
+        layout = self._content_layout()
 
-        # Clear the current content
+        if dashboard:
+            self.edit_dashboard_btn.setEnabled(True)
+            self.refresh_dashboard_btn.setEnabled(True)
+            self.delete_dashboard_btn.setEnabled(True)
+            self._select_dashboard_in_combo(dashboard.id)
+            self._add_dashboard_content(layout, dashboard)
+        else:
+            self.edit_dashboard_btn.setEnabled(False)
+            self.refresh_dashboard_btn.setEnabled(False)
+            self.delete_dashboard_btn.setEnabled(False)
+            placeholder = QLabel("No dashboard selected.")
+            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(placeholder, 1)
+
+    def _select_dashboard_in_combo(self, dashboard_id: str) -> None:
+        index = self.dashboard_combo.findData(dashboard_id)
+        if index >= 0 and index != self.dashboard_combo.currentIndex():
+            self.dashboard_combo.blockSignals(True)
+            self.dashboard_combo.setCurrentIndex(index)
+            self.dashboard_combo.blockSignals(False)
+
+    def _content_layout(self) -> QVBoxLayout:
+        """Return the content layout after clearing it."""
         layout = self.content_widget.layout()
         if layout:
             while layout.count():
                 item = layout.takeAt(0)
-                widget = item.widget()
-                if widget:
-                    widget.setParent(None)
-                    widget.deleteLater()
+                if item is not None:
+                    widget = item.widget()
+                    if widget:
+                        widget.setParent(None)
+                        widget.deleteLater()
         else:
             layout = QVBoxLayout()
             self.content_widget.setLayout(layout)
+        return layout  # type: ignore[return-value]
 
-        if dashboard:
-            self.dashboard_label.setText(f"Dashboard: {dashboard.name}")
-            self.edit_dashboard_btn.setEnabled(True)
-            self.delete_dashboard_btn.setEnabled(True)
+    def _add_dashboard_content(self, layout: QVBoxLayout, dashboard: Dashboard) -> None:
+        """Add rendered widgets for a dashboard to the content layout."""
+        if not dashboard.widgets:
+            empty = QLabel("No widgets yet. Click Edit, then add widgets from the palette.")
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setStyleSheet("color: #666; font-size: 14px; padding: 24px;")
+            layout.addWidget(empty, 1)
+            return
 
-            # Create a scroll area for the dashboard content
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
-            # Create container widget for the dashboard
-            container = QWidget()
-            container_layout = QGridLayout(container)
-            container_layout.setContentsMargins(10, 10, 10, 10)
-            container_layout.setSpacing(10)
+        container = QWidget()
+        container_layout = QGridLayout(container)
+        container_layout.setContentsMargins(10, 10, 10, 10)
+        container_layout.setSpacing(10)
 
-            # Add widgets to the dashboard with validation
-            grid_size = (12, 12)  # Match the canvas grid size
-            for widget_id, widget_obj in dashboard.widgets.items():
-                try:
-                    # Dashboard.widgets is Dict[str, BaseWidget] but mypy doesn't infer this correctly
-                    widget = widget_obj  # type: ignore[assignment]
-                    widget_view = widget.create_widget(container)  # type: ignore[attr-defined]
-                    if widget_view:
-                        # Validate and adjust position/size
-                        pos, size = self._validate_widget_position(
-                            widget.config.position,
-                            widget.config.size,
-                            grid_size,  # type: ignore[attr-defined]
-                        )
-                        # Update widget config with validated values
-                        widget.config.position = pos  # type: ignore[attr-defined]
-                        widget.config.size = size  # type: ignore[attr-defined]
-                        container_layout.addWidget(
-                            widget_view,
-                            pos[0],  # row
-                            pos[1],  # column
-                            size[1],  # rowSpan (height)
-                            size[0],  # columnSpan (width)
-                        )
-                except Exception as e:
-                    logger.error(f"Failed to create widget {widget_id}: {e}")
-                    error_label = QLabel(f"Error loading widget: {str(e)}")
-                    error_label.setStyleSheet("color: red;")
-                    container_layout.addWidget(error_label)
+        for widget_id, widget_config in dashboard.widgets.items():
+            try:
+                widget_class = get_widget_class(widget_config.type)
+                if widget_class is None:
+                    raise ValueError(f"Unknown widget type: {widget_config.type.value}")
+                runtime_widget = widget_class(widget_config, dashboard)
+                widget_view = runtime_widget.create_widget(container)
+                runtime_widget.update_data(self.refresh_result.data)
+                pos, size = self._validate_widget_position(widget_config.position, widget_config.size, (12, 12))
+                widget_config.position = pos
+                widget_config.size = size
+                container_layout.addWidget(widget_view, pos[0], pos[1], size[1], size[0])
+            except Exception as e:
+                logger.error(f"Failed to create widget {widget_id}: {e}")
+                error_label = QLabel(f"Error loading widget: {str(e)}")
+                error_label.setStyleSheet("color: red;")
+                container_layout.addWidget(error_label)
 
-            scroll.setWidget(container)
-            layout.addWidget(scroll, 1)  # type: ignore[call-arg]
-        else:
-            self.dashboard_label.setText("No dashboard selected")
-            self.edit_dashboard_btn.setEnabled(False)
-            self.delete_dashboard_btn.setEnabled(False)
-
-            # Add a placeholder for no dashboard selected
-            placeholder = QLabel("No dashboard selected. Create a new one or select an existing one.")
-            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(placeholder, 1)  # type: ignore[call-arg]
+        scroll.setWidget(container)
+        layout.addWidget(scroll, 1)
 
     def refresh(self) -> None:
         """Refresh the dashboard view."""
         if self.current_dashboard:
+            self.refresh_result = self.data_service.refresh_dashboard(self.current_dashboard)
+            self._show_refresh_summary()
             self._set_current_dashboard(self.current_dashboard)
+
+    def _show_refresh_summary(self) -> None:
+        """Show a concise refresh summary."""
+        if not self.refresh_result.statuses:
+            return
+        failures = [status for status in self.refresh_result.statuses.values() if not status.ok]
+        if failures:
+            self.status_label.setStyleSheet("color: #b00020;")
+            self.status_label.setText("; ".join(status.message for status in failures))
+            return
+        total_rows = sum(status.row_count for status in self.refresh_result.statuses.values())
+        self.status_label.setStyleSheet("color: #1b5e20;")
+        self.status_label.setText(f"Refresh complete. Loaded {total_rows} rows.")
 
     @Slot()
     def _on_add_dashboard(self) -> None:
@@ -215,6 +273,7 @@ class DashboardView(QWidget):
                 self.dashboard_manager.save_dashboard(dashboard)
                 self._load_dashboards()
                 self._set_current_dashboard(dashboard)
+                self.status_label.setText(f"Created dashboard '{dashboard.name}'.")
                 self.dashboard_changed.emit()
             except Exception as e:
                 logger.error(f"Error creating dashboard: {e}")
@@ -235,7 +294,9 @@ class DashboardView(QWidget):
         # Create dialog
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Edit Dashboard: {self.current_dashboard.name}")
-        dialog.setMinimumSize(1024, 768)
+        dialog.setMinimumSize(900, 650)
+        dialog.setSizeGripEnabled(True)
+        dialog.resize(1100, 720)
 
         # Setup layout
         layout = QVBoxLayout(dialog)
@@ -257,8 +318,12 @@ class DashboardView(QWidget):
             try:
                 # Save the dashboard
                 self.dashboard_manager.save_dashboard(self.current_dashboard)
+                self.dashboards = self.dashboard_manager.get_all_dashboards()
+                self._refresh_dashboard_combo()
                 # Refresh the view
                 self._set_current_dashboard(self.current_dashboard)
+                self.status_label.setStyleSheet("color: #1b5e20;")
+                self.status_label.setText(f"Saved dashboard '{self.current_dashboard.name}'.")
                 self.dashboard_changed.emit()
             except Exception as e:
                 logger.error(f"Error saving dashboard: {e}")
@@ -296,3 +361,15 @@ class DashboardView(QWidget):
             except Exception as e:
                 logger.error(f"Error deleting dashboard: {e}")
                 QMessageBox.critical(self, "Error", f"Failed to delete dashboard: {e}")
+
+    @Slot(int)
+    def _on_dashboard_selected(self, index: int) -> None:
+        """Switch to the dashboard selected in the combo box."""
+        dashboard_id = self.dashboard_combo.itemData(index)
+        if dashboard_id is None:
+            return
+        dashboard = self.dashboard_manager.get_dashboard(dashboard_id)
+        if dashboard is not None and dashboard is not self.current_dashboard:
+            self.refresh_result = DashboardRefreshResult()
+            self.status_label.clear()
+            self._set_current_dashboard(dashboard)

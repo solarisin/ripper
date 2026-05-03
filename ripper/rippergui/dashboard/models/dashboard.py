@@ -10,9 +10,7 @@ from typing import Any, Dict, List, Optional, Type, TypeVar
 from loguru import logger
 
 from .data_source import DataSource
-from .registry import get_widget_class
-from .widget_types import WidgetType
-from .widgets import BaseWidget
+from .widgets import WidgetConfig
 
 T = TypeVar("T", bound="Dashboard")
 
@@ -27,7 +25,7 @@ class Dashboard:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     data_sources: Dict[str, DataSource] = field(default_factory=dict)
-    widgets: Dict[str, BaseWidget] = field(default_factory=dict)
+    widgets: Dict[str, WidgetConfig] = field(default_factory=dict)
     grid_size: tuple[int, int] = (12, 12)  # rows, columns
     version: str = "1.0"
 
@@ -50,17 +48,17 @@ class Dashboard:
         """Remove a data source from the dashboard."""
         if data_source_id in self.data_sources:
             # Check if any widgets are using this data source
-            for widget in self.widgets.values():
-                if widget.config.data_source_id == data_source_id:
-                    raise ValueError(f"Cannot remove data source: used by widget '{widget.config.title}'")
+            for widget_config in self.widgets.values():
+                if widget_config.data_source_id == data_source_id:
+                    raise ValueError(f"Cannot remove data source: used by widget '{widget_config.title}'")
             del self.data_sources[data_source_id]
             self.updated_at = datetime.now()
             return True
         return False
 
-    def add_widget(self, widget: BaseWidget) -> None:
+    def add_widget(self, widget: WidgetConfig) -> None:
         """Add a widget to the dashboard."""
-        self.widgets[widget.config.id] = widget
+        self.widgets[widget.id] = widget
         self.updated_at = datetime.now()
 
     def remove_widget(self, widget_id: str) -> bool:
@@ -71,7 +69,7 @@ class Dashboard:
             return True
         return False
 
-    def get_widget(self, widget_id: str) -> Optional[BaseWidget]:
+    def get_widget(self, widget_id: str) -> Optional[WidgetConfig]:
         """Get a widget by ID."""
         return self.widgets.get(widget_id)
 
@@ -121,13 +119,8 @@ class Dashboard:
         # Add widgets
         for widget_data in data.get("widgets", {}).values():
             try:
-                widget_type = WidgetType(widget_data["type"])
-                widget_class = get_widget_class(widget_type)
-                if widget_class is None:
-                    logger.warning(f"Unknown widget type: {widget_type}")
-                    continue
-                widget = widget_class.from_dict(widget_data, dashboard)
-                dashboard.widgets[widget.config.id] = widget
+                widget = WidgetConfig.from_dict(widget_data)
+                dashboard.widgets[widget.id] = widget
             except (KeyError, ValueError) as e:
                 logger.error(f"Failed to load widget: {e}")
                 continue

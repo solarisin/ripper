@@ -1,5 +1,6 @@
 """Dashboard editor view."""
 
+import uuid
 from typing import Optional
 
 from loguru import logger
@@ -7,14 +8,18 @@ from PySide6.QtCore import QMimeData, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QDrag, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListView,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QStyle,
@@ -23,12 +28,16 @@ from PySide6.QtWidgets import (
 )
 
 from ripper.rippergui.dashboard.models import (
-    WIDGET_REGISTRY,
-    BaseWidget,
     Dashboard,
+    DataSource,
+    DataSourceType,
+    DateRange,
+    DateRangePreset,
     WidgetConfig,
 )
 from ripper.rippergui.dashboard.models.widget_types import WidgetType
+from ripper.rippergui.dashboard.services import DashboardDataService
+from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
 
 
 class WidgetList(QListWidget):
@@ -185,41 +194,25 @@ class DashboardCanvas(QFrame):
         width = self.grid_size[1] * self.cell_size
         height = self.grid_size[0] * self.cell_size
         self.setMinimumSize(width, height)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         # Widget containers
         self.widgets: dict[str, QWidget] = {}
+        self.widget_title_labels: dict[str, QLabel] = {}
 
         # Add existing widgets
-        for widget_id, widget in self.dashboard.widgets.items():
-            self._add_widget(widget_id, widget)
+        for widget in self.dashboard.widgets.values():
+            self._add_widget(widget)
 
-    def _add_widget(self, widget_id: str, widget: BaseWidget) -> None:
-        """Add a widget to the canvas.
-
-        Args:
-            widget_id: Widget ID
-            widget: Widget to add
-        """
-        # Create container
+    def _add_widget(self, widget: WidgetConfig) -> None:
+        """Add a widget to the canvas."""
         container = QFrame()
         container.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
-        container.setStyleSheet(
-            """
-            QFrame {
-                background-color: white;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-            }
-            QFrame:hover {
-                border: 2px solid #4a90e2;
-            }
-        """
-        )
-        # Make container selectable - create a method to handle the click
-        container.setProperty("widget_id", widget_id)
+        container.setStyleSheet(self._widget_style(False))
+        container.setProperty("widget_id", widget.id)
 
         def handle_mouse_press(event: QMouseEvent) -> None:
-            self._on_widget_clicked(widget_id, event)
+            self._on_widget_clicked(widget.id, event)
 
         container.mousePressEvent = handle_mouse_press  # type: ignore[method-assign]
         # Create layout
@@ -245,7 +238,7 @@ class DashboardCanvas(QFrame):
         title_layout.setContentsMargins(4, 2, 4, 2)
 
         # Add title
-        title = QLabel(widget.config.title or f"Widget {widget_id[:6]}")
+        title = QLabel(widget.title or f"Widget {widget.id[:6]}")
         title.setStyleSheet("font-weight: bold;")
         title_layout.addWidget(title)
         # Add close button
@@ -266,31 +259,55 @@ class DashboardCanvas(QFrame):
             }
         """
         )
-        close_btn.clicked.connect(lambda: self._remove_widget(widget_id))
+        close_btn.clicked.connect(lambda: self._remove_widget(widget.id))
         title_layout.addWidget(close_btn)
 
         layout.addWidget(title_bar)
 
         # Add content placeholder
-        content = QLabel(f"{widget.config.type.name.replace('_', ' ').title()} Widget")
+        content = QLabel(f"{widget.type.name.replace('_', ' ').title()} Widget")
         content.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content.setStyleSheet("color: #888;")
         layout.addWidget(content, 1)
 
         # Position and size
-        x = widget.config.position[1] * self.cell_size  # col
-        y = widget.config.position[0] * self.cell_size  # row
-        width = widget.config.size[0] * self.cell_size  # width
-        height = widget.config.size[1] * self.cell_size  # height
+        x = widget.position[1] * self.cell_size  # col
+        y = widget.position[0] * self.cell_size  # row
+        width = widget.size[0] * self.cell_size  # width
+        height = widget.size[1] * self.cell_size  # height
 
         # Set geometry
+        container.setParent(self)
         container.setGeometry(int(x), int(y), int(width), int(height))
         container.raise_()
         container.show()
 
         # Store reference
-        self.widgets[widget_id] = container
-        container.setParent(self)
+        self.widgets[widget.id] = container
+        self.widget_title_labels[widget.id] = title
+
+    def _widget_style(self, selected: bool) -> str:
+        border = "2px solid #2f6fed" if selected else "1px solid #ccc"
+        return f"""
+            QFrame {{
+                background-color: white;
+                border: {border};
+                border-radius: 4px;
+            }}
+            QFrame:hover {{
+                border: 2px solid #4a90e2;
+            }}
+        """
+
+    def select_widget(self, widget_id: str) -> None:
+        """Update canvas selection styling."""
+        for current_id, widget in self.widgets.items():
+            widget.setStyleSheet(self._widget_style(current_id == widget_id))
+
+    def set_widget_title(self, widget_id: str, title: str) -> None:
+        """Update a widget title shown on the canvas."""
+        if widget_id in self.widget_title_labels:
+            self.widget_title_labels[widget_id].setText(title)
 
     def _on_widget_clicked(self, widget_id: str, event: QMouseEvent) -> None:  # noqa: N805
         """Handle widget click event.
@@ -310,10 +327,9 @@ class DashboardCanvas(QFrame):
         """
         if widget_id in self.widgets:
             widget = self.widgets.pop(widget_id)
+            self.widget_title_labels.pop(widget_id, None)
             widget.deleteLater()
-            # Remove from dashboard model if it exists
-            if hasattr(self, "dashboard") and widget_id in self.dashboard.widgets:
-                del self.dashboard.widgets[widget_id]
+            self.dashboard.remove_widget(widget_id)
 
     def dropEvent(self, event: QDropEvent) -> None:
         """Handle drop event."""
@@ -413,6 +429,7 @@ class DashboardEditor(QWidget):
         self.dashboard = dashboard
         self.signals = DashboardSignals()
         self._selected_widget_id: Optional[str] = None
+        self.data_service = DashboardDataService()
         self._init_ui()
 
         # Connect signals
@@ -434,6 +451,10 @@ class DashboardEditor(QWidget):
         save_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         toolbar.addWidget(save_btn)
 
+        add_selected_btn = QPushButton("Add Selected Widget")
+        add_selected_btn.clicked.connect(self._on_add_selected_widget)
+        toolbar.addWidget(add_selected_btn)
+
         # Add stretch to push buttons to the right
         toolbar.addStretch()
 
@@ -448,34 +469,69 @@ class DashboardEditor(QWidget):
 
         # Create splitter for resizable panels
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(8)
 
         # Add widget palette
         self.widget_palette = WidgetPalette()
+        self.widget_palette.widget_list.itemDoubleClicked.connect(self._on_palette_item_activated)
         splitter.addWidget(self.widget_palette)
 
         # Add canvas
         self.canvas = DashboardCanvas(self.dashboard)
-        splitter.addWidget(self.canvas)
+        self.canvas_scroll = QScrollArea()
+        self.canvas_scroll.setWidgetResizable(False)
+        self.canvas_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.canvas_scroll.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.canvas_scroll.setWidget(self.canvas)
+        self.canvas_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        splitter.addWidget(self.canvas_scroll)
 
         # Connect canvas signals
         self.canvas.signals.add_widget_requested.connect(self._on_add_widget_requested)
         self.canvas.signals.widget_selected.connect(self._on_widget_selected)
 
-        # Set initial sizes
-        splitter.setSizes([200, 600])
-        layout.addWidget(splitter, 1)  # Add stretch factor to make it expand
+        self.properties_panel = QFrame()
+        self.properties_panel.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Sunken)
+        self.properties_panel.setMinimumWidth(300)
+        self.properties_panel.setMaximumWidth(520)
+        self.properties_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
-        # Add properties panel (placeholder for now)
-        properties_panel = QFrame()
-        properties_panel.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Sunken)
-        properties_panel.setMinimumWidth(250)
-        properties_panel.setMaximumWidth(350)
-
-        properties_layout = QVBoxLayout(properties_panel)
+        properties_layout = QVBoxLayout(self.properties_panel)
+        self.properties_help_label = QLabel("Select a widget to edit its title and data source.")
+        self.properties_help_label.setWordWrap(True)
+        self.properties_help_label.setStyleSheet("color: #666;")
+        properties_layout.addWidget(self.properties_help_label)
         properties_layout.addWidget(QLabel("Widget Properties"))
+
+        form_layout = QFormLayout()
+        self.widget_title_edit = QLineEdit()
+        self.widget_title_edit.editingFinished.connect(self._on_title_edited)
+        form_layout.addRow("Title:", self.widget_title_edit)
+
+        self.data_source_combo = QComboBox()
+        self.data_source_combo.currentIndexChanged.connect(self._on_data_source_changed)
+        form_layout.addRow("Data source:", self.data_source_combo)
+        properties_layout.addLayout(form_layout)
+
+        add_source_button = QPushButton("Add Transaction Source")
+        add_source_button.clicked.connect(self._on_add_transaction_source)
+        properties_layout.addWidget(add_source_button)
+        self.source_summary_label = QLabel("")
+        self.source_summary_label.setWordWrap(True)
+        self.source_summary_label.setStyleSheet("color: #666;")
+        properties_layout.addWidget(self.source_summary_label)
         properties_layout.addStretch()
 
-        splitter.addWidget(properties_panel)
+        splitter.addWidget(self.properties_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([200, 520, 320])
+        layout.addWidget(splitter, 1)
+        self._refresh_data_source_combo()
+        self._set_properties_enabled(False)
+        self._refresh_source_summary()
 
     def _on_add_widget_requested(
         self,
@@ -496,8 +552,6 @@ class DashboardEditor(QWidget):
         """
         try:
             # Create unique widget ID
-            import uuid
-
             widget_id = str(uuid.uuid4())
 
             # Create widget configuration
@@ -509,14 +563,12 @@ class DashboardEditor(QWidget):
                 title=widget_type.value.replace("_", " ").title(),
             )
 
-            # Create widget instance
-            widget_cls = WIDGET_REGISTRY.get(widget_type)
-            if widget_cls:
-                widget = widget_cls(config=config, dashboard=self.dashboard)
-                self.dashboard.add_widget(widget)
-                self.canvas._add_widget(widget_id, widget)
-                self._selected_widget_id = widget_id
-                self.delete_btn.setEnabled(True)
+            self.dashboard.add_widget(config)
+            self.canvas._add_widget(config)
+            self._selected_widget_id = widget_id
+            self.canvas.select_widget(widget_id)
+            self.delete_btn.setEnabled(True)
+            self._load_selected_widget_properties()
         except Exception as e:
             logger.error(f"Failed to add widget: {e}")
             QMessageBox.critical(self, "Error", f"Failed to add widget: {e}")
@@ -528,7 +580,9 @@ class DashboardEditor(QWidget):
             widget_id: ID of the selected widget
         """
         self._selected_widget_id = widget_id
+        self.canvas.select_widget(widget_id)
         self.delete_btn.setEnabled(True)
+        self._load_selected_widget_properties()
 
     def _on_delete_widget(self) -> None:
         """Handle delete widget button click."""
@@ -545,10 +599,11 @@ class DashboardEditor(QWidget):
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                self.dashboard.remove_widget(self._selected_widget_id)
                 self.canvas._remove_widget(self._selected_widget_id)
                 self._selected_widget_id = None
                 self.delete_btn.setEnabled(False)
+                self._set_properties_enabled(False)
+                self._refresh_data_source_combo()
             except Exception as e:
                 logger.error(f"Failed to delete widget: {e}")
                 QMessageBox.critical(
@@ -565,17 +620,13 @@ class DashboardEditor(QWidget):
             for widget_id, widget in self.dashboard.widgets.items():
                 if widget_id in self.canvas.widgets:
                     # Update widget position and size from canvas
-                    widget.config.position = self.canvas.get_widget_position(widget_id)
-                    widget.config.size = self.canvas.get_widget_size(widget_id)
+                    widget.position = self.canvas.get_widget_position(widget_id)
+                    widget.size = self.canvas.get_widget_size(widget_id)
 
             # Emit signal to notify that dashboard was saved
             self.signals.dashboard_saved.emit()
-            QMessageBox.information(
-                self,
-                "Success",
-                "Dashboard saved successfully",
-                QMessageBox.StandardButton.Ok,
-            )
+            self.source_summary_label.setStyleSheet("color: #1b5e20;")
+            self.source_summary_label.setText("Dashboard saved.")
         except Exception as e:
             logger.error(f"Failed to save dashboard: {e}")
             QMessageBox.critical(
@@ -584,3 +635,123 @@ class DashboardEditor(QWidget):
                 f"Failed to save dashboard: {e}",
                 QMessageBox.StandardButton.Ok,
             )
+
+    def _set_properties_enabled(self, enabled: bool) -> None:
+        self.widget_title_edit.setEnabled(enabled)
+        self.data_source_combo.setEnabled(enabled)
+
+    def _load_selected_widget_properties(self) -> None:
+        if not self._selected_widget_id:
+            self._set_properties_enabled(False)
+            return
+        widget = self.dashboard.get_widget(self._selected_widget_id)
+        if not widget:
+            self._set_properties_enabled(False)
+            return
+        self._set_properties_enabled(True)
+        self.widget_title_edit.blockSignals(True)
+        self.widget_title_edit.setText(widget.title)
+        self.widget_title_edit.blockSignals(False)
+        self._refresh_data_source_combo(widget.data_source_id)
+
+    def _refresh_data_source_combo(self, selected_id: Optional[str] = None) -> None:
+        self.data_source_combo.blockSignals(True)
+        self.data_source_combo.clear()
+        self.data_source_combo.addItem("No data source", None)
+        for data_source in self.dashboard.data_sources.values():
+            self.data_source_combo.addItem(data_source.name, data_source.id)
+        if selected_id:
+            index = self.data_source_combo.findData(selected_id)
+            if index >= 0:
+                self.data_source_combo.setCurrentIndex(index)
+        self.data_source_combo.blockSignals(False)
+        self._refresh_source_summary()
+
+    def _refresh_source_summary(self) -> None:
+        count = len(self.dashboard.data_sources)
+        self.source_summary_label.setStyleSheet("color: #666;")
+        if count == 0:
+            self.source_summary_label.setText("No data sources configured yet.")
+        else:
+            self.source_summary_label.setText(f"{count} data source(s) configured.")
+
+    def _on_title_edited(self) -> None:
+        if not self._selected_widget_id:
+            return
+        widget = self.dashboard.get_widget(self._selected_widget_id)
+        if widget:
+            widget.title = self.widget_title_edit.text().strip() or widget.type.value.replace("_", " ").title()
+            self.canvas.set_widget_title(widget.id, widget.title)
+
+    def _on_data_source_changed(self, index: int) -> None:
+        if not self._selected_widget_id:
+            return
+        widget = self.dashboard.get_widget(self._selected_widget_id)
+        if widget:
+            widget.data_source_id = self.data_source_combo.itemData(index)
+
+    def _on_add_selected_widget(self) -> None:
+        selected_items = self.widget_palette.widget_list.selectedItems()
+        if not selected_items:
+            QMessageBox.information(self, "Add Widget", "Select a widget from the palette first.")
+            return
+        self._add_widget_from_palette_item(selected_items[0])
+
+    def _on_palette_item_activated(self, item: QListWidgetItem) -> None:
+        self._add_widget_from_palette_item(item)
+
+    def _add_widget_from_palette_item(self, item: QListWidgetItem) -> None:
+        widget_type = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(widget_type, WidgetType):
+            return
+        row, col = self._next_widget_position()
+        self._on_add_widget_requested(widget_type, row, col, 3, 3)
+
+    def _next_widget_position(self) -> tuple[int, int]:
+        count = len(self.dashboard.widgets)
+        return ((count // 3) * 3, (count % 3) * 3)
+
+    def _on_add_transaction_source(self) -> None:
+        dialog = SheetsSelectionDialog(self)
+        selected_info: dict[str, str] = {}
+
+        def accept_selection(info: dict[str, str]) -> None:
+            selected_info.update(info)
+            dialog.accept()
+
+        dialog.sheet_selected.connect(accept_selection)
+        if dialog.exec() != dialog.DialogCode.Accepted or not selected_info:
+            return
+
+        service = self.data_service.create_sheets_service()
+        if service is None:
+            QMessageBox.warning(self, "Dashboard Data Source", "Could not authenticate with Google Sheets API.")
+            return
+
+        spreadsheet_id = selected_info["spreadsheet_id"]
+        spreadsheet_name = selected_info["spreadsheet_name"]
+        sheet_name = selected_info["sheet_name"]
+        range_a1 = selected_info["sheet_range"]
+        valid, message = self.data_service.validate_transaction_source(service, spreadsheet_id, sheet_name, range_a1)
+        if not valid:
+            QMessageBox.warning(self, "Dashboard Data Source", message)
+            return
+
+        data_source = DataSource(
+            id=str(uuid.uuid4()),
+            type=DataSourceType.TILLER_TRANSACTIONS,
+            name=f"{spreadsheet_name} - {sheet_name}",
+            spreadsheet_id=spreadsheet_id,
+            sheet_name=sheet_name,
+            range_a1=range_a1,
+            date_range=DateRange(DateRangePreset.YEAR_TO_DATE),
+        )
+        self.dashboard.add_data_source(data_source)
+        self._refresh_data_source_combo(data_source.id)
+        self.source_summary_label.setStyleSheet("color: #1b5e20;")
+        self.source_summary_label.setText(f"Added data source '{data_source.name}'.")
+        if self._selected_widget_id:
+            widget = self.dashboard.get_widget(self._selected_widget_id)
+            if widget:
+                widget.data_source_id = data_source.id
+                self._refresh_data_source_combo(data_source.id)

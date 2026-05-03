@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from PySide6.QtCharts import (
     QBarCategoryAxis,
     QBarSeries,
@@ -133,15 +134,18 @@ class SpendingTrendWidget(BaseWidget):
         if not self.config.data_source_id:
             return
 
-        data_source = self.dashboard.get_data_source(self.config.data_source_id)
-        if not data_source or not data_source.data:
+        data = self._runtime_data(service)
+        if not data:
             return
 
         try:
             # Process data using TillerDataProcessor
-            self.data_processor = TillerDataProcessor(data_source.data)
+            self.data_processor = TillerDataProcessor(data)
 
             # Get date range from data source
+            data_source = self.dashboard.get_data_source(self.config.data_source_id)
+            if not data_source:
+                return
             date_range = data_source.date_range.get_date_range()
 
             # Filter data by date range
@@ -154,7 +158,14 @@ class SpendingTrendWidget(BaseWidget):
             self._update_chart(monthly_data)
 
         except Exception as e:
-            print(f"Error updating spending trend: {e}")
+            logger.error(f"Error updating spending trend: {e}")
+
+    def _runtime_data(self, service: Any = None) -> list[dict[str, Any]]:
+        if isinstance(service, dict) and self.config.data_source_id:
+            data = service.get(self.config.data_source_id)
+            if isinstance(data, list):
+                return data
+        return []
 
 
 @register_widget(WidgetType.CATEGORY_BREAKDOWN)
@@ -266,15 +277,18 @@ class CategoryBreakdownWidget(BaseWidget):
         if not self.config.data_source_id:
             return
 
-        data_source = self.dashboard.get_data_source(self.config.data_source_id)
-        if not data_source or not data_source.data:
+        data = self._runtime_data(service)
+        if not data:
             return
 
         try:
             # Process data using TillerDataProcessor
-            self.data_processor = TillerDataProcessor(data_source.data)
+            self.data_processor = TillerDataProcessor(data)
 
             # Get date range from data source
+            data_source = self.dashboard.get_data_source(self.config.data_source_id)
+            if not data_source:
+                return
             date_range = data_source.date_range.get_date_range()
 
             # Filter data by date range
@@ -287,7 +301,14 @@ class CategoryBreakdownWidget(BaseWidget):
             self._update_chart(category_data)
 
         except Exception as e:
-            print(f"Error updating category breakdown: {e}")
+            logger.error(f"Error updating category breakdown: {e}")
+
+    def _runtime_data(self, service: Any = None) -> list[dict[str, Any]]:
+        if isinstance(service, dict) and self.config.data_source_id:
+            data = service.get(self.config.data_source_id)
+            if isinstance(data, list):
+                return data
+        return []
 
 
 @register_widget(WidgetType.BUDGET_VS_ACTUAL)
@@ -394,44 +415,9 @@ class BudgetVsActualWidget(BaseWidget):
         self.chart_view.update()
 
     def update_data(self, service: Any = None) -> None:
-        """Update the widget's data from its data source."""
-        if not self.config.data_source_id:
-            return
-
-        data_source = self.dashboard.get_data_source(self.config.data_source_id)
-        if not data_source or not hasattr(data_source, "data"):
-            return
-
-        try:
-            # Process data using TillerDataProcessor
-            self.data_processor = TillerDataProcessor(data_source.data)
-
-            # Get date range from data source
-            date_range = data_source.date_range.get_date_range()
-
-            # Filter data by date range
-            filtered_processor = self.data_processor.filter_by_date_range(*date_range)
-
-            # Get budget vs actual comparison data
-            budget_data = self._get_budget_data()
-            comparison_data = []
-
-            # Create comparison data structure
-            for category, budgeted in budget_data.items():
-                category_data = filtered_processor.get_category_data(category)
-                comparison_data.append(
-                    {
-                        "category": category,
-                        "budgeted": budgeted,
-                        "amount": -sum(t["amount"] for t in category_data),  # Sum expenses as positive
-                    }
-                )
-
-            # Update the chart
-            self._update_chart(comparison_data)
-
-        except Exception as e:
-            print(f"Error updating budget vs actual: {e}")
+        """Show the unsupported state until budget sources are implemented."""
+        if self.chart_view:
+            self.chart_view.chart().setTitle("Budget data sources are not supported yet")
 
     def _get_budget_data(self) -> dict[str, float]:
         """Get budget data for categories.
@@ -441,14 +427,7 @@ class BudgetVsActualWidget(BaseWidget):
         """
         # This is a placeholder implementation
         # In a real app, you would load this from a budget data source
-        return {
-            "Housing": 1500.0,
-            "Food": 800.0,
-            "Transportation": 400.0,
-            "Entertainment": 200.0,
-            "Utilities": 300.0,
-            "Shopping": 200.0,
-        }
+        return {}
 
 
 @register_widget(WidgetType.TOP_EXPENSES)
@@ -522,16 +501,19 @@ class TopExpensesWidget(BaseWidget):
         if not self.config.data_source_id or not self.table:
             return
 
-        data_source = self.dashboard.get_data_source(self.config.data_source_id)
-        if not data_source or not hasattr(data_source, "data"):
+        data = self._runtime_data(service)
+        if not data:
             self._show_empty_state()
             return
 
         try:
             # Process data using TillerDataProcessor
-            self.data_processor = TillerDataProcessor(data_source.data)
+            self.data_processor = TillerDataProcessor(data)
 
             # Get date range from data source
+            data_source = self.dashboard.get_data_source(self.config.data_source_id)
+            if not data_source:
+                return
             date_range = data_source.date_range.get_date_range()
 
             # Filter data by date range and get top expenses
@@ -583,5 +565,12 @@ class TopExpensesWidget(BaseWidget):
             self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
 
         except Exception as e:
-            print(f"Error updating top expenses: {e}")
+            logger.error(f"Error updating top expenses: {e}")
             self._show_empty_state()
+
+    def _runtime_data(self, service: Any = None) -> list[dict[str, Any]]:
+        if isinstance(service, dict) and self.config.data_source_id:
+            data = service.get(self.config.data_source_id)
+            if isinstance(data, list):
+                return data
+        return []

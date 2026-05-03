@@ -1,14 +1,19 @@
 """Tests for financial dashboard models."""
 
+from datetime import datetime
+
 import pytest
 from PySide6.QtWidgets import QWidget
 
 from ripper.rippergui.dashboard.models.dashboard import Dashboard
+from ripper.rippergui.dashboard.models.data_source import DataSource, DataSourceType, DateRange, DateRangePreset
 from ripper.rippergui.dashboard.models.financial_widgets import (
     BudgetVsActualWidget,
     CategoryBreakdownWidget,
     SpendingTrendWidget,
+    TopExpensesWidget,
 )
+from ripper.rippergui.dashboard.models.tiller_data import TillerDataProcessor
 from ripper.rippergui.dashboard.models.widget_types import WidgetType
 from ripper.rippergui.dashboard.models.widgets import WidgetConfig
 
@@ -126,3 +131,96 @@ class TestBudgetVsActualWidget:
         assert created_widget is not None
         assert created_widget.parent() == parent
         assert widget.chart_view is not None
+
+
+class TestTopExpensesWidget:
+    """Test cases for TopExpensesWidget."""
+
+    def test_update_data_formats_currency_amounts_without_nan(self, sample_dashboard, qtbot):
+        """Test that formatted currency and blank amount rows do not render as $nan."""
+        data_source = DataSource(
+            id="test_source",
+            type=DataSourceType.TILLER_TRANSACTIONS,
+            name="Transactions",
+            spreadsheet_id="spreadsheet",
+            sheet_name="Transactions",
+            range_a1="A:E",
+            date_range=DateRange(
+                DateRangePreset.CUSTOM,
+                start_date=datetime(2026, 1, 1),
+                end_date=datetime(2026, 12, 31, 23, 59, 59),
+            ),
+        )
+        sample_dashboard.add_data_source(data_source)
+        config = WidgetConfig(
+            id="top_expenses",
+            type=WidgetType.TOP_EXPENSES,
+            title="Top Expenses",
+            position=(0, 0),
+            size=(4, 3),
+            data_source_id=data_source.id,
+        )
+        widget = TopExpensesWidget(config, sample_dashboard)
+
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+        widget.update_data(
+            {
+                data_source.id: [
+                    {
+                        "date": "2026-04-15",
+                        "description": "Groceries",
+                        "category": "Food",
+                        "amount": "$1,234.56",
+                        "account": "Checking",
+                    },
+                    {
+                        "date": "2026-04-16",
+                        "description": "Bad empty row",
+                        "category": "Unknown",
+                        "amount": "",
+                        "account": "Checking",
+                    },
+                    {
+                        "date": "2026-04-17",
+                        "description": "Refund",
+                        "category": "Food",
+                        "amount": "25.00",
+                        "account": "Checking",
+                    },
+                    {
+                        "date": "2026-04-18",
+                        "description": "Rent",
+                        "category": "Housing",
+                        "amount": "-1500",
+                        "account": "Checking",
+                    },
+                ]
+            }
+        )
+
+        assert widget.table is not None
+        rendered_amounts = [widget.table.item(row, 3).text() for row in range(widget.table.rowCount())]
+        assert "$nan" not in rendered_amounts
+        assert "$1,500.00" in rendered_amounts
+
+
+class TestTillerDataProcessor:
+    """Test cases for TillerDataProcessor."""
+
+    def test_get_top_expenses_parses_formatted_amounts_and_drops_invalid_values(self):
+        """Test that top expenses do not include NaN amounts."""
+        processor = TillerDataProcessor(
+            [
+                {"date": "2026-04-15", "description": "Groceries", "category": "Food", "amount": "($1,234.56)"},
+                {"date": "2026-04-16", "description": "Blank", "category": "Other", "amount": ""},
+                {"date": "2026-04-17", "description": "Rent", "category": "Housing", "amount": "-1500"},
+                {"date": "2026-04-18", "description": "Income", "category": "Paycheck", "amount": "3000"},
+            ]
+        )
+
+        top_expenses = processor.get_top_expenses()
+
+        assert [expense["description"] for expense in top_expenses] == ["Rent", "Groceries"]
+        assert [expense["amount"] for expense in top_expenses] == [-1500.0, -1234.56]

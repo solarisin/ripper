@@ -13,14 +13,14 @@ The primary application flow is:
 5. Choose a worksheet and A1 range.
 6. Load the selected data into a sortable, filterable table view.
 
-The repository also contains a separate dashboard subsystem. It stores dashboard definitions as JSON files, lets users create/edit dashboards, and includes financial widgets for spending trends, category breakdowns, budget comparison, and top expenses.
+The repository also contains an embedded dashboard subsystem. It stores dashboard definitions as JSON files, lets users create/edit dashboards, and includes financial widgets for spending trends, category breakdowns, budget comparison, and top expenses.
 
 ## Project Layout
 
 - `ripper/main.py`: Click command line entry point, logging setup, database commands, and main GUI startup.
 - `ripper/ripperlib/`: Core non-UI logic for Google OAuth, Google Sheets/Drive access, SQLite persistence, range parsing, and sheet-data caching.
 - `ripper/rippergui/`: Main Qt GUI, OAuth configuration view, Google Sheet selection dialog, table view, thumbnail widget, reusable widgets, and font utilities.
-- `ripper/rippergui/dashboard/`: Dashboard models, dashboard editor/view widgets, financial widgets, and a standalone dashboard entry point.
+- `ripper/rippergui/dashboard/`: Dashboard models, dashboard editor/view widgets, financial widgets, and dashboard data refresh services.
 - `test/`: Pytest test suite mirroring the package layout.
 - `scripts/`: Developer helper scripts, including pre-commit checks and Qt test discovery.
 - `res/`: Application image/resource helpers. This directory is excluded from flake8.
@@ -224,11 +224,7 @@ The cache records both range metadata and cell values. Range sources are returne
 
 ## Dashboard Subsystem
 
-The dashboard subsystem is available inside the main GUI as the `Dashboard` tab and as a standalone entry point:
-
-```bash
-poetry run python -m ripper.rippergui.dashboard
-```
+The dashboard subsystem is available inside the main GUI as the `Dashboard` tab.
 
 Dashboard definitions are stored as JSON files in:
 
@@ -238,8 +234,8 @@ Dashboard definitions are stored as JSON files in:
 
 Dashboard concepts:
 
-- `Dashboard`: A named collection of data sources and widgets.
-- `DataSource`: A configured Tiller data source, including spreadsheet ID, source type, date range, and filters.
+- `Dashboard`: A named collection of data sources and widget configurations.
+- `DataSource`: A configured Tiller data source, including spreadsheet ID, sheet name, exact A1 range, source type, date range, and filters.
 - `WidgetConfig`: Widget identity, type, title, grid position, size, optional data source, and widget properties.
 - `DashboardManager`: Loads, saves, creates, and deletes dashboard JSON files.
 - Widget registry: Maps widget types to widget classes for dynamic loading.
@@ -261,7 +257,7 @@ Available financial widget types:
 - Top expenses
 - Additional enum values exist for net worth, savings goal, and income vs expense, but those implementations are not present in the current code.
 
-The dashboard editor has a widget palette, drag-and-drop canvas, save button, delete-widget action, and a placeholder properties panel. Basic widgets currently render placeholder labels. Financial widgets can render Qt Charts or tables when backed by populated Tiller transaction data.
+The dashboard editor has a widget palette, drag-and-drop canvas, save button, delete-widget action, a transaction data-source picker, and minimal widget title/data-source properties. Basic widgets currently render placeholder labels. Financial widgets can render Qt Charts or tables when backed by refreshed Tiller transaction data.
 
 ## Tiller Data Support
 

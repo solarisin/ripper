@@ -65,6 +65,8 @@ class DataSource:
     type: DataSourceType
     name: str
     spreadsheet_id: str
+    sheet_name: str
+    range_a1: str
     date_range: DateRange
     filters: Dict[str, Any] = field(default_factory=dict)
     data: Any = None
@@ -76,6 +78,8 @@ class DataSource:
             "type": self.type.value,
             "name": self.name,
             "spreadsheet_id": self.spreadsheet_id,
+            "sheet_name": self.sheet_name,
+            "range_a1": self.range_a1,
             "date_range": {
                 "preset": self.date_range.preset.value,
                 "start_date": self.date_range.start_date.isoformat() if self.date_range.start_date else None,
@@ -100,6 +104,8 @@ class DataSource:
             type=DataSourceType(data["type"]),
             name=data["name"],
             spreadsheet_id=data["spreadsheet_id"],
+            sheet_name=data["sheet_name"],
+            range_a1=data["range_a1"],
             date_range=date_range,
             filters=data.get("filters", {}),
         )
@@ -116,28 +122,15 @@ class DataSource:
         Raises:
             ValueError: If the data source type is unknown
         """
-        from ripper.ripperlib.sheets_backend import (
-            get_tiller_budget,
-            get_tiller_categories,
-            get_tiller_transactions,
-        )
-
-        start_date, end_date = self.date_range.get_date_range()
+        from ripper.ripperlib.sheets_backend import retrieve_sheet_data
 
         if self.type == DataSourceType.TILLER_TRANSACTIONS:
-            accounts = self.filters.get("accounts")
-            categories = self.filters.get("categories")
-            return get_tiller_transactions(
-                service,
-                self.spreadsheet_id,
-                start_date=start_date,
-                end_date=end_date,
-                accounts=accounts,
-                categories=categories,
-            )
-        if self.type == DataSourceType.TILLER_CATEGORIES:
-            return get_tiller_categories(service, self.spreadsheet_id)
-        if self.type == DataSourceType.TILLER_BUDGET:
-            return get_tiller_budget(service, self.spreadsheet_id)
+            data, _ = retrieve_sheet_data(service, self.spreadsheet_id, f"{self.sheet_name}!{self.range_a1}")
+            if not data or len(data) < 2:
+                return []
+            headers = [str(cell).strip().lower().replace(" ", "_") for cell in data[0]]
+            return [
+                {headers[index]: cell for index, cell in enumerate(row) if index < len(headers)} for row in data[1:]
+            ]
 
         raise ValueError(f"Unknown data source type: {self.type}")

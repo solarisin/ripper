@@ -38,14 +38,48 @@ class TillerDataProcessor:
             return
 
         # Convert date strings to datetime
-        self.df["date"] = pd.to_datetime(self.df["date"])
+        self.df["date"] = pd.to_datetime(self.df["date"], errors="coerce")
 
-        # Ensure amount is numeric and expenses are negative
-        self.df["amount"] = pd.to_numeric(self.df["amount"], errors="coerce")
+        # Ensure amount is numeric. Tiller exports may include currency symbols,
+        # thousands separators, blanks, or accounting-style parenthesized values.
+        self.df["amount"] = self.df["amount"].apply(self._parse_amount)
 
         # Add month and year columns for easier grouping
         self.df["month"] = self.df["date"].dt.to_period("M")
         self.df["year"] = self.df["date"].dt.year
+
+    @staticmethod
+    def _parse_amount(value: Any) -> float | None:
+        """Parse a Tiller amount cell into a float."""
+        if pd.isna(value):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        is_parenthesized = text.startswith("(") and text.endswith(")")
+        if is_parenthesized:
+            text = text[1:-1]
+
+        cleaned = (
+            text.replace("$", "")
+            .replace(",", "")
+            .replace(" ", "")
+            .replace("\u2212", "-")
+            .strip()
+        )
+        if not cleaned:
+            return None
+
+        try:
+            amount = float(cleaned)
+        except ValueError:
+            return None
+
+        return -abs(amount) if is_parenthesized else amount
 
     def filter_by_date_range(self, start_date: datetime, end_date: datetime) -> "TillerDataProcessor":
         """Filter transactions by date range.
@@ -118,7 +152,13 @@ class TillerDataProcessor:
             return []
 
         # Get top expenses (largest absolute amounts)
-        top_expenses = self.df.nlargest(limit, "amount", keep="all")
+        expenses = self.df.dropna(subset=["amount"])
+        expenses = expenses[expenses["amount"] < 0].copy()
+        if expenses.empty:
+            return []
+
+        expenses["abs_amount"] = expenses["amount"].abs()
+        top_expenses = expenses.nlargest(limit, "abs_amount", keep="all").drop(columns=["abs_amount"])
         return top_expenses.to_dict("records")  # type: ignore[return-value]
 
     def get_budget_vs_actual(self, budget_data: Dict[str, float]) -> List[Dict[str, Any]]:

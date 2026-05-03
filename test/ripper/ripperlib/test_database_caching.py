@@ -405,6 +405,41 @@ class TestDatabaseCaching(unittest.TestCase):
 
         conn.close()
 
+    def test_clean_orphaned_ranges_removes_ranges_without_cells(self) -> None:
+        """Test that orphaned range records are removed using the actual range primary key."""
+        valid_range_id = self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 2, 2, [["A1", "B1"], ["A2", "B2"]]
+        )
+        self.assertIsNotNone(valid_range_id)
+
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO sheet_data_ranges
+               (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (self.test_spreadsheet_id, self.test_sheet_name, 10, 1, 10, 2),
+        )
+        orphaned_range_id = c.lastrowid
+        conn.commit()
+        conn.close()
+
+        deleted_count = self.db.clean_orphaned_ranges(self.test_spreadsheet_id, self.test_sheet_name)
+
+        self.assertEqual(deleted_count, 1)
+        ranges = self.db.get_cached_ranges(self.test_spreadsheet_id, self.test_sheet_name)
+        remaining_ids = {range_info["range_id"] for range_info in ranges}
+        self.assertIn(valid_range_id, remaining_ids)
+        self.assertNotIn(orphaned_range_id, remaining_ids)
+
+    def test_validate_cached_range_data_uses_range_primary_key(self) -> None:
+        """Test cache validation queries sheet_data_ranges.id, not a non-existent range_id column."""
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 2, 2, [["A1", "B1"], ["A2", "B2"]]
+        )
+
+        self.assertTrue(self.db.validate_cached_range_data(self.test_spreadsheet_id, self.test_sheet_name))
+
     def test_table_creation_includes_new_tables(self) -> None:
         """Test that create_tables creates the new caching tables."""
         # Check that new tables exist

@@ -183,8 +183,10 @@ class SheetsSelectionDialog(QDialog):
         # Clear existing items
         while self.grid_layout.count():
             item = self.grid_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
 
         if not self.spreadsheets_list:
             no_sheets_label = QLabel("No Google Spreadsheets found in your Drive")

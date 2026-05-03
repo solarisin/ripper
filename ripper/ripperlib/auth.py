@@ -402,7 +402,7 @@ class AuthManager(QObject):
             Dictionary containing user information, or None if retrieval fails
         """
         try:
-            user_info_service = build("oauth2", "v2", credentials=cred)
+            user_info_service = cast(Optional[UserInfoService], self.create_userinfo_service(cred))
             if user_info_service:
                 result = cast(Dict[str, Any], user_info_service.userinfo().get().execute())
                 return result

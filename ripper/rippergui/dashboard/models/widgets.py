@@ -77,10 +77,10 @@ class BaseWidget:
         raise NotImplementedError("Subclasses must implement create_widget")
 
     def update_data(self, service: Any = None) -> None:
-        """Update widget data from its data source.
+        """Update widget data from its data source or runtime cache.
 
         Args:
-            service: Optional service object for data fetching
+            service: Optional runtime data cache or legacy service object
         """
         if not self.config.data_source_id:
             return
@@ -90,15 +90,19 @@ class BaseWidget:
             return
 
         try:
-            if service is not None:
+            if isinstance(service, dict):
+                data = service.get(self.config.data_source_id)
+                if data is None:
+                    logger.warning(f"No refreshed data for data source {self.config.data_source_id}")
+                    return
+            elif service is not None:
                 data = data_source.fetch_data(service)
             else:
-                # TODO: Get service from dashboard or application context
                 logger.warning("No service provided for data fetching")
                 return
             self._process_data(data)
         except Exception as e:
-            print(f"Error updating widget data: {e}")
+            logger.error(f"Error updating widget data: {e}")
 
     def _process_data(self, data: Any) -> None:
         """Process data from the data source.
