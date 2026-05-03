@@ -210,6 +210,22 @@ class RipperDb:
                 """CREATE INDEX IF NOT EXISTS idx_sheet_data_cells_position
                    ON sheet_data_cells(range_id, row_num, col_num);"""
             )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS data_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    spreadsheet_id TEXT NOT NULL,
+                    sheet_name TEXT NOT NULL,
+                    range_a1 TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_fetched_at TIMESTAMP,
+                    FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
+                );"""
+            )
+            c.execute(
+                """CREATE INDEX IF NOT EXISTS idx_data_sources_spreadsheet
+                   ON data_sources(spreadsheet_id);"""
+            )
             logger.info("Database tables created successfully")
 
     def store_sheet_properties(self, spreadsheet_id: str, sheet_properties: list[SheetProperties]) -> bool:
@@ -887,6 +903,214 @@ class RipperDb:
 
         except sqlite.Error as e:
             logger.error(f"Error deleting range {range_id}: {e}")
+            return False
+
+    # ---- Data source CRUD -------------------------------------------------------
+
+    def create_data_source(
+        self,
+        name: str,
+        spreadsheet_id: str,
+        sheet_name: str,
+        range_a1: str,
+    ) -> Optional[int]:
+        """
+        Insert a new named data source record.
+
+        Args:
+            name: Human-readable label for this data source.
+            spreadsheet_id: Google Sheets spreadsheet ID (must exist in spreadsheets table).
+            sheet_name: Name of the sheet tab within the spreadsheet.
+            range_a1: Range in A1 notation (e.g. ``A1:Z500``).
+
+        Returns:
+            The new row's ``id`` on success, or ``None`` on failure.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return None
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+                c.execute(
+                    """INSERT INTO data_sources (name, spreadsheet_id, sheet_name, range_a1)
+                       VALUES (?, ?, ?, ?)""",
+                    (name, spreadsheet_id, sheet_name, range_a1),
+                )
+                row_id: int = c.lastrowid  # type: ignore[assignment]
+                logger.info(f"Created data source '{name}' (id={row_id})")
+                return row_id
+        except sqlite.Error as e:
+            logger.error(f"Error creating data source '{name}': {e}")
+            return None
+
+    def list_data_sources(self) -> list[dict[str, Any]]:
+        """
+        Return all saved data sources ordered by name.
+
+        Returns:
+            List of dicts with keys: ``id``, ``name``, ``spreadsheet_id``,
+            ``sheet_name``, ``range_a1``, ``created_at``, ``last_fetched_at``.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return []
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+                c.execute(
+                    """SELECT ds.id, ds.name, ds.spreadsheet_id, ds.sheet_name,
+                              ds.range_a1, ds.created_at, ds.last_fetched_at,
+                              sp.name AS spreadsheet_name
+                       FROM data_sources ds
+                       LEFT JOIN spreadsheets sp ON ds.spreadsheet_id = sp.spreadsheet_id
+                       ORDER BY ds.name COLLATE NOCASE"""
+                )
+                rows = c.fetchall()
+                columns = [desc[0] for desc in c.description]
+                return [dict(zip(columns, row)) for row in rows]
+        except sqlite.Error as e:
+            logger.error(f"Error listing data sources: {e}")
+            return []
+
+    def get_data_source(self, data_source_id: int) -> Optional[dict[str, Any]]:
+        """
+        Fetch a single data source by its primary key.
+
+        Args:
+            data_source_id: Primary key of the data source row.
+
+        Returns:
+            Dict with data source fields, or ``None`` if not found.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return None
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+                c.execute(
+                    """SELECT ds.id, ds.name, ds.spreadsheet_id, ds.sheet_name,
+                              ds.range_a1, ds.created_at, ds.last_fetched_at,
+                              sp.name AS spreadsheet_name
+                       FROM data_sources ds
+                       LEFT JOIN spreadsheets sp ON ds.spreadsheet_id = sp.spreadsheet_id
+                       WHERE ds.id = ?""",
+                    (data_source_id,),
+                )
+                row = c.fetchone()
+                if row is None:
+                    return None
+                columns = [desc[0] for desc in c.description]
+                return dict(zip(columns, row))
+        except sqlite.Error as e:
+            logger.error(f"Error fetching data source {data_source_id}: {e}")
+            return None
+
+    def update_data_source(
+        self,
+        data_source_id: int,
+        name: str,
+        sheet_name: str,
+        range_a1: str,
+    ) -> bool:
+        """
+        Update the editable fields of a data source.
+
+        Args:
+            data_source_id: Primary key of the row to update.
+            name: New human-readable label.
+            sheet_name: New sheet tab name.
+            range_a1: New range in A1 notation.
+
+        Returns:
+            ``True`` on success, ``False`` otherwise.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+                c.execute(
+                    """UPDATE data_sources
+                       SET name = ?, sheet_name = ?, range_a1 = ?
+                       WHERE id = ?""",
+                    (name, sheet_name, range_a1, data_source_id),
+                )
+                if c.rowcount == 0:
+                    logger.warning(f"Data source {data_source_id} not found for update")
+                    return False
+                logger.info(f"Updated data source {data_source_id} → '{name}'")
+                return True
+        except sqlite.Error as e:
+            logger.error(f"Error updating data source {data_source_id}: {e}")
+            return False
+
+    def delete_data_source(self, data_source_id: int) -> bool:
+        """
+        Delete a data source record.
+
+        The raw cell cache (``sheet_data_ranges`` / ``sheet_data_cells``) is left
+        intact because it may be shared by other sources or future refreshes.
+
+        Args:
+            data_source_id: Primary key of the data source to delete.
+
+        Returns:
+            ``True`` on success, ``False`` otherwise.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+                c.execute("DELETE FROM data_sources WHERE id = ?", (data_source_id,))
+                if c.rowcount == 0:
+                    logger.warning(f"Data source {data_source_id} not found for deletion")
+                    return False
+                logger.info(f"Deleted data source {data_source_id}")
+                return True
+        except sqlite.Error as e:
+            logger.error(f"Error deleting data source {data_source_id}: {e}")
+            return False
+
+    def update_data_source_fetched_at(self, data_source_id: int) -> bool:
+        """
+        Stamp ``last_fetched_at`` with the current UTC time for a data source.
+
+        Called after a successful data fetch so the sidebar can show when the
+        data was last synced from Google Sheets.
+
+        Args:
+            data_source_id: Primary key of the data source to update.
+
+        Returns:
+            ``True`` on success, ``False`` otherwise.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._conn:
+                c = self._conn.cursor()
+                c.execute(
+                    "UPDATE data_sources SET last_fetched_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (data_source_id,),
+                )
+                if c.rowcount == 0:
+                    logger.warning(f"Data source {data_source_id} not found when stamping fetch time")
+                    return False
+                return True
+        except sqlite.Error as e:
+            logger.error(f"Error stamping fetch time for data source {data_source_id}: {e}")
             return False
 
 

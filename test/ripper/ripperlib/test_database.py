@@ -35,13 +35,14 @@ class TestDatabaseIntegration(unittest.TestCase):
         c = conn.cursor()
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in c.fetchall()}
-        # Original 3 tables + 2 new caching tables + sqlite_sequence (auto-created) = 6
-        self.assertEqual(len(tables), 6)
+        # 3 metadata tables + 2 caching tables + 1 data_sources + sqlite_sequence = 7
+        self.assertEqual(len(tables), 7)
         self.assertIn("sheets", tables)
         self.assertIn("grid_properties", tables)
         self.assertIn("spreadsheets", tables)
         self.assertIn("sheet_data_ranges", tables)
         self.assertIn("sheet_data_cells", tables)
+        self.assertIn("data_sources", tables)
         self.assertIn("sqlite_sequence", tables)  # Auto-created by SQLite for AUTOINCREMENT
         conn.close()
 
@@ -482,3 +483,143 @@ class TestDatabaseIntegration(unittest.TestCase):
         self.assertIsNotNone(updated_stored_info)
         self.assertEqual(updated_stored_info[0], "Test Spreadsheet")
         self.assertEqual(updated_stored_info[1], "https://example.com/new_thumbnail.png")
+
+
+class TestDataSourceCRUD(unittest.TestCase):
+    """Tests for the data_sources table CRUD methods."""
+
+    SPREADSHEET_ID = "test_spreadsheet_ds"
+
+    def setUp(self) -> None:
+        self.temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.db_path = self.temp_db.name
+        self.temp_db.close()
+        self.db = RipperDb(self.db_path)
+        # Insert a spreadsheet row so the FK constraint is satisfied.
+        self.db.store_spreadsheet_properties(
+            self.SPREADSHEET_ID,
+            SpreadsheetProperties(
+                {
+                    "id": self.SPREADSHEET_ID,
+                    "name": "Test Spreadsheet",
+                    "modifiedTime": "2024-01-01T00:00:00Z",
+                    "createdTime": "2024-01-01T00:00:00Z",
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
+
+    def tearDown(self) -> None:
+        self.db.close()
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_create_and_get_data_source(self) -> None:
+        """create_data_source returns a valid id; get_data_source returns the record."""
+        ds_id = self.db.create_data_source(
+            name="Transactions",
+            spreadsheet_id=self.SPREADSHEET_ID,
+            sheet_name="Transactions",
+            range_a1="A1:Z500",
+        )
+        self.assertIsNotNone(ds_id)
+        assert ds_id is not None
+
+        record = self.db.get_data_source(ds_id)
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record["id"], ds_id)
+        self.assertEqual(record["name"], "Transactions")
+        self.assertEqual(record["spreadsheet_id"], self.SPREADSHEET_ID)
+        self.assertEqual(record["sheet_name"], "Transactions")
+        self.assertEqual(record["range_a1"], "A1:Z500")
+        self.assertIsNotNone(record["created_at"])
+        self.assertIsNone(record["last_fetched_at"])
+
+    def test_list_data_sources_empty(self) -> None:
+        """list_data_sources returns an empty list when no sources exist."""
+        self.assertEqual(self.db.list_data_sources(), [])
+
+    def test_list_data_sources_ordered_by_name(self) -> None:
+        """list_data_sources returns rows ordered case-insensitively by name."""
+        self.db.create_data_source("Zebra", self.SPREADSHEET_ID, "Sheet1", "A1:Z10")
+        self.db.create_data_source("alpha", self.SPREADSHEET_ID, "Sheet2", "A1:Z10")
+        self.db.create_data_source("Budget", self.SPREADSHEET_ID, "Sheet3", "A1:Z10")
+
+        sources = self.db.list_data_sources()
+        names = [s["name"] for s in sources]
+        self.assertEqual(names, sorted(names, key=str.casefold))
+
+    def test_update_data_source(self) -> None:
+        """update_data_source modifies name, sheet_name, and range_a1."""
+        ds_id = self.db.create_data_source("Old Name", self.SPREADSHEET_ID, "Sheet1", "A1:Z10")
+        assert ds_id is not None
+
+        result = self.db.update_data_source(ds_id, "New Name", "Sheet2", "B2:Y50")
+        self.assertTrue(result)
+
+        record = self.db.get_data_source(ds_id)
+        assert record is not None
+        self.assertEqual(record["name"], "New Name")
+        self.assertEqual(record["sheet_name"], "Sheet2")
+        self.assertEqual(record["range_a1"], "B2:Y50")
+
+    def test_update_data_source_nonexistent(self) -> None:
+        """update_data_source returns False for a missing id."""
+        self.assertFalse(self.db.update_data_source(999, "X", "S", "A1"))
+
+    def test_delete_data_source(self) -> None:
+        """delete_data_source removes the record."""
+        ds_id = self.db.create_data_source("To Delete", self.SPREADSHEET_ID, "Sheet1", "A1:Z10")
+        assert ds_id is not None
+
+        self.assertTrue(self.db.delete_data_source(ds_id))
+        self.assertIsNone(self.db.get_data_source(ds_id))
+
+    def test_delete_data_source_nonexistent(self) -> None:
+        """delete_data_source returns False for a missing id."""
+        self.assertFalse(self.db.delete_data_source(999))
+
+    def test_update_data_source_fetched_at(self) -> None:
+        """update_data_source_fetched_at stamps last_fetched_at."""
+        ds_id = self.db.create_data_source("Fetch Test", self.SPREADSHEET_ID, "Sheet1", "A1:Z10")
+        assert ds_id is not None
+
+        record_before = self.db.get_data_source(ds_id)
+        assert record_before is not None
+        self.assertIsNone(record_before["last_fetched_at"])
+
+        self.assertTrue(self.db.update_data_source_fetched_at(ds_id))
+
+        record_after = self.db.get_data_source(ds_id)
+        assert record_after is not None
+        self.assertIsNotNone(record_after["last_fetched_at"])
+
+    def test_update_fetched_at_nonexistent(self) -> None:
+        """update_data_source_fetched_at returns False for a missing id."""
+        self.assertFalse(self.db.update_data_source_fetched_at(999))
+
+    def test_delete_spreadsheet_cascades_to_data_sources(self) -> None:
+        """Deleting a spreadsheet cascades to remove its data sources."""
+        ds_id = self.db.create_data_source("Cascade Test", self.SPREADSHEET_ID, "Sheet1", "A1:Z10")
+        assert ds_id is not None
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("DELETE FROM spreadsheets WHERE spreadsheet_id = ?", (self.SPREADSHEET_ID,))
+            conn.commit()
+        finally:
+            conn.close()
+
+        self.assertIsNone(self.db.get_data_source(ds_id))
+
+    def test_list_data_sources_includes_spreadsheet_name(self) -> None:
+        """list_data_sources joins spreadsheets and includes spreadsheet_name."""
+        self.db.create_data_source("My Source", self.SPREADSHEET_ID, "Sheet1", "A1:Z10")
+        sources = self.db.list_data_sources()
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["spreadsheet_name"], "Test Spreadsheet")

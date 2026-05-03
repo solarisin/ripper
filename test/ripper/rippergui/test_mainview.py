@@ -49,7 +49,7 @@ class TestMainView(unittest.TestCase):
         mock_auth_info = MagicMock()
         mock_auth_info.auth_state.return_value = 1  # NOT_LOGGED_IN
         mock_auth_manager.auth_info.return_value = mock_auth_info
-        self.main_view.select_google_sheet()
+        self.main_view.new_source()
         mock_warning.assert_called()
 
 

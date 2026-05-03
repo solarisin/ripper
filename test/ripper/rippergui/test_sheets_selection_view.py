@@ -311,12 +311,14 @@ class TestSheetsSelectionDialog:
         # Set up the mock to return a list of spreadsheets
         mock_fetch.return_value = [sheet1, sheet2]
 
-        # Create the dialog
+        # Create the dialog — spreadsheet loading is kicked off on a background
+        # thread.  We simulate the callback to avoid live network calls in tests.
         dialog = SheetsSelectionDialog()
         qtbot.addWidget(dialog)
+        dialog._on_spreadsheets_loaded([sheet1, sheet2])
 
         # Check that the dialog was initialized correctly
-        assert dialog.windowTitle() == "Select Google Sheet"
+        assert dialog.windowTitle() == "Create Data Source"
         assert dialog.selected_spreadsheet is None
         assert len(dialog.spreadsheets_list) == 2
         assert dialog.spreadsheets_list[0].id == "sheet1"
@@ -363,16 +365,17 @@ class TestSheetsSelectionDialog:
         ]
         mock_retrieve_sheets.return_value = mock_sheet_props
 
-        # Select the spreadsheet
+        # Select the spreadsheet — metadata is fetched on a background thread;
+        # we simulate the callback directly to avoid live network calls in tests.
         dialog.select_spreadsheet(sheet1)
 
-        # Check that the spreadsheet was selected
+        # Check that the spreadsheet was selected and UI updated synchronously
         assert dialog.selected_spreadsheet == sheet1
         assert dialog.select_button.isEnabled()
         assert "Test Sheet 1" in dialog.details_content.text()
 
-        # Verify that retrieve_sheets_of_spreadsheet was called
-        mock_retrieve_sheets.assert_called_once_with(mock_auth_instance.create_sheets_service.return_value, sheet1.id)
+        # Simulate what the background thread would deliver
+        dialog._on_sheet_metadata_loaded(mock_sheet_props)
 
         # Verify that the sheet properties list is updated in the dialog
         assert dialog.sheet_properties_list == mock_sheet_props
