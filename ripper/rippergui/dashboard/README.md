@@ -25,10 +25,12 @@ Ripper dashboards are embedded in the main Ripper GUI. They are JSON-backed conf
 
 ## Storage
 
-Dashboard files are stored under:
+Dashboard files are stored in the platform-specific user data directory under a `dashboards/` subdirectory:
 
 ```text
-~/.ripper/dashboards
+platformdirs.user_data_dir(appname="ripper") / "dashboards"
 ```
+
+The exact path varies by OS (e.g. `~/.local/share/ripper/dashboards` on Linux). See `ripper.ripperlib.defs.get_app_data_dir()`.
 
 Fetched sheet data is runtime-only in the dashboard layer. It is not written to dashboard JSON.

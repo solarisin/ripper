@@ -93,12 +93,14 @@ class BaseWidget:
             if isinstance(service, dict):
                 data = service.get(self.config.data_source_id)
                 if data is None:
-                    logger.warning(f"No refreshed data for data source {self.config.data_source_id}")
+                    # The dashboard may not have been refreshed yet; this is
+                    # normal on first render and should not produce noisy logs.
+                    logger.debug(f"No refreshed data yet for data source {self.config.data_source_id}")
                     return
             elif service is not None:
                 data = data_source.fetch_data(service)
             else:
-                logger.warning("No service provided for data fetching")
+                logger.debug("No service provided for data fetching; skipping widget update")
                 return
             self._process_data(data)
         except Exception as e:

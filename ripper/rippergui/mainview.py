@@ -38,7 +38,7 @@ from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
 from ripper.rippergui.widgets.accordion_widget import AccordionWidget
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
 from ripper.ripperlib.database import Db
-from ripper.ripperlib.defs import LoadSource
+from ripper.ripperlib.defs import LoadSource, get_app_data_dir
 
 
 class MainView(QMainWindow):
@@ -235,6 +235,8 @@ class MainView(QMainWindow):
 
         # Initialize auth status display
         self.update_auth_status(AuthManager().auth_info())
+        # Dashboard tab widget; set to None until _init_dashboard_tab() succeeds.
+        self.dashboard_tab: QWidget | None = None
 
     def _init_dashboard_tab(self) -> None:
         """Initialize the dashboard tab."""
@@ -242,7 +244,9 @@ class MainView(QMainWindow):
             from ripper.rippergui.dashboard import DashboardManagerWidget
 
             # Create dashboard tab
-            self.dashboard_tab = DashboardManagerWidget(storage_dir=Path.home() / ".ripper" / "dashboards")
+            dashboards_dir = Path(get_app_data_dir()) / "dashboards"
+            dashboards_dir.mkdir(parents=True, exist_ok=True)
+            self.dashboard_tab = DashboardManagerWidget(storage_dir=dashboards_dir)
             self.tab_widget.addTab(self.dashboard_tab, "Dashboard")
 
         except ImportError as e:
@@ -253,8 +257,10 @@ class MainView(QMainWindow):
 
     def show_dashboard_tab(self) -> None:
         """Show the dashboard tab."""
-        if hasattr(self, "dashboard_tab"):
+        if self.dashboard_tab is not None:
             self.tab_widget.setCurrentWidget(self.dashboard_tab)
+        else:
+            QMessageBox.warning(self, "Dashboard", "The dashboard tab is not available.")
 
     def create_main_layout(self) -> None:
         """

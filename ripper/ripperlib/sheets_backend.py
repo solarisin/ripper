@@ -325,7 +325,7 @@ def get_tiller_transactions(
         if not data or len(data) < 2:
             return []
 
-        headers = [str(cell).lower().replace(" ", "_") for cell in data[0]]
+        headers = [str(cell).strip().lower().replace(" ", "_") for cell in data[0]]
         transactions = []
 
         for row in data[1:]:
@@ -357,7 +357,7 @@ def get_tiller_categories(service: Any, spreadsheet_id: str, sheet_name: str = "
         if not data or len(data) < 2:
             return []
 
-        headers = [str(cell).lower().replace(" ", "_") for cell in data[0]]
+        headers = [str(cell).strip().lower().replace(" ", "_") for cell in data[0]]
         categories = []
 
         for row in data[1:]:
@@ -389,7 +389,7 @@ def get_tiller_budget(service: Any, spreadsheet_id: str, sheet_name: str = "Budg
         if not data or len(data) < 2:
             return []
 
-        headers = [str(cell).lower().replace(" ", "_") for cell in data[0]]
+        headers = [str(cell).strip().lower().replace(" ", "_") for cell in data[0]]
         budget_items = []
 
         for row in data[1:]:

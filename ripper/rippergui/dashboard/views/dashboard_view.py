@@ -306,7 +306,7 @@ class DashboardView(QWidget):
             Qt.Orientation.Horizontal,
             dialog,
         )
-        button_box.accepted.connect(editor.save_dashboard)  # Use editor's save method
+        button_box.accepted.connect(editor.apply_canvas_state)  # sync canvas positions to model
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)

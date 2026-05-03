@@ -213,6 +213,12 @@ class DataSourceDialog(QDialog):
         self.accounts_list.setEnabled(show_filters)
         self.categories_list.setEnabled(show_filters)
 
+        # Enable date edits only when the CUSTOM preset is active.
+        preset = self.preset_combo.currentData()
+        is_custom = preset == DateRangePreset.CUSTOM
+        self.start_date_edit.setEnabled(is_custom)
+        self.end_date_edit.setEnabled(is_custom)
+
     def _on_type_changed(self, index: int) -> None:
         """Handle data source type change."""
         self._update_ui()
@@ -222,6 +228,10 @@ class DataSourceDialog(QDialog):
         preset = self.preset_combo.currentData()
         is_custom = preset == DateRangePreset.CUSTOM
         self.custom_range_group.setChecked(is_custom)
+        # Enable the date edits only for CUSTOM; disable them for all computed presets
+        # so that stale values cannot accidentally be read and persisted.
+        self.start_date_edit.setEnabled(is_custom)
+        self.end_date_edit.setEnabled(is_custom)
 
     def _on_custom_range_toggled(self, checked: bool) -> None:
         """Handle custom range toggle."""
@@ -244,15 +254,25 @@ class DataSourceDialog(QDialog):
         # Get date range
         preset = self.preset_combo.currentData()
 
-        # Convert QDate to datetime objects if enabled
+        # Only capture explicit dates when the preset is CUSTOM; for all other
+        # presets the dates are computed at runtime by DateRange.get_date_range()
+        # so we must not persist stale custom values.
         start_date = None
         end_date = None
-        if self.start_date_edit.isEnabled():
+        if preset == DateRangePreset.CUSTOM:
             qdate = cast(date, self.start_date_edit.date().toPython())
             start_date = datetime.combine(qdate, datetime.min.time())
-        if self.end_date_edit.isEnabled():
             qdate = cast(date, self.end_date_edit.date().toPython())
             end_date = datetime.combine(qdate, datetime.max.time())
+
+        # Validate that the custom range is ordered correctly.
+        if start_date is not None and end_date is not None and start_date > end_date:
+            QMessageBox.warning(
+                self,
+                "Validation Error",
+                "Start date must be on or before the end date.",
+            )
+            return
 
         # Create or update data source
         if not self.data_source:
