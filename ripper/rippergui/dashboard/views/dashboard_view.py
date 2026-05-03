@@ -218,6 +218,7 @@ class DashboardView(QWidget):
         container_layout.setSpacing(10)
 
         for widget_id, widget_config in dashboard.widgets.items():
+            pos, size = self._validate_widget_position(widget_config.position, widget_config.size, dashboard.grid_size)
             try:
                 widget_class = get_widget_class(widget_config.type)
                 if widget_class is None:
@@ -225,15 +226,12 @@ class DashboardView(QWidget):
                 runtime_widget = widget_class(widget_config, dashboard)
                 widget_view = runtime_widget.create_widget(container)
                 runtime_widget.update_data(self.refresh_result.data)
-                pos, size = self._validate_widget_position(
-                    widget_config.position, widget_config.size, dashboard.grid_size
-                )
                 container_layout.addWidget(widget_view, pos[0], pos[1], size[1], size[0])
             except Exception as e:
                 logger.error(f"Failed to create widget {widget_id}: {e}")
                 error_label = QLabel(f"Error loading widget: {str(e)}")
                 error_label.setStyleSheet("color: red;")
-                container_layout.addWidget(error_label)
+                container_layout.addWidget(error_label, pos[0], pos[1], size[1], size[0])
 
         scroll.setWidget(container)
         layout.addWidget(scroll, 1)

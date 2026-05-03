@@ -8,10 +8,9 @@ from typing import Any, Callable
 
 from loguru import logger
 
-from ripper.ripperlib.defs import SheetData, SheetsService
 from ripper.rippergui.dashboard.models import Dashboard, DataSource, DataSourceType
 from ripper.ripperlib.auth import AuthManager
-
+from ripper.ripperlib.defs import SheetData, SheetsService
 
 REQUIRED_TRANSACTION_COLUMNS = frozenset({"date", "description", "category", "amount", "account"})
 
@@ -202,4 +201,8 @@ class DashboardDataService:
             except ValueError:
                 logger.debug(f"Could not parse transaction date: {raw_date}")
                 return False
+        # Coerce timezone-aware datetimes to naive so they are comparable with the
+        # naive start_date/end_date returned by DateRange.get_date_range().
+        if parsed.tzinfo is not None:
+            parsed = parsed.replace(tzinfo=None)
         return start_date <= parsed <= end_date

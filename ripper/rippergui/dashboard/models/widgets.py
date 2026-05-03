@@ -7,7 +7,7 @@ from loguru import logger
 from PySide6.QtWidgets import QWidget
 
 # Import the registry functions to maintain backward compatibility
-from .registry import WIDGET_REGISTRY, register_widget  # noqa: F401
+from .registry import register_widget  # noqa: F401
 from .widget_types import WidgetType
 
 if TYPE_CHECKING:
@@ -22,7 +22,7 @@ class WidgetConfig:
     type: WidgetType
     title: str
     position: tuple[int, int]  # grid position (row, col)
-    size: tuple[int, int]  # size in grid units (rows, cols)
+    size: tuple[int, int]  # size in grid units (width=cols, height=rows)
     data_source_id: Optional[str] = None
     properties: Dict[str, Any] = field(default_factory=dict)
 

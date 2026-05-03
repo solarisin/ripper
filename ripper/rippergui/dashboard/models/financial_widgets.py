@@ -481,6 +481,10 @@ class TopExpensesWidget(BaseWidget):
         if not self.table:
             return
 
+        # Clear any stale data or spans from a previous real-data render before
+        # setting the spanning empty-state cell, so hidden items don't persist.
+        self.table.clearSpans()
+        self.table.clearContents()
         self.table.setRowCount(1)
         self.table.setRowHidden(0, False)
 
