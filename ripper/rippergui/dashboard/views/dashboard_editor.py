@@ -447,7 +447,7 @@ class DashboardEditor(QWidget):
 
         # Save button
         save_btn = QPushButton("Save Dashboard")
-        save_btn.clicked.connect(self.save_dashboard)
+        save_btn.clicked.connect(self.apply_canvas_state)
         save_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         toolbar.addWidget(save_btn)
 
@@ -613,8 +613,15 @@ class DashboardEditor(QWidget):
                     QMessageBox.StandardButton.Ok,
                 )
 
-    def save_dashboard(self) -> None:
-        """Save the dashboard."""
+    def apply_canvas_state(self) -> None:
+        """Apply canvas widget positions/sizes to the in-memory dashboard model.
+
+        This method reads the current geometry of each widget on the canvas and
+        writes the derived grid position and size back into the corresponding
+        ``WidgetConfig`` objects. It then emits ``signals.dashboard_saved`` so
+        that callers (e.g. ``DashboardView._on_edit_dashboard``) know the model
+        is up to date and can persist it to disk.
+        """
         try:
             # Update widget positions and sizes from canvas
             for widget_id, widget in self.dashboard.widgets.items():
@@ -623,16 +630,16 @@ class DashboardEditor(QWidget):
                     widget.position = self.canvas.get_widget_position(widget_id)
                     widget.size = self.canvas.get_widget_size(widget_id)
 
-            # Emit signal to notify that dashboard was saved
+            # Emit signal so the caller knows the model is up to date
             self.signals.dashboard_saved.emit()
             self.source_summary_label.setStyleSheet("color: #1b5e20;")
-            self.source_summary_label.setText("Dashboard saved.")
+            self.source_summary_label.setText("Canvas state applied.")
         except Exception as e:
-            logger.error(f"Failed to save dashboard: {e}")
+            logger.error(f"Failed to apply canvas state: {e}")
             QMessageBox.critical(
                 self,
                 "Error",
-                f"Failed to save dashboard: {e}",
+                f"Failed to apply canvas state: {e}",
                 QMessageBox.StandardButton.Ok,
             )
 

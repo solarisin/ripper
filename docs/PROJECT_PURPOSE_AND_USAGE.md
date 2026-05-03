@@ -143,7 +143,7 @@ Local persistent state includes:
 - OAuth client credentials in the system keyring under `ripper-oauth-client`.
 - OAuth token and user info in the system keyring under `ripper-app-auth-token` and `ripper-app-auth-userinfo`.
 - Some legacy token-file helper methods still point at `%APPDATA%/ripper/token.json`, but the active token storage path in the current authorization flow is keyring-based.
-- Dashboard JSON files under `~/.ripper/dashboards`.
+- Dashboard JSON files under `platformdirs.user_data_dir(appname="ripper") / "dashboards"` (location varies by platform).
 
 ## Google OAuth Setup
 
@@ -226,11 +226,13 @@ The cache records both range metadata and cell values. Range sources are returne
 
 The dashboard subsystem is available inside the main GUI as the `Dashboard` tab.
 
-Dashboard definitions are stored as JSON files in:
+Dashboard definitions are stored as JSON files in the platform-specific user data directory:
 
 ```text
-~/.ripper/dashboards
+platformdirs.user_data_dir(appname="ripper") / "dashboards"
 ```
+
+The exact path depends on the operating system (e.g. `~/.local/share/ripper/dashboards` on Linux, `~/Library/Application Support/ripper/dashboards` on macOS). See `ripper.ripperlib.defs.get_app_data_dir()`.
 
 Dashboard concepts:
 

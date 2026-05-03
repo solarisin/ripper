@@ -254,6 +254,15 @@ class DataSourceDialog(QDialog):
             qdate = cast(date, self.end_date_edit.date().toPython())
             end_date = datetime.combine(qdate, datetime.max.time())
 
+        # Validate that the custom range is ordered correctly.
+        if start_date is not None and end_date is not None and start_date > end_date:
+            QMessageBox.warning(
+                self,
+                "Validation Error",
+                "Start date must be on or before the end date.",
+            )
+            return
+
         # Create or update data source
         if not self.data_source:
             self.data_source = DataSource(

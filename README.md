@@ -89,7 +89,7 @@ Ripper stores runtime data locally:
 - SQLite cache database: `platformdirs.user_data_dir(appname="ripper") / "ripper.db"`
 - Log file: `<user-data-dir>/ripper.log`
 - OAuth client credentials and tokens: system keyring
-- Dashboard JSON files: `~/.ripper/dashboards`
+- Dashboard JSON files: `platformdirs.user_data_dir(appname="ripper") / "dashboards"` (location varies by platform)
 
 The log file rotates at 10 MB and retains 10 days of logs.
 
