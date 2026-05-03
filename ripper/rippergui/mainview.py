@@ -5,6 +5,8 @@ This module provides MainView, a QMainWindow subclass that manages the main UI l
 authentication state, and UI updates for the ripper application.
 """
 
+from pathlib import Path
+
 from loguru import logger
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSplitter,
+    QTabWidget,
     QToolBar,
     QToolTip,
     QWidget,
@@ -32,7 +35,7 @@ from ripper.rippergui.oauth_client_config_view import AuthView
 from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
 from ripper.rippergui.widgets.accordion_widget import AccordionWidget
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
-from ripper.ripperlib.defs import LoadSource
+from ripper.ripperlib.defs import LoadSource, get_app_data_dir
 
 
 class MainView(QMainWindow):
@@ -55,6 +58,7 @@ class MainView(QMainWindow):
         self._file_menu = QMenu("&File", self)
         self._edit_menu = QMenu("&Edit", self)
         self._view_menu = QMenu("&View", self)
+        self._dashboard_menu = QMenu("&Dashboard", self)
         self._oauth_menu = QMenu("&OAuth", self)
         self._help_menu = QMenu("&Help", self)
 
@@ -182,6 +186,13 @@ class MainView(QMainWindow):
 
         self.menuBar().addMenu(self._view_menu)
 
+        # Add dashboard menu
+        self._show_dashboard_act = QAction("Show &Dashboard", self)
+        self._show_dashboard_act.setStatusTip("Show the dashboard tab")
+        self._show_dashboard_act.triggered.connect(self.show_dashboard_tab)
+        self._dashboard_menu.addAction(self._show_dashboard_act)
+        self.menuBar().addMenu(self._dashboard_menu)
+
         self.menuBar().addMenu(self._oauth_menu)
         self._oauth_menu.addAction(self._register_oauth_act)
         self._oauth_menu.addAction(self._authenticate_oauth_act)
@@ -225,16 +236,63 @@ class MainView(QMainWindow):
 
         # Initialize auth status display
         self.update_auth_status(AuthManager().auth_info())
+        # Dashboard tab widget; set to None until _init_dashboard_tab() succeeds.
+        self.dashboard_tab: QWidget | None = None
+
+    def _init_dashboard_tab(self) -> None:
+        """Initialize the dashboard tab."""
+        try:
+            from ripper.rippergui.dashboard import DashboardManagerWidget
+
+            # Create dashboard tab
+            dashboards_dir = Path(get_app_data_dir()) / "dashboards"
+            dashboards_dir.mkdir(parents=True, exist_ok=True)
+            self.dashboard_tab = DashboardManagerWidget(storage_dir=dashboards_dir)
+            self.tab_widget.addTab(self.dashboard_tab, "Dashboard")
+
+        except ImportError as e:
+            logger.error(f"Failed to initialize dashboard: {e}")
+            QMessageBox.warning(
+                self, "Dashboard Error", "Failed to initialize dashboard. Some features may not be available."
+            )
+
+    def show_dashboard_tab(self) -> None:
+        """Show the dashboard tab."""
+        if self.dashboard_tab is not None:
+            self.tab_widget.setCurrentWidget(self.dashboard_tab)
+        else:
+            QMessageBox.warning(self, "Dashboard", "The dashboard tab is not available.")
 
     def create_main_layout(self) -> None:
         """
         Create the main layout with a fixed accordion sidebar on the left and dockable area on the right.
         """
-        # Create the main central widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)  # Create horizontal splitter for sidebar and main content
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)  # Create accordion sidebar with scroll area
+        # Create the main tab widget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(False)
+        self.tab_widget.setMovable(True)
+        self.setCentralWidget(self.tab_widget)
+
+        # Create the main widget and layout for the data tab
+        self.data_tab = QWidget()
+        self.tab_widget.addTab(self.data_tab, "Data")
+
+        # Create horizontal splitter for sidebar and main content
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Create accordion sidebar with scroll area
         self._accordion_widget = AccordionWidget(self)
+
+        # Create a central widget for the data tab
+        main_layout = QHBoxLayout(self.data_tab)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(main_splitter)
+
+        # Initialize dashboard tab
+        self._init_dashboard_tab()
+
+        # Set data tab as the default
+        self.tab_widget.setCurrentWidget(self.data_tab)
 
         # Wrap accordion in a scroll area for when panels become too tall
         accordion_scroll_area = QScrollArea()
@@ -250,13 +308,12 @@ class MainView(QMainWindow):
 
         # Create main content area (empty widget that will hold dockable content)
         self._main_content_area = QWidget()
-        self._main_content_area.setStyleSheet("background-color: #222222; border: 1px solid;")
+        self._main_content_area.setStyleSheet("background-color: #222222; border: 1px solid #444;")
 
         # Add a label to indicate this is the dockable area
         placeholder_layout = QHBoxLayout(self._main_content_area)
-        placeholder_label = QLabel("Nothing, yet!")
+        placeholder_label = QLabel("No content loaded")
         placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # placeholder_label.setStyleSheet("font-size: 14px; border: none;")
         placeholder_label.setStyleSheet("color: #666; font-size: 14px; border: none;")
         placeholder_layout.addWidget(placeholder_label)
 
@@ -266,11 +323,6 @@ class MainView(QMainWindow):
 
         # Set splitter proportions (sidebar smaller than main content)
         main_splitter.setSizes([250, 950])
-
-        # Set the main layout
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(main_splitter)
 
     def _add_placeholder_accordion_panels(self) -> None:
         """

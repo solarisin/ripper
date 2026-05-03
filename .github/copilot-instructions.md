@@ -1,12 +1,12 @@
 1. use the command "poetry run pytest" to run the tests
 2. use the command "poetry run mypy" to check the type hints
 3. use the command "poetry run flake8" to check the code style
-4. generated tests should be placed in the "test" directory
-5. tests that are written should never make network requests, tested code should be mocked
-6. all flake8, mypy and pytest errors should be fixed automatically when introduced in new code
-7. all function parameters and return values should have type hints
-8. prefer typing constructs from the beartype.typing module
-9. prefer | over Union for type hints
+4. use the command "poetry run ruff check" to run ruff linting; use "poetry run ruff format" to fix whitespace or formatting issues
+5. generated tests should be placed in the "test" directory
+6. tests that are written should never make network requests, tested code should be mocked
+7. all flake8, mypy and pytest errors should be fixed automatically when introduced in new code
+8. all function parameters and return values should have type hints
+9. prefer typing constructs from the beartype.typing module
 10. when changes are made to the code, ensure that the tests are updated accordingly
 11. when adding tests, only start fixing flake8 or mypy errors in tests after all tests are passing, unless they are causing the tests to fail
 12. after all changes are complete run "poetry run flake8 && poetry run mypy" to validate structure. Fix any errors that arise.
@@ -27,3 +27,4 @@
 27. Include proper error handling for GUI operations
 28. Use Qt's resource system when dealing with images or icons
 29. Follow Qt styling conventions and use Qt Style Sheets (QSS) when needed
+30. Do not disable linting or type checking in the code unless the user agrees to it

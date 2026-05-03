@@ -1,0 +1,48 @@
+"""Tests for dashboard view rendering from widget configs."""
+
+from PySide6.QtWidgets import QLabel, QScrollArea, QSplitter
+
+from ripper.rippergui.dashboard.models import Dashboard, WidgetConfig, WidgetType
+from ripper.rippergui.dashboard.services import DashboardRefreshResult
+from ripper.rippergui.dashboard.views.dashboard_editor import DashboardEditor
+from ripper.rippergui.dashboard.views.dashboard_view import DashboardView
+
+
+class FakeDataService:
+    def refresh_dashboard(self, dashboard):
+        return DashboardRefreshResult()
+
+
+def test_dashboard_view_renders_widget_config(tmp_path, qtbot):
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_widget(
+        WidgetConfig(
+            id="widget-1",
+            type=WidgetType.LINE_CHART,
+            title="Line",
+            position=(0, 0),
+            size=(2, 2),
+        )
+    )
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    view = DashboardView(tmp_path, data_service=FakeDataService())
+    qtbot.addWidget(view)
+
+    labels = view.findChildren(QLabel)
+    assert any(label.text() == "Line Chart: Line" for label in labels)
+
+
+def test_dashboard_editor_keeps_canvas_scrollable_and_properties_visible(qtbot):
+    dashboard = Dashboard.create_new("Finance")
+    editor = DashboardEditor(dashboard)
+    qtbot.addWidget(editor)
+
+    splitter = editor.findChild(QSplitter)
+
+    assert splitter is not None
+    assert splitter.count() == 3
+    assert isinstance(splitter.widget(1), QScrollArea)
+    assert splitter.widget(2) is editor.properties_panel
+    assert not splitter.childrenCollapsible()
+    assert editor.properties_panel.minimumWidth() >= 300

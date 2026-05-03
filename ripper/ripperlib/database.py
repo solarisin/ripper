@@ -40,8 +40,7 @@ class RipperDb:
         self._db_file_path = db_file_path
         self._db_identifier = self.generate_db_identifier()
         logger.info(
-            f"Creating new RipperDb instance {self._db_identifier}"
-            f" targeting database file: {str(self._db_file_path)}"
+            f"Creating new RipperDb instance {self._db_identifier} targeting database file: {str(self._db_file_path)}"
         )
         self._conn: sqlite.Connection | None = None
         self.open()
@@ -254,8 +253,7 @@ class RipperDb:
                 grid_props = sheet.grid
                 if not grid_props:
                     raise ValueError(
-                        f"Sheet {sheet.id} of spreadsheet {spreadsheet_id}"
-                        " is a grid sheet but has no grid properties."
+                        f"Sheet {sheet.id} of spreadsheet {spreadsheet_id} is a grid sheet but has no grid properties."
                     )
                 c.execute(
                     """INSERT INTO sheets (spreadsheet_id, sheetId, "index", title, sheetType)
@@ -346,10 +344,10 @@ class RipperDb:
 
             # Check if spreadsheet exists
             c.execute("SELECT COUNT(*) FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            if c.rowcount == 0:
+            row = c.fetchone()
+            if row is None or row[0] == 0:
                 raise ValueError(
-                    f"Spreadsheet {spreadsheet_id} not found in database. "
-                    "Cannot store thumbnail without a spreadsheet."
+                    f"Spreadsheet {spreadsheet_id} not found in database. Cannot store thumbnail without a spreadsheet."
                 )
 
             c.execute(
@@ -711,9 +709,10 @@ class RipperDb:
             with self._conn:
                 c = self._conn.cursor()
 
-                # Get all ranges for this sheet
+                # Get all ranges for this sheet. The range primary key is
+                # sheet_data_ranges.id; sheet_data_cells.range_id references it.
                 c.execute(
-                    """SELECT range_id, start_row, start_col, end_row, end_col
+                    """SELECT id, start_row, start_col, end_row, end_col
                        FROM sheet_data_ranges
                        WHERE spreadsheet_id = ? AND sheet_name = ?""",
                     (spreadsheet_id, sheet_name),
@@ -774,13 +773,14 @@ class RipperDb:
             with self._conn:
                 c = self._conn.cursor()
 
-                # Find ranges with no cell data
+                # Find ranges with no cell data. The range primary key is
+                # sheet_data_ranges.id; sheet_data_cells.range_id references it.
                 c.execute(
-                    """SELECT r.range_id
+                    """SELECT r.id
                        FROM sheet_data_ranges r
-                       LEFT JOIN sheet_data_cells c ON r.range_id = c.range_id
+                       LEFT JOIN sheet_data_cells c ON r.id = c.range_id
                        WHERE r.spreadsheet_id = ? AND r.sheet_name = ?
-                       GROUP BY r.range_id
+                       GROUP BY r.id
                        HAVING COUNT(c.range_id) = 0""",
                     (spreadsheet_id, sheet_name),
                 )
@@ -794,7 +794,7 @@ class RipperDb:
                 orphaned_ids = [row[0] for row in orphaned_ranges]
                 placeholders = ",".join("?" for _ in orphaned_ids)
 
-                c.execute(f"DELETE FROM sheet_data_ranges WHERE range_id IN ({placeholders})", orphaned_ids)
+                c.execute(f"DELETE FROM sheet_data_ranges WHERE id IN ({placeholders})", orphaned_ids)
 
                 deleted_count = len(orphaned_ids)
                 logger.info(f"Cleaned up {deleted_count} orphaned ranges for {spreadsheet_id}!{sheet_name}")

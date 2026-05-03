@@ -299,3 +299,107 @@ def retrieve_sheet_data(
         logger.error(f"Error in retrieve_sheet_data: {e}")
         # Fallback to direct API call
         return fetch_data_from_spreadsheet(service, spreadsheet_id, range_name), [(LoadSource.API, range_name)]
+
+
+def get_tiller_transactions(
+    service: Any,
+    spreadsheet_id: str,
+    sheet_name: str = "Transactions",
+) -> list[dict[str, Any]]:
+    """Get transaction data from Tiller spreadsheet.
+
+    Retrieves all rows from the configured sheet and returns them as a list of
+    dictionaries with normalized header keys. Date range and account/category
+    filtering is handled by the caller (e.g. ``DashboardDataService._apply_filters``).
+
+    Args:
+        service: Google Sheets API service instance
+        spreadsheet_id: The ID of the spreadsheet
+        sheet_name: Name of the transactions sheet (default: "Transactions")
+
+    Returns:
+        List of transaction dictionaries
+    """
+    try:
+        data, _ = retrieve_sheet_data(service, spreadsheet_id, f"{sheet_name}!A:Z")
+        if not data or len(data) < 2:
+            return []
+
+        headers = [str(cell).strip().lower().replace(" ", "_") for cell in data[0]]
+        transactions = []
+
+        for row in data[1:]:
+            transaction = {}
+            for i, header in enumerate(headers):
+                if i < len(row):
+                    transaction[header] = row[i]
+            transactions.append(transaction)
+
+        return transactions
+    except Exception as e:
+        logger.error(f"Error getting Tiller transactions: {e}")
+        return []
+
+
+def get_tiller_categories(service: Any, spreadsheet_id: str, sheet_name: str = "Categories") -> list[dict[str, Any]]:
+    """Get category data from Tiller spreadsheet.
+
+    Args:
+        service: Google Sheets API service instance
+        spreadsheet_id: The ID of the spreadsheet
+        sheet_name: Name of the categories sheet (default: "Categories")
+
+    Returns:
+        List of category dictionaries
+    """
+    try:
+        data, _ = retrieve_sheet_data(service, spreadsheet_id, f"{sheet_name}!A:Z")
+        if not data or len(data) < 2:
+            return []
+
+        headers = [str(cell).strip().lower().replace(" ", "_") for cell in data[0]]
+        categories = []
+
+        for row in data[1:]:
+            category = {}
+            for i, header in enumerate(headers):
+                if i < len(row):
+                    category[header] = row[i]
+            categories.append(category)
+
+        return categories
+    except Exception as e:
+        logger.error(f"Error getting Tiller categories: {e}")
+        return []
+
+
+def get_tiller_budget(service: Any, spreadsheet_id: str, sheet_name: str = "Budget") -> list[dict[str, Any]]:
+    """Get budget data from Tiller spreadsheet.
+
+    Args:
+        service: Google Sheets API service instance
+        spreadsheet_id: The ID of the spreadsheet
+        sheet_name: Name of the budget sheet (default: "Budget")
+
+    Returns:
+        List of budget dictionaries
+    """
+    try:
+        data, _ = retrieve_sheet_data(service, spreadsheet_id, f"{sheet_name}!A:Z")
+        if not data or len(data) < 2:
+            return []
+
+        headers = [str(cell).strip().lower().replace(" ", "_") for cell in data[0]]
+        budget_items = []
+
+        for row in data[1:]:
+            budget_item = {}
+            for i, header in enumerate(headers):
+                if i < len(row):
+                    budget_item[header] = row[i]
+            budget_items.append(budget_item)
+
+        return budget_items
+    except Exception as e:
+        logger.error(f"Error getting Tiller budget: {e}")
+        return []

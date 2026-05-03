@@ -52,7 +52,7 @@ def configure_logging(log_level: str = "DEBUG") -> None:
         retention="10 days",
         level=log_level.upper(),
         encoding="utf-8",
-        format=("{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | " "{name}:{function}:{line} - {message}"),
+        format=("{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"),
     )
 
 

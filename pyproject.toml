@@ -2,11 +2,8 @@
 name = "ripper"
 version = "0.1.0"
 description = "ripper"
-author = "Rob L <solarisin@gmail.com>"
 readme = "README.md"
 license = "MIT"
-repository = "https://github.com/solarisin/ripper"
-homepage = "https://github.com/solarisin/ripper"
 dynamic = ["requires-python", "dependencies"]
 
 [tool.poetry]
@@ -25,6 +22,9 @@ pytest = "^8.3.5"
 toml = "^0.10.2"
 click = "^8.2.0"
 loguru = "^0.7.3"
+ruff = "^0.15.12"
+platformdirs = "^4.9.6"
+pandas = "^2.2.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
@@ -33,7 +33,6 @@ pytest-cov = "^6.1.1"
 pytest-mock = "^3.14.1"
 flake8 = "^7.2.0"
 flake8-pyproject = "^1.2.3"
-black = "^25.1.0"
 isort = "^6.0.1"
 types-requests = "^2.32.0.20250515"
 mypy = "^1.15.0"
@@ -46,14 +45,17 @@ types-oauthlib = "^3.2.0.20250516"
 pytest-beartype = "^0.2.0"
 autopep8 = "^2.3.2"
 hypothesis = "^6.132.0"
+pandas-stubs = "^2.2.3.250527"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
-[tool.black]
+[tool.ruff]
 line-length = 120
-target-version = ['py313']
+target-version = "py312"
+lint.select = ["E", "F", "W", "I"]
+lint.ignore = []
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -69,7 +71,7 @@ max-complexity = 10
 max-line-length = 120
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
