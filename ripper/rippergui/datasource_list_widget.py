@@ -202,7 +202,7 @@ class DataSourceListWidget(QWidget):
         reply = QMessageBox.question(
             self,
             "Delete Data Source",
-            f"Delete \"{record['name']}\"?\n\nCached cell data will be kept.",
+            f'Delete "{record["name"]}"?\n\nCached cell data will be kept.',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

@@ -10,7 +10,7 @@ import traceback
 
 from beartype.typing import Optional
 from loguru import logger
-from PySide6.QtCore import QSize, QThread, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
