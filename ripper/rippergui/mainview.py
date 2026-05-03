@@ -35,7 +35,7 @@ from ripper.rippergui.oauth_client_config_view import AuthView
 from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
 from ripper.rippergui.widgets.accordion_widget import AccordionWidget
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
-from ripper.ripperlib.defs import LoadSource
+from ripper.ripperlib.defs import LoadSource, get_app_data_dir
 
 
 class MainView(QMainWindow):
@@ -243,7 +243,9 @@ class MainView(QMainWindow):
             from ripper.rippergui.dashboard import DashboardManagerWidget
 
             # Create dashboard tab
-            self.dashboard_tab = DashboardManagerWidget(storage_dir=Path.home() / ".ripper" / "dashboards")
+            dashboards_dir = Path(get_app_data_dir()) / "dashboards"
+            dashboards_dir.mkdir(parents=True, exist_ok=True)
+            self.dashboard_tab = DashboardManagerWidget(storage_dir=dashboards_dir)
             self.tab_widget.addTab(self.dashboard_tab, "Dashboard")
 
         except ImportError as e:

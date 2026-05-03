@@ -159,7 +159,11 @@ class DashboardDataService:
         self, service: SheetsService, spreadsheet_id: str, sheet_name: str, range_a1: str
     ) -> tuple[bool, str]:
         """Validate a selected spreadsheet range as a Tiller transaction source."""
-        data, _ = self._retrieve_sheet_data(service, spreadsheet_id, f"{sheet_name}!{range_a1}")
+        try:
+            data, _ = self._retrieve_sheet_data(service, spreadsheet_id, f"{sheet_name}!{range_a1}")
+        except Exception as exc:
+            logger.error(f"Failed to read range for validation: {exc}")
+            return False, f"Failed to read range: {exc}"
         valid, missing = validate_transaction_sheet_data(data)
         if valid:
             return True, "Transaction source is valid."
