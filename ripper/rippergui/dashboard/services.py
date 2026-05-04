@@ -75,9 +75,25 @@ class DashboardDataService:
         auth_manager: AuthManager | None = None,
         retrieve_sheet_data_fn: Callable[[SheetsService, str, str], tuple[SheetData, list[tuple[Any, str]]]]
         | None = None,
+        records_provider: Callable[[str, str], list[dict[str, Any]] | None] | None = None,
     ) -> None:
+        """Initialise the service.
+
+        Args:
+            auth_manager: Optional auth manager; defaults to a shared singleton.
+            retrieve_sheet_data_fn: Optional override for the sheet data fetch
+                function, primarily used in tests.
+            records_provider: Optional callable ``(spreadsheet_id, sheet_name)
+                -> list[dict] | None`` that supplies already-fetched and
+                already-filtered records (e.g. from the active table view).
+                When the provider returns a non-None value the API call is
+                skipped and the provided records are used directly before
+                ``DataSource.filters`` (date-range / accounts / categories)
+                are applied.
+        """
         self._auth_manager = auth_manager or AuthManager()
         self._retrieve_sheet_data_fn = retrieve_sheet_data_fn
+        self._records_provider = records_provider
 
     def create_sheets_service(self) -> SheetsService | None:
         """Create an authenticated Sheets service."""
@@ -116,6 +132,24 @@ class DashboardDataService:
                     unsupported=True,
                 ),
                 None,
+            )
+
+        # Use pre-fetched records from the provider when available (e.g. the
+        # active filtered table view), falling back to a fresh API call.
+        pre_fetched: list[dict[str, Any]] | None = None
+        if self._records_provider is not None:
+            pre_fetched = self._records_provider(data_source.spreadsheet_id, data_source.sheet_name)
+
+        if pre_fetched is not None:
+            records = self._apply_filters(pre_fetched, data_source)
+            return (
+                DataSourceRefreshStatus(
+                    data_source_id=data_source.id,
+                    ok=True,
+                    message=f"Loaded {len(records)} transaction rows (from cache).",
+                    row_count=len(records),
+                ),
+                records,
             )
 
         range_name = f"{data_source.sheet_name}!{data_source.range_a1}"

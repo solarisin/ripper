@@ -9,6 +9,7 @@ from PySide6.QtGui import QDrag, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -37,7 +38,7 @@ from ripper.rippergui.dashboard.models import (
 )
 from ripper.rippergui.dashboard.models.widget_types import WidgetType
 from ripper.rippergui.dashboard.services import DashboardDataService
-from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
+from ripper.ripperlib.database import Db
 
 
 class WidgetList(QListWidget):
@@ -725,38 +726,65 @@ class DashboardEditor(QWidget):
         return (row, col)
 
     def _on_add_transaction_source(self) -> None:
-        dialog = SheetsSelectionDialog(self)
-        selected_info: dict[str, str] = {}
+        """
+        Open a picker over already-loaded Db data sources and attach the
+        selection as a dashboard data source.
 
-        def accept_selection(info: dict[str, str]) -> None:
-            selected_info.update(info)
-            dialog.accept()
-
-        dialog.sheet_selected.connect(accept_selection)
-        if dialog.exec() != dialog.DialogCode.Accepted or not selected_info:
+        Shows a warning if no data sources have been loaded yet (direct the user
+        to load one via the main window's "New Source" action first).
+        """
+        records = Db.list_data_sources()
+        if not records:
+            QMessageBox.information(
+                self,
+                "No Data Sources",
+                "No data sources have been loaded yet.\n\n"
+                'Use "New Source" in the main window to load a Google Sheet first,'
+                " then come back here to attach it to a dashboard widget.",
+            )
             return
 
-        service = self.data_service.create_sheets_service()
-        if service is None:
-            QMessageBox.warning(self, "Dashboard Data Source", "Could not authenticate with Google Sheets API.")
+        # Build a simple picker dialog
+        picker = QDialog(self)
+        picker.setWindowTitle("Select Data Source")
+        picker.setMinimumWidth(360)
+        picker_layout = QVBoxLayout(picker)
+        picker_layout.addWidget(QLabel("Choose a loaded data source:"))
+
+        list_widget = QListWidget(picker)
+        for rec in records:
+            label = rec["name"]
+            spreadsheet_name = rec.get("spreadsheet_name") or rec["spreadsheet_id"]
+            item = QListWidgetItem(f"{label}  ({spreadsheet_name} › {rec['sheet_name']})")
+            item.setData(Qt.ItemDataRole.UserRole, rec)
+            list_widget.addItem(item)
+        list_widget.setCurrentRow(0)
+        picker_layout.addWidget(list_widget)
+
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("Add")
+        ok_btn.setDefault(True)
+        cancel_btn = QPushButton("Cancel")
+        ok_btn.clicked.connect(picker.accept)
+        cancel_btn.clicked.connect(picker.reject)
+        btn_row.addStretch()
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
+        picker_layout.addLayout(btn_row)
+
+        if picker.exec() != QDialog.DialogCode.Accepted:
             return
 
-        spreadsheet_id = selected_info["spreadsheet_id"]
-        spreadsheet_name = selected_info["spreadsheet_name"]
-        sheet_name = selected_info["sheet_name"]
-        range_a1 = selected_info["sheet_range"]
-        valid, message = self.data_service.validate_transaction_source(service, spreadsheet_id, sheet_name, range_a1)
-        if not valid:
-            QMessageBox.warning(self, "Dashboard Data Source", message)
-            return
+        selected_item = list_widget.currentItem()
+        rec = selected_item.data(Qt.ItemDataRole.UserRole)
 
         data_source = DataSource(
             id=str(uuid.uuid4()),
             type=DataSourceType.TILLER_TRANSACTIONS,
-            name=f"{spreadsheet_name} - {sheet_name}",
-            spreadsheet_id=spreadsheet_id,
-            sheet_name=sheet_name,
-            range_a1=range_a1,
+            name=rec["name"],
+            spreadsheet_id=rec["spreadsheet_id"],
+            sheet_name=rec["sheet_name"],
+            range_a1=rec["range_a1"],
             date_range=DateRange(DateRangePreset.YEAR_TO_DATE),
         )
         self.dashboard.add_data_source(data_source)

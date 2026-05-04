@@ -207,6 +207,8 @@ class MainView(QMainWindow):
         self._data_dock: QDockWidget | None = None
         # ID of the data source currently displayed in the dock
         self._active_data_source_id: int | None = None
+        # Map (spreadsheet_id, sheet_name) -> TransactionTableViewWidget for dashboard data.
+        self._table_widgets: dict[tuple[str, str], table_view.TransactionTableViewWidget] = {}
 
         # Setup monospace font for tooltips
         QToolTip.setFont(FontManager().get(FontId.TOOLTIP))
@@ -305,7 +307,10 @@ class MainView(QMainWindow):
             # Create dashboard tab
             dashboards_dir = Path(get_app_data_dir()) / "dashboards"
             dashboards_dir.mkdir(parents=True, exist_ok=True)
-            self.dashboard_tab = DashboardManagerWidget(storage_dir=dashboards_dir)
+            self.dashboard_tab = DashboardManagerWidget(
+                storage_dir=dashboards_dir,
+                records_fn=self._get_records_for_dashboard,
+            )
             self.tab_widget.addTab(self.dashboard_tab, "Dashboard")
 
         except ImportError as e:
@@ -313,6 +318,25 @@ class MainView(QMainWindow):
             QMessageBox.warning(
                 self, "Dashboard Error", "Failed to initialize dashboard. Some features may not be available."
             )
+
+    def _get_records_for_dashboard(self, spreadsheet_id: str, sheet_name: str) -> list[dict] | None:
+        """Return filtered records from the loaded table widget for a data source.
+
+        Called by :class:`DashboardDataService` when refreshing dashboard data.
+        Returns ``None`` if no table widget exists for the given source (falls
+        back to the normal API fetch path).
+
+        Args:
+            spreadsheet_id: The spreadsheet ID to look up.
+            sheet_name: The sheet tab name to look up.
+
+        Returns:
+            List of filtered record dicts or ``None`` if not loaded yet.
+        """
+        widget = self._table_widgets.get((spreadsheet_id, sheet_name))
+        if widget is None:
+            return None
+        return widget.get_filtered_records()
 
     def show_dashboard_tab(self) -> None:
         """Show the dashboard tab."""
@@ -435,7 +459,11 @@ class MainView(QMainWindow):
                 ds_id,
                 name,
                 sheet_data,
-                {"spreadsheet_name": record.get("spreadsheet_name", ""), "sheet_name": sheet_name},
+                {
+                    "spreadsheet_id": spreadsheet_id,
+                    "spreadsheet_name": record.get("spreadsheet_name", ""),
+                    "sheet_name": sheet_name,
+                },
             )
             if stamp_on_success:
                 Db.update_data_source_fetched_at(ds_id)
@@ -841,6 +869,12 @@ class MainView(QMainWindow):
 
         table_widget = table_view.TransactionTableViewWidget(records)
         container_layout.addWidget(table_widget)
+
+        # Track by (spreadsheet_id, sheet_name) so the dashboard can access filtered rows.
+        if source_info:
+            key = (source_info.get("spreadsheet_id", ""), source_info.get("sheet_name", ""))
+            if key[0] and key[1]:
+                self._table_widgets[key] = table_widget
 
         if self._data_dock is None:
             self._data_dock = QDockWidget(title, self)

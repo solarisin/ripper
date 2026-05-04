@@ -1,7 +1,7 @@
 """Main dashboard view implementation."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
 from PySide6.QtCore import Qt, Signal, Slot
@@ -33,19 +33,31 @@ class DashboardView(QWidget):
     dashboard_changed = Signal()
 
     def __init__(
-        self, storage_dir: Path, parent: Optional[QWidget] = None, data_service: Optional[DashboardDataService] = None
+        self,
+        storage_dir: Path,
+        parent: Optional[QWidget] = None,
+        data_service: Optional[DashboardDataService] = None,
+        records_fn: Optional[Callable[[str, str], list[dict[str, Any]] | None]] = None,
     ):
         """Initialize the dashboard view.
 
         Args:
             storage_dir: Directory where dashboard files are stored
             parent: Parent widget
+            data_service: Optional pre-configured data service (used in tests).
+            records_fn: Optional callable ``(spreadsheet_id, sheet_name) ->
+                list[dict] | None`` forwarded to :class:`DashboardDataService`
+                as its ``records_provider``.  Ignored when *data_service* is
+                supplied directly.
         """
         super().__init__(parent)
         self.storage_dir = storage_dir
         self.current_dashboard: Optional[Dashboard] = None
         self.dashboard_manager = DashboardManager(storage_dir)
-        self.data_service = data_service or DashboardDataService()
+        if data_service is not None:
+            self.data_service = data_service
+        else:
+            self.data_service = DashboardDataService(records_provider=records_fn)
         self.refresh_result = DashboardRefreshResult()
         self._init_ui()
 
