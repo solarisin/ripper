@@ -210,13 +210,16 @@ class MainView(QMainWindow):
         self._active_data_source_id: int | None = None
         # Map (spreadsheet_id, sheet_name) -> TransactionTableViewWidget for dashboard data.
         self._table_widgets: dict[tuple[str, str], table_view.TransactionTableViewWidget] = {}
+        # Dock manager and dashboard dock (fully assigned in create_main_layout / _init_dashboard_tab)
+        self._dock_manager: ads.CDockManager
+        self._dashboard_dock: ads.CDockWidget | None = None
 
         # Setup monospace font for tooltips
         QToolTip.setFont(FontManager().get(FontId.TOOLTIP))
 
         # Configure CDockManager before creating it
-        ads.CDockManager.setConfigFlag(ads.CDockManager.eConfigFlag.OpaqueSplitterResize, True)  # type: ignore[attr-defined]
-        ads.CDockManager.setConfigFlag(ads.CDockManager.eConfigFlag.XmlAutoFormattingEnabled, True)  # type: ignore[attr-defined]
+        ads.CDockManager.setConfigFlag(ads.CDockManager.eConfigFlag.OpaqueSplitterResize, True)
+        ads.CDockManager.setConfigFlag(ads.CDockManager.eConfigFlag.XmlAutoFormattingEnabled, True)
 
         # Set up the main window
         self.setWindowTitle("ripper")
@@ -311,9 +314,9 @@ class MainView(QMainWindow):
                 storage_dir=dashboards_dir,
                 records_fn=self._get_records_for_dashboard,
             )
-            self._dashboard_dock = ads.CDockWidget(self._dock_manager, "Dashboard")  # type: ignore[attr-defined]
-            self._dashboard_dock.setWidget(self.dashboard_tab)  # type: ignore[attr-defined]
-            self._dock_manager.addDockWidget(ads.RightDockWidgetArea, self._dashboard_dock)  # type: ignore[attr-defined]
+            self._dashboard_dock = ads.CDockWidget(self._dock_manager, "Dashboard")
+            self._dashboard_dock.setWidget(self.dashboard_tab)
+            self._dock_manager.addDockWidget(ads.RightDockWidgetArea, self._dashboard_dock)
 
         except ImportError as e:
             logger.error(f"Failed to initialize dashboard: {e}")
@@ -343,8 +346,8 @@ class MainView(QMainWindow):
     def show_dashboard_dock(self) -> None:
         """Show the dashboard dock widget."""
         if self._dashboard_dock is not None:
-            self._dashboard_dock.toggleView(True)  # type: ignore[attr-defined]
-            self._dashboard_dock.raise_()  # type: ignore[attr-defined]
+            self._dashboard_dock.toggleView(True)
+            self._dashboard_dock.raise_()
         else:
             QMessageBox.warning(self, "Dashboard", "The dashboard is not available.")
 
@@ -353,7 +356,7 @@ class MainView(QMainWindow):
         Create the main layout with CDockManager as the central widget.
         """
         # Create the CDockManager and set it as the central widget
-        self._dock_manager = ads.CDockManager(self)  # type: ignore[attr-defined]
+        self._dock_manager = ads.CDockManager(self)
         self.setCentralWidget(self._dock_manager)
 
         # Create the main widget and layout for the data content
@@ -401,10 +404,9 @@ class MainView(QMainWindow):
         main_splitter.setSizes([250, 950])
 
         # Wrap data tab content in a CDockWidget and place it at the center
-        self._dashboard_dock: ads.CDockWidget | None = None  # type: ignore[attr-defined]
-        data_dock = ads.CDockWidget(self._dock_manager, "Data")  # type: ignore[attr-defined]
-        data_dock.setWidget(self.data_tab)  # type: ignore[attr-defined]
-        self._dock_manager.addDockWidget(ads.CenterDockWidgetArea, data_dock)  # type: ignore[attr-defined]
+        data_dock = ads.CDockWidget(self._dock_manager, "Data")
+        data_dock.setWidget(self.data_tab)
+        self._dock_manager.addDockWidget(ads.CenterDockWidgetArea, data_dock)
 
         # Initialize dashboard dock
         self._init_dashboard_tab()
