@@ -23,12 +23,13 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QScrollArea,
     QSplitter,
-    QTabWidget,
     QToolBar,
     QToolTip,
     QVBoxLayout,
     QWidget,
 )
+
+import PySide6QtAds as ads  # type: ignore[import-untyped]
 
 import ripper.ripperlib.sheets_backend as sheets_backend
 from ripper.rippergui import table_view
@@ -213,13 +214,12 @@ class MainView(QMainWindow):
         # Setup monospace font for tooltips
         QToolTip.setFont(FontManager().get(FontId.TOOLTIP))
 
+        # Configure CDockManager before creating it
+        ads.CDockManager.setConfigFlag(ads.CDockManager.eConfigFlag.OpaqueSplitterResize, True)  # type: ignore[attr-defined]
+        ads.CDockManager.setConfigFlag(ads.CDockManager.eConfigFlag.XmlAutoFormattingEnabled, True)  # type: ignore[attr-defined]
+
         # Set up the main window
         self.setWindowTitle("ripper")
-        self.setDockOptions(
-            QMainWindow.DockOption.AllowTabbedDocks
-            | QMainWindow.DockOption.AnimatedDocks
-            | QMainWindow.DockOption.AllowNestedDocks
-        )
         self.resize(QSize(1200, 600))  # Create UI elements
         self.create_menus()
         self.create_tool_bars()
@@ -249,8 +249,8 @@ class MainView(QMainWindow):
 
         # Add dashboard menu
         self._show_dashboard_act = QAction("Show &Dashboard", self)
-        self._show_dashboard_act.setStatusTip("Show the dashboard tab")
-        self._show_dashboard_act.triggered.connect(self.show_dashboard_tab)
+        self._show_dashboard_act.setStatusTip("Show the dashboard dock")
+        self._show_dashboard_act.triggered.connect(self.show_dashboard_dock)
         self._dashboard_menu.addAction(self._show_dashboard_act)
         self.menuBar().addMenu(self._dashboard_menu)
 
@@ -300,18 +300,20 @@ class MainView(QMainWindow):
         self.dashboard_tab: QWidget | None = None
 
     def _init_dashboard_tab(self) -> None:
-        """Initialize the dashboard tab."""
+        """Initialize the dashboard dock widget."""
         try:
             from ripper.rippergui.dashboard import DashboardManagerWidget
 
-            # Create dashboard tab
+            # Create dashboard widget
             dashboards_dir = Path(get_app_data_dir()) / "dashboards"
             dashboards_dir.mkdir(parents=True, exist_ok=True)
             self.dashboard_tab = DashboardManagerWidget(
                 storage_dir=dashboards_dir,
                 records_fn=self._get_records_for_dashboard,
             )
-            self.tab_widget.addTab(self.dashboard_tab, "Dashboard")
+            self._dashboard_dock = ads.CDockWidget(self._dock_manager, "Dashboard")  # type: ignore[attr-defined]
+            self._dashboard_dock.setWidget(self.dashboard_tab)  # type: ignore[attr-defined]
+            self._dock_manager.addDockWidget(ads.RightDockWidgetArea, self._dashboard_dock)  # type: ignore[attr-defined]
 
         except ImportError as e:
             logger.error(f"Failed to initialize dashboard: {e}")
@@ -338,26 +340,24 @@ class MainView(QMainWindow):
             return None
         return widget.get_filtered_records()
 
-    def show_dashboard_tab(self) -> None:
-        """Show the dashboard tab."""
-        if self.dashboard_tab is not None:
-            self.tab_widget.setCurrentWidget(self.dashboard_tab)
+    def show_dashboard_dock(self) -> None:
+        """Show the dashboard dock widget."""
+        if self._dashboard_dock is not None:
+            self._dashboard_dock.toggleView(True)  # type: ignore[attr-defined]
+            self._dashboard_dock.raise_()  # type: ignore[attr-defined]
         else:
-            QMessageBox.warning(self, "Dashboard", "The dashboard tab is not available.")
+            QMessageBox.warning(self, "Dashboard", "The dashboard is not available.")
 
     def create_main_layout(self) -> None:
         """
-        Create the main layout with a fixed accordion sidebar on the left and dockable area on the right.
+        Create the main layout with CDockManager as the central widget.
         """
-        # Create the main tab widget
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setTabsClosable(False)
-        self.tab_widget.setMovable(True)
-        self.setCentralWidget(self.tab_widget)
+        # Create the CDockManager and set it as the central widget
+        self._dock_manager = ads.CDockManager(self)  # type: ignore[attr-defined]
+        self.setCentralWidget(self._dock_manager)
 
-        # Create the main widget and layout for the data tab
+        # Create the main widget and layout for the data content
         self.data_tab = QWidget()
-        self.tab_widget.addTab(self.data_tab, "Data")
 
         # Create horizontal splitter for sidebar and main content
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -365,16 +365,10 @@ class MainView(QMainWindow):
         # Create accordion sidebar with scroll area
         self._accordion_widget = AccordionWidget(self)
 
-        # Create a central widget for the data tab
+        # Create a layout for the data tab widget
         main_layout = QHBoxLayout(self.data_tab)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(main_splitter)
-
-        # Initialize dashboard tab
-        self._init_dashboard_tab()
-
-        # Set data tab as the default
-        self.tab_widget.setCurrentWidget(self.data_tab)
 
         # Wrap accordion in a scroll area for when panels become too tall
         accordion_scroll_area = QScrollArea()
@@ -405,6 +399,15 @@ class MainView(QMainWindow):
 
         # Set splitter proportions (sidebar smaller than main content)
         main_splitter.setSizes([250, 950])
+
+        # Wrap data tab content in a CDockWidget and place it at the center
+        self._dashboard_dock: ads.CDockWidget | None = None  # type: ignore[attr-defined]
+        data_dock = ads.CDockWidget(self._dock_manager, "Data")  # type: ignore[attr-defined]
+        data_dock.setWidget(self.data_tab)  # type: ignore[attr-defined]
+        self._dock_manager.addDockWidget(ads.CenterDockWidgetArea, data_dock)  # type: ignore[attr-defined]
+
+        # Initialize dashboard dock
+        self._init_dashboard_tab()
 
     def _add_data_sources_panel(self) -> None:
         """

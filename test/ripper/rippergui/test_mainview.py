@@ -2,6 +2,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+import PySide6QtAds as ads  # type: ignore[import-untyped]
+import pytest
 from PySide6.QtWidgets import QApplication
 
 from ripper.rippergui.mainview import MainView
@@ -51,6 +53,14 @@ class TestMainView(unittest.TestCase):
         mock_auth_manager.auth_info.return_value = mock_auth_info
         self.main_view.new_source()
         mock_warning.assert_called()
+
+
+@pytest.mark.qt
+def test_central_widget_is_dock_manager(qtbot):
+    """Central widget must be a CDockManager after Phase 1 migration."""
+    view = MainView()
+    qtbot.addWidget(view)
+    assert isinstance(view.centralWidget(), ads.CDockManager)
 
 
 if __name__ == "__main__":
