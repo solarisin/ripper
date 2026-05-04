@@ -9,10 +9,12 @@ application-wide use.
 import json
 import os
 import sqlite3 as sqlite
+import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
-from beartype.typing import Any, Optional, Tuple
+from beartype.typing import Any, Generator, Optional, Tuple
 from loguru import logger
 
 import ripper.ripperlib.defs as defs
@@ -43,6 +45,7 @@ class RipperDb:
             f"Creating new RipperDb instance {self._db_identifier} targeting database file: {str(self._db_file_path)}"
         )
         self._conn: sqlite.Connection | None = None
+        self._lock = threading.RLock()
         self.open()
 
     @staticmethod
@@ -67,7 +70,7 @@ class RipperDb:
         os.makedirs(os.path.dirname(self._db_file_path), exist_ok=True)
 
         try:
-            self._conn = sqlite.connect(self._db_file_path, timeout=20)
+            self._conn = sqlite.connect(self._db_file_path, timeout=20, check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA busy_timeout=10000")
             self._conn.execute("PRAGMA foreign_keys = ON")
@@ -83,6 +86,20 @@ class RipperDb:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    @contextmanager
+    def _transaction(self) -> Generator[None, None, None]:
+        """
+        Context manager that serialises DB access across threads.
+
+        Acquires the instance-level RLock and wraps the body in a SQLite
+        transaction (``with self._conn:``).  All methods that write to or
+        read from the database should use this instead of touching
+        ``self._conn`` directly.
+        """
+        with self._lock:
+            with self._conn:  # type: ignore[union-attr]
+                yield
 
     def execute_query(self, query: str, params: Tuple[Any, ...] = ()) -> Optional[sqlite.Cursor]:
         """
@@ -100,11 +117,10 @@ class RipperDb:
             return None
 
         try:
-            cursor = self._conn.cursor()
-            cursor.execute(query, params)
-            if not query.lower().startswith("select"):
-                self._conn.commit()  # Commit non-SELECT queries
-            return cursor
+            with self._transaction():
+                cursor = self._conn.cursor()
+                cursor.execute(query, params)
+                return cursor
         except sqlite.Error as e:
             logger.error(f"Error executing query: {e}")
             return None
@@ -139,7 +155,7 @@ class RipperDb:
             logger.error("Database not open")
             return
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
             # Enable foreign key constraints
             c.execute("PRAGMA foreign_keys = ON")
@@ -222,6 +238,44 @@ class RipperDb:
                     FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
                 );"""
             )
+            # Migrate existing data_sources tables that may be missing columns
+            # added after the initial schema was deployed.
+            c.execute("PRAGMA table_info(data_sources)")
+            existing_cols = {row[1] for row in c.fetchall()}
+            logger.debug(f"data_sources schema check — existing columns: {sorted(existing_cols)}")
+            # Handle column rename: range_name -> range_a1 (SQLite >= 3.25)
+            if "range_name" in existing_cols and "range_a1" not in existing_cols:
+                logger.info("Migrating data_sources: renaming column 'range_name' -> 'range_a1'")
+                c.execute("ALTER TABLE data_sources RENAME COLUMN range_name TO range_a1")
+                existing_cols.discard("range_name")
+                existing_cols.add("range_a1")
+                logger.info("Migration complete: renamed 'range_name' to 'range_a1'")
+            # Drop legacy columns that are no longer part of the schema (SQLite >= 3.35)
+            legacy_cols = {"range_name", "cell_range"}
+            cols_to_drop = legacy_cols & existing_cols
+            if cols_to_drop:
+                logger.info(f"Migrating data_sources: dropping legacy columns {sorted(cols_to_drop)}")
+                for col in cols_to_drop:
+                    c.execute(f"ALTER TABLE data_sources DROP COLUMN {col}")
+                    existing_cols.discard(col)
+                    logger.info(f"Migration complete: dropped column '{col}'")
+            # Add any columns that are in the current schema but absent from the table
+            migrations = [
+                ("name", "TEXT NOT NULL DEFAULT ''"),
+                ("spreadsheet_id", "TEXT NOT NULL DEFAULT ''"),
+                ("sheet_name", "TEXT NOT NULL DEFAULT ''"),
+                ("range_a1", "TEXT NOT NULL DEFAULT ''"),
+                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                ("last_fetched_at", "TIMESTAMP"),
+            ]
+            cols_to_add = [(n, d) for n, d in migrations if n not in existing_cols]
+            if cols_to_add:
+                logger.info(f"Migrating data_sources: adding missing columns {[n for n, _ in cols_to_add]}")
+                for col_name, col_def in cols_to_add:
+                    c.execute(f"ALTER TABLE data_sources ADD COLUMN {col_name} {col_def}")
+                    logger.info(f"Migration complete: added column '{col_name}'")
+            if not cols_to_drop and not cols_to_add and "range_name" not in existing_cols:
+                logger.debug("data_sources schema is up to date, no migration needed")
             c.execute(
                 """CREATE INDEX IF NOT EXISTS idx_data_sources_spreadsheet
                    ON data_sources(spreadsheet_id);"""
@@ -246,7 +300,7 @@ class RipperDb:
             logger.error("Database not open")
             return False
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
 
             # Check if spreadsheet exists
@@ -313,7 +367,7 @@ class RipperDb:
             logger.error("Database not open")
             return []
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
 
             # Get all sheets for this spreadsheet
@@ -355,7 +409,7 @@ class RipperDb:
             logger.error("Database not open")
             return
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
 
             # Check if spreadsheet exists
@@ -385,7 +439,7 @@ class RipperDb:
             logger.error("Database not open")
             return None
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
             c.execute("SELECT thumbnail FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
             result = c.fetchone()
@@ -409,7 +463,7 @@ class RipperDb:
             logger.error("Database not open")
             return False
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
 
             # Check if spreadsheet exists and get the current modifiedTime if
@@ -487,7 +541,7 @@ class RipperDb:
             return None
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Insert or update the range record
@@ -544,7 +598,7 @@ class RipperDb:
             return []
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
                 c.execute(
                     """SELECT id, start_row, start_col, end_row, end_col, cached_at
@@ -593,7 +647,7 @@ class RipperDb:
             return None
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Find all ranges that intersect with the requested range
@@ -685,7 +739,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 if sheet_name is None:
@@ -722,7 +776,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Get all ranges for this sheet. The range primary key is
@@ -786,7 +840,7 @@ class RipperDb:
             return 0
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Find ranges with no cell data. The range primary key is
@@ -837,7 +891,7 @@ class RipperDb:
             return []
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Get all ranges with their expected and actual cell counts
@@ -888,7 +942,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Delete the range (cells will be deleted by CASCADE)
@@ -932,7 +986,7 @@ class RipperDb:
             return None
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
                 c.execute(
                     """INSERT INTO data_sources (name, spreadsheet_id, sheet_name, range_a1)
@@ -963,7 +1017,7 @@ class RipperDb:
             return []
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
                 c.execute(
                     """SELECT ds.id, ds.name, ds.spreadsheet_id, ds.sheet_name,
@@ -995,7 +1049,7 @@ class RipperDb:
             return None
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
                 c.execute(
                     """SELECT ds.id, ds.name, ds.spreadsheet_id, ds.sheet_name,
@@ -1039,7 +1093,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
                 c.execute(
                     """UPDATE data_sources
@@ -1074,7 +1128,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
                 c.execute("DELETE FROM data_sources WHERE id = ?", (data_source_id,))
                 if c.rowcount == 0:
@@ -1104,7 +1158,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
                 c.execute(
                     "UPDATE data_sources SET last_fetched_at = CURRENT_TIMESTAMP WHERE id = ?",

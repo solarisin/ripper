@@ -243,6 +243,9 @@ class SheetsSelectionDialog(QDialog):
         self._loader.finished.connect(self._progress.reset)
         self._loader.error.connect(self._progress.reset)
         self._loader.finished.connect(self._loader.deleteLater)
+        self._loader.finished.connect(lambda *_: setattr(self, "_loader", None))
+        self._loader.error.connect(self._loader.deleteLater)
+        self._loader.error.connect(lambda *_: setattr(self, "_loader", None))
         self._loader.start()
 
     def _on_spreadsheets_loaded(self, spreadsheets: list) -> None:
@@ -364,6 +367,9 @@ class SheetsSelectionDialog(QDialog):
         self._sheet_loader.finished.connect(self._sheet_progress.reset)
         self._sheet_loader.error.connect(self._sheet_progress.reset)
         self._sheet_loader.finished.connect(self._sheet_loader.deleteLater)
+        self._sheet_loader.finished.connect(lambda *_: setattr(self, "_sheet_loader", None))
+        self._sheet_loader.error.connect(self._sheet_loader.deleteLater)
+        self._sheet_loader.error.connect(lambda *_: setattr(self, "_sheet_loader", None))
         self._sheet_loader.start()
 
     def _on_sheet_metadata_loaded(self, sheet_props: list, loaded_for_id: str) -> None:
