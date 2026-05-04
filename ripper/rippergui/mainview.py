@@ -8,7 +8,7 @@ authentication state, and UI updates for the ripper application.
 from pathlib import Path
 
 from loguru import logger
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, QThread, Signal
 from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QScrollArea,
     QSplitter,
     QTabWidget,
@@ -39,6 +40,64 @@ from ripper.rippergui.widgets.accordion_widget import AccordionWidget
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import LoadSource, get_app_data_dir
+
+
+class _DataFetchWorker(QThread):
+    """
+    Background worker that authenticates with Google and fetches sheet data.
+
+    Used by :class:`MainView` to keep network I/O off the UI thread when loading
+    or refreshing a data source.
+
+    Signals:
+        finished (list, list): Emitted with ``(sheet_data, range_sources)`` on
+            success.  ``sheet_data`` is a 2-D list of cell values; ``range_sources``
+            is the list of ``(LoadSource, range_str)`` pairs.
+        error (str): Emitted with a human-readable message on failure.
+    """
+
+    finished: Signal = Signal(list, list)  # type: ignore[misc]
+    error: Signal = Signal(str)
+
+    def __init__(self, spreadsheet_id: str, range_name: str, parent: QWidget | None = None) -> None:
+        """Initialise with the target spreadsheet ID and range name."""
+        super().__init__(parent)
+        self._spreadsheet_id = spreadsheet_id
+        self._range_name = range_name
+
+    def run(self) -> None:
+        """Authenticate and fetch sheet data in the background."""
+        try:
+            service = AuthManager().create_sheets_service()
+            if not service:
+                self.error.emit("Could not authenticate with Google Sheets API.")
+                return
+            sheet_data, range_sources = sheets_backend.retrieve_sheet_data(
+                service, self._spreadsheet_id, self._range_name
+            )
+            self.finished.emit(sheet_data, range_sources)
+        except Exception as exc:
+            logger.error(f"Error fetching sheet data: {exc}")
+            self.error.emit(str(exc))
+
+
+def _log_range_sources(range_sources: list, sheet_data: list) -> None:
+    """
+    Log the origin of each loaded range for debugging.
+
+    Args:
+        range_sources: List of ``(LoadSource, range_str)`` pairs.
+        sheet_data: Loaded sheet rows, used for the row count in the log message.
+    """
+    if len(range_sources) == 1 or all(s == range_sources[0][0] for s, _ in range_sources):
+        source, range_str = range_sources[0]
+        source_text = "database cache" if source == LoadSource.DATABASE else "Google Sheets API"
+        logger.info(f"Loaded {len(sheet_data)} rows from {source_text} (range: {range_str})")
+    else:
+        logger.info(f"Loaded {len(sheet_data)} total rows across {len(range_sources)} ranges.")
+        for source, range_str in range_sources:
+            source_text = "database cache" if source == LoadSource.DATABASE else "Google Sheets API"
+            logger.debug(f"Range '{range_str}' loaded from {source_text}")
 
 
 class MainView(QMainWindow):
@@ -335,22 +394,23 @@ class MainView(QMainWindow):
         self._datasource_list_widget.refresh_requested.connect(self._refresh_data_source)
         self._accordion_widget.add_panel("Data Sources", self._datasource_list_widget, expanded=True)
 
-    def _load_data_source_by_id(self, ds_id: int) -> bool:
+    def _load_data_source_by_id(self, ds_id: int, stamp_on_success: bool = False) -> None:
         """
-        Load a saved data source from the database cache and display it in the dock.
+        Load a saved data source from Google Sheets and display it in the dock.
 
-        Called when the user clicks a data source in the sidebar list.
+        The fetch runs on a background thread so the UI stays responsive.  Called
+        when the user clicks a data source in the sidebar, and also when refreshing.
 
         Args:
             ds_id: Primary key of the data source to load.
-
-        Returns:
-            ``True`` if data was loaded and displayed successfully, ``False`` otherwise.
+            stamp_on_success: When ``True``, update ``last_fetched_at`` and refresh
+                the sidebar list after a successful load (used by
+                :py:meth:`_refresh_data_source`).
         """
         record = Db.get_data_source(ds_id)
         if record is None:
             QMessageBox.warning(self, "Data Source", "Could not find the selected data source.")
-            return False
+            return
 
         spreadsheet_id = record["spreadsheet_id"]
         sheet_name = record["sheet_name"]
@@ -358,24 +418,39 @@ class MainView(QMainWindow):
         name = record["name"]
         range_name = f"{sheet_name}!{range_a1}" if range_a1 else sheet_name
 
-        sheets_service = AuthManager().create_sheets_service()
-        if not sheets_service:
-            QMessageBox.warning(self, "Google Sheets", "Could not authenticate with Google Sheets API.")
-            return False
+        progress = QProgressDialog("Loading data\u2026", "", 0, 0, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(300)
+        progress.setValue(0)
 
-        sheet_data, range_sources = sheets_backend.retrieve_sheet_data(sheets_service, spreadsheet_id, range_name)
-        if not sheet_data:
-            QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
-            return False
+        worker = _DataFetchWorker(spreadsheet_id, range_name, self)
 
-        self._active_data_source_id = ds_id
-        self._show_data_source_in_dock(
-            ds_id,
-            name,
-            sheet_data,
-            {"spreadsheet_name": record.get("spreadsheet_name", ""), "sheet_name": sheet_name},
-        )
-        return True
+        def on_finished(sheet_data: list, range_sources: list) -> None:
+            progress.reset()
+            if not sheet_data:
+                QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
+                return
+            self._active_data_source_id = ds_id
+            self._show_data_source_in_dock(
+                ds_id,
+                name,
+                sheet_data,
+                {"spreadsheet_name": record.get("spreadsheet_name", ""), "sheet_name": sheet_name},
+            )
+            if stamp_on_success:
+                Db.update_data_source_fetched_at(ds_id)
+                self._datasource_list_widget.refresh()
+            _log_range_sources(range_sources, sheet_data)
+
+        def on_error(message: str) -> None:
+            progress.reset()
+            QMessageBox.warning(self, "Google Sheets", message)
+
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
+        worker.start()
 
     def _refresh_data_source(self, ds_id: int) -> None:
         """
@@ -393,9 +468,7 @@ class MainView(QMainWindow):
             return
 
         SheetDataCache.invalidate_cache(record["spreadsheet_id"], record["sheet_name"])
-        if self._load_data_source_by_id(ds_id):
-            Db.update_data_source_fetched_at(ds_id)
-            self._datasource_list_widget.refresh()
+        self._load_data_source_by_id(ds_id, stamp_on_success=True)
 
     # Actions ###########################################################################
 
@@ -667,8 +740,9 @@ class MainView(QMainWindow):
         """
         Handle confirmation from the Create Data Source dialog.
 
-        Persists the new data source to the database, fetches and caches its data
-        from Google Sheets, then displays it in the single persistent dock.
+        Fetches sheet data on a background thread so the UI stays responsive.
+        The data source record is only persisted after a successful fetch to
+        avoid orphaned DB rows when auth or the network call fails.
 
         Args:
             source_info: Dict emitted by SheetsSelectionDialog.sheet_selected with keys
@@ -687,48 +761,44 @@ class MainView(QMainWindow):
         data_source_name = source_info.get("data_source_name") or f"{source_info['spreadsheet_name']} – {sheet_name}"
         range_name = f"{sheet_name}!{sheet_range}" if sheet_range else sheet_name
 
-        # Persist the data source record before fetching data
-        ds_id = Db.create_data_source(
-            name=data_source_name,
-            spreadsheet_id=spreadsheet_id,
-            sheet_name=sheet_name,
-            range_a1=sheet_range,
-        )
-        if ds_id is None:
-            QMessageBox.warning(self, "Database Error", "Could not save the data source. Please try again.")
-            return
+        progress = QProgressDialog("Loading data…", "", 0, 0, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(300)
+        progress.setValue(0)
 
-        sheets_service = AuthManager().create_sheets_service()
-        if not sheets_service:
-            QMessageBox.warning(self, "Google Sheets", "Could not authenticate with Google Sheets API.")
-            return
+        worker = _DataFetchWorker(spreadsheet_id, range_name, self)
 
-        sheet_data, range_sources = sheets_backend.retrieve_sheet_data(sheets_service, spreadsheet_id, range_name)
-        if not sheet_data:
-            QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
-            return
+        def on_finished(sheet_data: list, range_sources: list) -> None:
+            progress.reset()
+            if not sheet_data:
+                QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
+                return
+            # Only persist the record after a confirmed successful fetch
+            ds_id = Db.create_data_source(
+                name=data_source_name,
+                spreadsheet_id=spreadsheet_id,
+                sheet_name=sheet_name,
+                range_a1=sheet_range,
+            )
+            if ds_id is None:
+                QMessageBox.warning(self, "Database Error", "Could not save the data source. Please try again.")
+                return
+            Db.update_data_source_fetched_at(ds_id)
+            if hasattr(self, "_datasource_list_widget"):
+                self._datasource_list_widget.refresh()
+            self._active_data_source_id = ds_id
+            self._show_data_source_in_dock(ds_id, data_source_name, sheet_data, source_info)
+            _log_range_sources(range_sources, sheet_data)
 
-        # Stamp the fetch time now that we have data
-        Db.update_data_source_fetched_at(ds_id)
+        def on_error(message: str) -> None:
+            progress.reset()
+            QMessageBox.warning(self, "Google Sheets", message)
 
-        # Log load origin
-        if len(range_sources) == 1 or all(s == range_sources[0][0] for s, _ in range_sources):
-            source, range_str = range_sources[0]
-            source_text = "database cache" if source == LoadSource.DATABASE else "Google Sheets API"
-            logger.info(f"Loaded {len(sheet_data)} rows from {source_text} (range: {range_str})")
-        else:
-            logger.info(f"Loaded {len(sheet_data)} total rows across {len(range_sources)} ranges.")
-            for source, range_str in range_sources:
-                source_text = "database cache" if source == LoadSource.DATABASE else "Google Sheets API"
-                logger.debug(f"Range '{range_str}' loaded from {source_text}")
-
-        # Refresh the sidebar so the new source appears
-        if hasattr(self, "_datasource_list_widget"):
-            self._datasource_list_widget.refresh()
-
-        # Display data in the single persistent dock
-        self._active_data_source_id = ds_id
-        self._show_data_source_in_dock(ds_id, data_source_name, sheet_data, source_info)
+        worker.finished.connect(on_finished)
+        worker.error.connect(on_error)
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
+        worker.start()
 
     def _show_data_source_in_dock(
         self,

@@ -44,7 +44,7 @@ class TestMainView(unittest.TestCase):
 
     @patch("ripper.rippergui.mainview.QMessageBox.warning")
     @patch("ripper.rippergui.mainview.AuthManager")
-    def test_select_google_sheet_not_logged_in(self, mock_auth_manager_class, mock_warning):
+    def test_new_source_not_logged_in(self, mock_auth_manager_class, mock_warning):
         mock_auth_manager = mock_auth_manager_class.return_value
         mock_auth_info = MagicMock()
         mock_auth_info.auth_state.return_value = 1  # NOT_LOGGED_IN

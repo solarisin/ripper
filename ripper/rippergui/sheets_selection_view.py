@@ -226,12 +226,11 @@ class SheetsSelectionDialog(QDialog):
         indeterminate progress dialog is shown while the fetch is in flight.
         Any previously-running loader is stopped before starting a new one.
         """
-        # Cancel any in-flight loader before starting a new one
+        # Disconnect any in-flight loader so its results are silently discarded;
+        # don't quit()/wait() — that would block the UI while the network call runs.
         if self._loader is not None and self._loader.isRunning():
             self._loader.finished.disconnect()
             self._loader.error.disconnect()
-            self._loader.quit()
-            self._loader.wait()
 
         self._progress = QProgressDialog("Loading spreadsheets…", "", 0, 0, self)
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -342,12 +341,12 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = details
         self.details_content.setText(self.details_text)
 
-        # Cancel any in-flight metadata loader before starting a new one
+        # Disconnect any in-flight metadata loader so its stale results are silently
+        # discarded.  Don't quit()/wait() — that would block the UI during a slow
+        # network call.  Stale results are also guarded by the loaded_for_id check.
         if self._sheet_loader is not None and self._sheet_loader.isRunning():
             self._sheet_loader.finished.disconnect()
             self._sheet_loader.error.disconnect()
-            self._sheet_loader.quit()
-            self._sheet_loader.wait()
 
         # Fetch sheet metadata on a background thread
         self._sheet_progress = QProgressDialog("Loading sheet details…", "", 0, 0, self)

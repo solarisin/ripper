@@ -94,7 +94,7 @@ class DataSourceListWidget(QWidget):
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, source["id"])
             item.setToolTip(
-                f"Spreadsheet: {source.get('spreadsheet_name', source['spreadsheet_id'])}\n"
+                f"Spreadsheet: {source.get('spreadsheet_name') or source['spreadsheet_id']}\n"
                 f"Sheet: {source['sheet_name']}\n"
                 f"Range: {source['range_a1']}"
             )
@@ -143,7 +143,7 @@ class DataSourceListWidget(QWidget):
         menu = QMenu(self)
 
         refresh_action = menu.addAction("Refresh from Google Sheets")
-        edit_action = menu.addAction("Edit Name / Range")
+        edit_action = menu.addAction("Rename")
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
 
