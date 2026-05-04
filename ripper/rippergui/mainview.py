@@ -335,7 +335,7 @@ class MainView(QMainWindow):
         self._datasource_list_widget.refresh_requested.connect(self._refresh_data_source)
         self._accordion_widget.add_panel("Data Sources", self._datasource_list_widget, expanded=True)
 
-    def _load_data_source_by_id(self, ds_id: int) -> None:
+    def _load_data_source_by_id(self, ds_id: int) -> bool:
         """
         Load a saved data source from the database cache and display it in the dock.
 
@@ -343,11 +343,14 @@ class MainView(QMainWindow):
 
         Args:
             ds_id: Primary key of the data source to load.
+
+        Returns:
+            ``True`` if data was loaded and displayed successfully, ``False`` otherwise.
         """
         record = Db.get_data_source(ds_id)
         if record is None:
             QMessageBox.warning(self, "Data Source", "Could not find the selected data source.")
-            return
+            return False
 
         spreadsheet_id = record["spreadsheet_id"]
         sheet_name = record["sheet_name"]
@@ -358,12 +361,12 @@ class MainView(QMainWindow):
         sheets_service = AuthManager().create_sheets_service()
         if not sheets_service:
             QMessageBox.warning(self, "Google Sheets", "Could not authenticate with Google Sheets API.")
-            return
+            return False
 
         sheet_data, range_sources = sheets_backend.retrieve_sheet_data(sheets_service, spreadsheet_id, range_name)
         if not sheet_data:
             QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
-            return
+            return False
 
         self._active_data_source_id = ds_id
         self._show_data_source_in_dock(
@@ -372,6 +375,7 @@ class MainView(QMainWindow):
             sheet_data,
             {"spreadsheet_name": record.get("spreadsheet_name", ""), "sheet_name": sheet_name},
         )
+        return True
 
     def _refresh_data_source(self, ds_id: int) -> None:
         """
@@ -383,14 +387,15 @@ class MainView(QMainWindow):
             ds_id: Primary key of the data source to refresh.
         """
         from ripper.ripperlib.sheet_data_cache import SheetDataCache  # avoid circular at module level
+
         record = Db.get_data_source(ds_id)
         if record is None:
             return
 
         SheetDataCache.invalidate_cache(record["spreadsheet_id"], record["sheet_name"])
-        self._load_data_source_by_id(ds_id)
-        Db.update_data_source_fetched_at(ds_id)
-        self._datasource_list_widget.refresh()
+        if self._load_data_source_by_id(ds_id):
+            Db.update_data_source_fetched_at(ds_id)
+            self._datasource_list_widget.refresh()
 
     # Actions ###########################################################################
 
@@ -712,9 +717,7 @@ class MainView(QMainWindow):
             source_text = "database cache" if source == LoadSource.DATABASE else "Google Sheets API"
             logger.info(f"Loaded {len(sheet_data)} rows from {source_text} (range: {range_str})")
         else:
-            logger.info(
-                f"Loaded {len(sheet_data)} total rows across {len(range_sources)} ranges."
-            )
+            logger.info(f"Loaded {len(sheet_data)} total rows across {len(range_sources)} ranges.")
             for source, range_str in range_sources:
                 source_text = "database cache" if source == LoadSource.DATABASE else "Google Sheets API"
                 logger.debug(f"Range '{range_str}' loaded from {source_text}")
@@ -762,8 +765,7 @@ class MainView(QMainWindow):
 
         banner = QLabel(banner_text)
         banner.setStyleSheet(
-            "padding: 4px 8px; background: #2a2a2a; color: #aaa; "
-            "font-size: 11px; border-bottom: 1px solid #444;"
+            "padding: 4px 8px; background: #2a2a2a; color: #aaa; font-size: 11px; border-bottom: 1px solid #444;"
         )
         container_layout.addWidget(banner)
 

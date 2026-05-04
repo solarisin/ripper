@@ -188,6 +188,8 @@ class SheetsSelectionDialog(QDialog):
 
         # Wire name auto-population: update when sheet tab selection changes
         self.sheet_name_combobox.currentTextChanged.connect(self._auto_populate_name)
+        # Connect sheet-name selection once here so callbacks never create duplicates
+        self.sheet_name_combobox.currentIndexChanged.connect(lambda idx: self._sheet_name_selected(idx))
 
         details_layout.addLayout(options_layout)
 
@@ -222,7 +224,15 @@ class SheetsSelectionDialog(QDialog):
 
         Results are delivered via :py:meth:`_on_spreadsheets_loaded`.  An
         indeterminate progress dialog is shown while the fetch is in flight.
+        Any previously-running loader is stopped before starting a new one.
         """
+        # Cancel any in-flight loader before starting a new one
+        if self._loader is not None and self._loader.isRunning():
+            self._loader.finished.disconnect()
+            self._loader.error.disconnect()
+            self._loader.quit()
+            self._loader.wait()
+
         self._progress = QProgressDialog("Loading spreadsheets…", "", 0, 0, self)
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress.setMinimumDuration(300)
@@ -233,6 +243,7 @@ class SheetsSelectionDialog(QDialog):
         self._loader.error.connect(self._on_load_error)
         self._loader.finished.connect(self._progress.reset)
         self._loader.error.connect(self._progress.reset)
+        self._loader.finished.connect(self._loader.deleteLater)
         self._loader.start()
 
     def _on_spreadsheets_loaded(self, spreadsheets: list) -> None:
@@ -331,26 +342,47 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = details
         self.details_content.setText(self.details_text)
 
+        # Cancel any in-flight metadata loader before starting a new one
+        if self._sheet_loader is not None and self._sheet_loader.isRunning():
+            self._sheet_loader.finished.disconnect()
+            self._sheet_loader.error.disconnect()
+            self._sheet_loader.quit()
+            self._sheet_loader.wait()
+
         # Fetch sheet metadata on a background thread
         self._sheet_progress = QProgressDialog("Loading sheet details…", "", 0, 0, self)
         self._sheet_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._sheet_progress.setMinimumDuration(300)
         self._sheet_progress.setValue(0)
 
-        self._sheet_loader = _SheetMetadataLoader(spreadsheet_properties.id, self)
-        self._sheet_loader.finished.connect(self._on_sheet_metadata_loaded)
+        # Capture the ID so stale results can be discarded in the callback
+        loading_for_id = spreadsheet_properties.id
+        self._sheet_loader = _SheetMetadataLoader(loading_for_id, self)
+        self._sheet_loader.finished.connect(
+            lambda props, _id=loading_for_id: self._on_sheet_metadata_loaded(props, _id)
+        )
         self._sheet_loader.error.connect(self._on_sheet_metadata_error)
         self._sheet_loader.finished.connect(self._sheet_progress.reset)
         self._sheet_loader.error.connect(self._sheet_progress.reset)
+        self._sheet_loader.finished.connect(self._sheet_loader.deleteLater)
         self._sheet_loader.start()
 
-    def _on_sheet_metadata_loaded(self, sheet_props: list) -> None:
+    def _on_sheet_metadata_loaded(self, sheet_props: list, loaded_for_id: str) -> None:
         """
         Populate the sheet combobox after background metadata fetch completes.
 
+        Discards results if the user has already selected a different spreadsheet
+        since the load was kicked off.
+
         Args:
             sheet_props: List of SheetProperties for the selected spreadsheet.
+            loaded_for_id: The spreadsheet id that was being fetched.
         """
+        # Discard stale results if the user selected a different spreadsheet
+        if self.selected_spreadsheet is None or self.selected_spreadsheet.id != loaded_for_id:
+            logger.debug(f"Discarding stale metadata for spreadsheet id '{loaded_for_id}'")
+            return
+
         self.sheet_properties_list = sheet_props
         logger.debug(f"Spreadsheet contains {len(self.sheet_properties_list)} sheets")
 
@@ -362,7 +394,7 @@ class SheetsSelectionDialog(QDialog):
         if self.sheet_properties_list:
             sheet_names = [sheet.title for sheet in self.sheet_properties_list]
             self.sheet_name_combobox.addItems(sheet_names)
-            self.sheet_name_combobox.currentIndexChanged.connect(self._sheet_name_selected)
+            # currentIndexChanged is already connected once in __init__; no reconnect here
             self.sheet_name_combobox.setCurrentIndex(0)
             self._sheet_name_selected(0)
 

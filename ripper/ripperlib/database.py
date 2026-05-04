@@ -939,7 +939,11 @@ class RipperDb:
                        VALUES (?, ?, ?, ?)""",
                     (name, spreadsheet_id, sheet_name, range_a1),
                 )
-                row_id: int = c.lastrowid  # type: ignore[assignment]
+                last_row_id = c.lastrowid
+                if last_row_id is None:
+                    logger.error(f"INSERT for data source '{name}' returned no row id")
+                    return None
+                row_id: int = last_row_id
                 logger.info(f"Created data source '{name}' (id={row_id})")
                 return row_id
         except sqlite.Error as e:

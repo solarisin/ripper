@@ -109,9 +109,9 @@ class DataSourceListWidget(QWidget):
 
     def _current_source_id(self) -> Optional[int]:
         """Return the data source id for the currently selected list item, or None."""
-        item = self._list.currentItem()
+        item: QListWidgetItem | None = self._list.currentItem()
         if item is None:
-            return None  # type: ignore[unreachable]
+            return None
         value = item.data(Qt.ItemDataRole.UserRole)
         return int(value) if value is not None else None
 
