@@ -420,6 +420,7 @@ class SheetsSelectionDialog(QDialog):
             # currentIndexChanged is already connected once in __init__; no reconnect here
             self.sheet_name_combobox.setCurrentIndex(0)
             self._sheet_name_selected(0)
+            self._auto_populate_name(self.sheet_name_combobox.currentText())
 
         self.sheet_name_combobox.blockSignals(old_state)
 
