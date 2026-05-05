@@ -124,6 +124,7 @@ def test_restore_layout_invalid_state_no_crash(qtbot):
     # Inject garbage directly
     QSettings("solarisin", "ripper").setValue("dock_layout/state", QByteArray(b"not-valid-state"))
     view._restore_layout()  # must not raise
+    QSettings("solarisin", "ripper").remove("dock_layout/state")
 
 
 if __name__ == "__main__":

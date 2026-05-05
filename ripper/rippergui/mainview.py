@@ -177,8 +177,8 @@ class MainView(QMainWindow):
         self._about_act.setStatusTip("About ripper")
         self._about_act.triggered.connect(self.about)
 
-        self._save_layout_act: QAction
-        self._reset_layout_act: QAction
+        self._save_layout_act = QAction(parent=self)
+        self._reset_layout_act = QAction(parent=self)
 
         app = QApplication.instance()
         if app:
