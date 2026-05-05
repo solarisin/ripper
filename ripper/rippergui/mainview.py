@@ -9,8 +9,8 @@ from pathlib import Path
 
 import PySide6QtAds as ads  # type: ignore[import-untyped]
 from loguru import logger
-from PySide6.QtCore import QSize, QThread, Signal
-from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
+from PySide6.QtCore import QSettings, QSize, QThread, Signal
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeySequence, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -177,6 +177,9 @@ class MainView(QMainWindow):
         self._about_act.setStatusTip("About ripper")
         self._about_act.triggered.connect(self.about)
 
+        self._save_layout_act: QAction
+        self._reset_layout_act: QAction
+
         app = QApplication.instance()
         if app:
             self._about_qt_act = QAction(parent=self)
@@ -246,6 +249,15 @@ class MainView(QMainWindow):
         self._edit_menu.addAction(self._undo_act)
 
         self.menuBar().addMenu(self._view_menu)
+        self._save_layout_act = QAction("Save Layout", self)
+        self._save_layout_act.setStatusTip("Save the current dock layout")
+        self._save_layout_act.triggered.connect(self._save_layout)
+        self._view_menu.addAction(self._save_layout_act)
+
+        self._reset_layout_act = QAction("Reset Layout", self)
+        self._reset_layout_act.setStatusTip("Reset dock layout to default")
+        self._reset_layout_act.triggered.connect(self._reset_layout)
+        self._view_menu.addAction(self._reset_layout_act)
 
         # Add dashboard menu
         self._show_dashboard_act = QAction("Show &Dashboard", self)
@@ -346,6 +358,29 @@ class MainView(QMainWindow):
         else:
             QMessageBox.warning(self, "Dashboard", "The dashboard is not available.")
 
+    def _save_layout(self) -> None:
+        """Save the current dock layout to QSettings."""
+        QSettings("solarisin", "ripper").setValue("dock_layout/state", self._dock_manager.saveState())
+
+    def _restore_layout(self) -> None:
+        """Restore dock layout from QSettings; silently skips on failure."""
+        state = QSettings("solarisin", "ripper").value("dock_layout/state")
+        if state is not None:
+            try:
+                self._dock_manager.restoreState(state)
+            except Exception as exc:
+                logger.warning(f"Could not restore dock layout: {exc}")
+
+    def _reset_layout(self) -> None:
+        """Clear saved layout from QSettings so next launch uses the default."""
+        QSettings("solarisin", "ripper").remove("dock_layout/state")
+        QMessageBox.information(self, "Layout Reset", "Layout will reset to default on next launch.")
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
+        """Save layout on close."""
+        self._save_layout()
+        super().closeEvent(event)
+
     def create_main_layout(self) -> None:
         """
         Create the main layout with CDockManager as the central widget.
@@ -364,6 +399,7 @@ class MainView(QMainWindow):
 
         # Initialize dashboard dock
         self._init_dashboard_dock()
+        self._restore_layout()
 
     def _load_data_source_by_id(self, ds_id: int, stamp_on_success: bool = False) -> None:
         """

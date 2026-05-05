@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import PySide6QtAds as ads  # type: ignore[import-untyped]
 import pytest
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from ripper.rippergui.mainview import MainView
@@ -88,6 +89,41 @@ def test_dashboard_dock_initialized(qtbot):
         pytest.skip("dashboard not importable in this environment")
     assert view._dashboard_dock is not None
     assert isinstance(view._dashboard_dock, ads.CDockWidget)
+
+
+@pytest.mark.qt
+def test_close_saves_layout(qtbot):
+    """Closing MainView must persist dock layout to QSettings."""
+    view = MainView()
+    qtbot.addWidget(view)
+    QSettings("solarisin", "ripper").remove("dock_layout/state")  # start clean
+    view.close()
+    state = QSettings("solarisin", "ripper").value("dock_layout/state")
+    assert state is not None
+
+
+@pytest.mark.qt
+def test_reset_layout_clears_settings(qtbot):
+    """_reset_layout must remove the saved layout key from QSettings."""
+    view = MainView()
+    qtbot.addWidget(view)
+    QSettings("solarisin", "ripper").setValue("dock_layout/state", b"dummy")
+    with patch("ripper.rippergui.mainview.QMessageBox.information"):
+        view._reset_layout()
+    assert QSettings("solarisin", "ripper").value("dock_layout/state") is None
+
+
+@pytest.mark.qt
+def test_restore_layout_invalid_state_no_crash(qtbot):
+    """_restore_layout must not crash when QSettings contains garbage."""
+    from PySide6.QtCore import QByteArray
+
+    view = MainView()
+    qtbot.addWidget(view)
+    view._restore_layout.__func__  # just verify it's callable
+    # Inject garbage directly
+    QSettings("solarisin", "ripper").setValue("dock_layout/state", QByteArray(b"not-valid-state"))
+    view._restore_layout()  # must not raise
 
 
 if __name__ == "__main__":
