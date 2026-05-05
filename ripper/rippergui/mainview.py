@@ -292,12 +292,6 @@ class MainView(QMainWindow):
         """
         Create and configure the status bar.
 
-        Sets up the status bar with an authentication status label and connects
-        the auth state changed signal to update the status.
-        """
-        """
-        Create and configure the status bar.
-
         Sets up the status bar with an authentication status label.
         """
         self.statusBar().showMessage("Ready")
@@ -400,6 +394,15 @@ class MainView(QMainWindow):
         # Initialize dashboard dock
         self._init_dashboard_dock()
         self._restore_layout()
+        self._setup_view_menu_dock_actions()
+
+    def _setup_view_menu_dock_actions(self) -> None:
+        """Wire dock toggle actions into the View menu."""
+        self._view_menu.addSeparator()
+        if self._sources_dock is not None:
+            self._view_menu.addAction(self._sources_dock.toggleViewAction())
+        if self._dashboard_dock is not None:
+            self._view_menu.addAction(self._dashboard_dock.toggleViewAction())
 
     def _load_data_source_by_id(self, ds_id: int, stamp_on_success: bool = False) -> None:
         """
@@ -488,26 +491,11 @@ class MainView(QMainWindow):
         Prompt the user to supply OAuth client credentials.
 
         Opens a dialog where the user can enter their Google API OAuth client ID and secret.
-        Returns:
-            None
-        """
-        """
-        Prompt the user to supply OAuth client credentials.
-
-        Opens a dialog where the user can enter their Google API OAuth client ID and secret.
         """
         logger.debug("Register OAuth selected")
         self.show_auth_view()
 
     def authenticate_oauth(self) -> None:
-        """
-        Start the Google OAuth authentication flow.
-
-        Initiates the OAuth flow to authenticate with Google and gain access to the user's
-        Google Sheets and Drive.
-        Returns:
-            None. Shows a message box on success or failure.
-        """
         """
         Start the Google OAuth authentication flow.
 
@@ -524,14 +512,6 @@ class MainView(QMainWindow):
             QMessageBox.warning(self, "Authentication Failed", "Failed to authenticate with Google. Please try again.")
 
     def update_oauth_ui(self) -> None:
-        """
-        Update UI elements based on the current authentication state.
-
-        Enables or disables actions based on whether OAuth client credentials are available
-        and whether the user is logged in.
-        Returns:
-            None
-        """
         """
         Update UI elements based on the current authentication state.
 
@@ -586,14 +566,6 @@ class MainView(QMainWindow):
 
         Creates and displays a dialog where the user can enter their
         Google API OAuth client ID and secret.
-        Returns:
-            None
-        """
-        """
-        Show the authentication view as a dialog.
-
-        Creates and displays a dialog where the user can enter their
-        Google API OAuth client ID and secret.
         """
         self._auth_dialog = QDialog(self)
         self._auth_dialog.setWindowTitle("Google API Authentication")
@@ -616,26 +588,12 @@ class MainView(QMainWindow):
         Save the current document.
 
         This is a placeholder for future implementation.
-        Returns:
-            None
-        """
-        """
-        Save the current document.
-
-        This is a placeholder for future implementation.
         """
         logger.debug("Save selected")
         # TODO: implement saving functionality
         self.statusBar().showMessage("Saved '[filename]'", 2000)
 
     def print_document(self) -> None:
-        """
-        Print the current document.
-
-        This is a placeholder for future implementation.
-        Returns:
-            None
-        """
         """
         Print the current document.
 
@@ -650,13 +608,6 @@ class MainView(QMainWindow):
         Undo the last action.
 
         This is a placeholder for future implementation.
-        Returns:
-            None
-        """
-        """
-        Undo the last action.
-
-        This is a placeholder for future implementation.
         """
         logger.debug("Undo selected")
         # TODO: implement undo functionality
@@ -665,29 +616,12 @@ class MainView(QMainWindow):
     def about(self) -> None:
         """
         Show the about dialog with information about the application.
-
-        Returns:
-            None
-        """
-        """
-        Show the about dialog with information about the application.
         """
         QMessageBox.about(self, "About ripper", "Ripper - A tool for extracting and analyzing data from Google Sheets")
 
     # Slots #############################################################################
 
     def update_auth_status(self, info: AuthInfo) -> None:
-        """
-        Update the authentication status display in the status bar.
-
-        This slot is connected to the authStateChanged signal from AuthManager.
-
-        Args:
-            info (AuthInfo): The current authentication information
-
-        Returns:
-            None
-        """
         """
         Update the authentication status display in the status bar.
 
@@ -709,16 +643,6 @@ class MainView(QMainWindow):
         self.update_oauth_ui()
 
     def on_oauth_client_registered(self) -> None:
-        """
-        Handle user update of target OAuth client.
-
-        This slot is called when the user successfully registers or updates
-        their OAuth client credentials. It closes the auth dialog and updates
-        the UI accordingly.
-
-        Returns:
-            None
-        """
         """
         Handle user update of target OAuth client.
 
