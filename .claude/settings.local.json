@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+      "Read(//tmp/pyside6_qtads/**)",
+      "Bash(head -50 setup.py)",
+      "Bash(curl -s https://api.github.com/repos/mborgerson/pyside6_qtads)",
+      "Bash(curl -s 'https://api.github.com/repos/mborgerson/pyside6_qtads/issues?state=open&per_page=10')",
+      "Bash(pip show *)",
+      "Bash(poetry run *)",
+      "Bash(poetry add *)",
+      "Bash(poetry env *)",
+      "Bash(poetry install *)",
+      "Bash(poetry lock *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "mcp__plugin_context-mode_context-mode__ctx_search",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(git -C /data/rob/github/solarisin/ripper/.worktrees/dockable-windows add ripper/rippergui/mainview.py test/ripper/rippergui/test_mainview.py)",
+      "Bash(git -C /data/rob/github/solarisin/ripper/.worktrees/dockable-windows commit -m ' *)",
+      "Bash(git *)",
+      "Bash(echo \"FLAKE8_EXIT=$?\")",
+      "Bash(echo \"RUFF_EXIT=$?\")",
+      "Bash(gh pr *)",
+      "Bash(gh api *)"
+    ]
+  }
+}
