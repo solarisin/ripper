@@ -21,8 +21,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressDialog,
-    QScrollArea,
-    QSplitter,
     QToolBar,
     QToolTip,
     QVBoxLayout,
@@ -37,7 +35,6 @@ from ripper.rippergui.datasource_list_widget import DataSourceListWidget
 from ripper.rippergui.fonts import FontId, FontManager
 from ripper.rippergui.oauth_client_config_view import AuthView
 from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
-from ripper.rippergui.widgets.accordion_widget import AccordionWidget
 from ripper.ripperlib.auth import AuthInfo, AuthManager, AuthState
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import LoadSource, get_app_data_dir
@@ -213,6 +210,7 @@ class MainView(QMainWindow):
         # Dock manager and dashboard dock (fully assigned in create_main_layout / _init_dashboard_tab)
         self._dock_manager: ads.CDockManager
         self._dashboard_dock: ads.CDockWidget | None = None
+        self._sources_dock: ads.CDockWidget | None = None
 
         # Setup monospace font for tooltips
         QToolTip.setFont(FontManager().get(FontId.TOOLTIP))
@@ -228,7 +226,7 @@ class MainView(QMainWindow):
         self.create_tool_bars()
         self.create_status_bar()
 
-        # Create the main layout with fixed accordion sidebar
+        # Create the main layout with CDockManager and dockable panels
         self.create_main_layout()
 
         # Check if OAuth client is configured and update UI accordingly
@@ -359,69 +357,23 @@ class MainView(QMainWindow):
         self._dock_manager = ads.CDockManager(self)
         self.setCentralWidget(self._dock_manager)
 
-        # Create the main widget and layout for the data content
+        # Create the Data Sources dock in the left area
+        self._sources_dock = ads.CDockWidget(self._dock_manager, "Data Sources")
+        self._datasource_list_widget = DataSourceListWidget(parent=self)
+        self._datasource_list_widget.source_selected.connect(self._load_data_source_by_id)
+        self._datasource_list_widget.refresh_requested.connect(self._refresh_data_source)
+        self._sources_dock.setWidget(self._datasource_list_widget)
+        self._dock_manager.addDockWidget(ads.LeftDockWidgetArea, self._sources_dock)
+
+        # Wrap data tab placeholder in a CDockWidget and place it at the center
+        # (Phase 3 will replace this with the real transaction table dock)
         self.data_tab = QWidget()
-
-        # Create horizontal splitter for sidebar and main content
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # Create accordion sidebar with scroll area
-        self._accordion_widget = AccordionWidget(self)
-
-        # Create a layout for the data tab widget
-        main_layout = QHBoxLayout(self.data_tab)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(main_splitter)
-
-        # Wrap accordion in a scroll area for when panels become too tall
-        accordion_scroll_area = QScrollArea()
-        accordion_scroll_area.setWidget(self._accordion_widget)
-        accordion_scroll_area.setWidgetResizable(True)
-        accordion_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        accordion_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        accordion_scroll_area.setMaximumWidth(300)
-        accordion_scroll_area.setMinimumWidth(200)
-
-        # Add data source panel to the accordion
-        self._add_data_sources_panel()
-
-        # Create main content area (empty widget that will hold dockable content)
-        self._main_content_area = QWidget()
-        self._main_content_area.setStyleSheet("background-color: #222222; border: 1px solid #444;")
-
-        # Add a label to indicate this is the dockable area
-        placeholder_layout = QHBoxLayout(self._main_content_area)
-        placeholder_label = QLabel("No content loaded")
-        placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder_label.setStyleSheet("color: #666; font-size: 14px; border: none;")
-        placeholder_layout.addWidget(placeholder_label)
-
-        # Add widgets to splitter
-        main_splitter.addWidget(accordion_scroll_area)
-        main_splitter.addWidget(self._main_content_area)
-
-        # Set splitter proportions (sidebar smaller than main content)
-        main_splitter.setSizes([250, 950])
-
-        # Wrap data tab content in a CDockWidget and place it at the center
         data_dock = ads.CDockWidget(self._dock_manager, "Data")
         data_dock.setWidget(self.data_tab)
         self._dock_manager.addDockWidget(ads.CenterDockWidgetArea, data_dock)
 
         # Initialize dashboard dock
         self._init_dashboard_tab()
-
-    def _add_data_sources_panel(self) -> None:
-        """
-        Add the Data Sources accordion panel backed by DataSourceListWidget.
-
-        Creates the real ``DataSourceListWidget``, adds it to the accordion,
-        and wires the ``source_selected`` and ``refresh_requested`` signals.
-        """
-        self._datasource_list_widget = DataSourceListWidget(parent=self)
-        self._datasource_list_widget.source_selected.connect(self._load_data_source_by_id)
-        self._datasource_list_widget.refresh_requested.connect(self._refresh_data_source)
-        self._accordion_widget.add_panel("Data Sources", self._datasource_list_widget, expanded=True)
 
     def _load_data_source_by_id(self, ds_id: int, stamp_on_success: bool = False) -> None:
         """
