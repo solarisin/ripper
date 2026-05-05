@@ -376,6 +376,7 @@ class MainView(QMainWindow):
         """Save layout and wait briefly for any in-flight data fetches before closing."""
         self._save_layout()
         for worker in list(self._active_workers):
+            worker.setParent(None)  # detach so window destruction won't force-destroy a running thread
             worker.wait(2000)
         super().closeEvent(event)
 
@@ -792,7 +793,11 @@ class MainView(QMainWindow):
             key = (source_info.get("spreadsheet_id", ""), source_info.get("sheet_name", ""))
             if key[0] and key[1]:
                 self._table_widgets[key] = table_widget
-                table_widget.destroyed.connect(lambda _, k=key: self._table_widgets.pop(k, None))
+                table_widget.destroyed.connect(
+                    lambda _, k=key, w=table_widget: (
+                        self._table_widgets.pop(k) if self._table_widgets.get(k) is w else None
+                    )
+                )
 
         if self._table_dock is None:
             self._table_dock = ads.CDockWidget(self._dock_manager, title)

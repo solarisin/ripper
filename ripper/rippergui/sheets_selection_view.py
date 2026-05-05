@@ -228,6 +228,7 @@ class SheetsSelectionDialog(QDialog):
                     loader.error.disconnect()
                 except RuntimeError:
                     pass
+                loader.setParent(None)  # detach so dialog destruction won't force-destroy a running thread
                 loader.wait(1000)
 
     def done(self, result: int) -> None:
