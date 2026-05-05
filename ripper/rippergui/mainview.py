@@ -7,15 +7,14 @@ authentication state, and UI updates for the ripper application.
 
 from pathlib import Path
 
+import PySide6QtAds as ads  # type: ignore[import-untyped]
 from loguru import logger
 from PySide6.QtCore import QSize, QThread, Signal
 from PySide6.QtGui import QAction, QIcon, QKeySequence, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
-    QDockWidget,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
@@ -26,8 +25,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-import PySide6QtAds as ads  # type: ignore[import-untyped]
 
 import ripper.ripperlib.sheets_backend as sheets_backend
 from ripper.rippergui import table_view
@@ -202,7 +199,7 @@ class MainView(QMainWindow):
         self._sheet_selection_dialog: QDialog | None = None
 
         # Single persistent dock for the active data source table view
-        self._data_dock: QDockWidget | None = None
+        self._table_dock: ads.CDockWidget | None = None
         # ID of the data source currently displayed in the dock
         self._active_data_source_id: int | None = None
         # Map (spreadsheet_id, sheet_name) -> TransactionTableViewWidget for dashboard data.
@@ -364,13 +361,6 @@ class MainView(QMainWindow):
         self._datasource_list_widget.refresh_requested.connect(self._refresh_data_source)
         self._sources_dock.setWidget(self._datasource_list_widget)
         self._dock_manager.addDockWidget(ads.LeftDockWidgetArea, self._sources_dock)
-
-        # Wrap data tab placeholder in a CDockWidget and place it at the center
-        # (Phase 3 will replace this with the real transaction table dock)
-        self.data_tab = QWidget()
-        data_dock = ads.CDockWidget(self._dock_manager, "Data")
-        data_dock.setWidget(self.data_tab)
-        self._dock_manager.addDockWidget(ads.CenterDockWidgetArea, data_dock)
 
         # Initialize dashboard dock
         self._init_dashboard_tab()
@@ -833,13 +823,11 @@ class MainView(QMainWindow):
             if key[0] and key[1]:
                 self._table_widgets[key] = table_widget
 
-        if self._data_dock is None:
-            self._data_dock = QDockWidget(title, self)
-            self._data_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._data_dock)
-            self._view_menu.addAction(self._data_dock.toggleViewAction())
+        if self._table_dock is None:
+            self._table_dock = ads.CDockWidget(self._dock_manager, title)
+            self._dock_manager.addDockWidget(ads.CenterDockWidgetArea, self._table_dock)
         else:
-            self._data_dock.setWindowTitle(title)
+            self._table_dock.setWindowTitle(title)
 
-        self._data_dock.setWidget(container)
-        self._data_dock.show()
+        self._table_dock.setWidget(container)
+        self._table_dock.toggleView(True)

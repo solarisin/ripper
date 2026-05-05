@@ -63,5 +63,22 @@ def test_central_widget_is_dock_manager(qtbot):
     assert isinstance(view.centralWidget(), ads.CDockManager)
 
 
+@pytest.mark.qt
+def test_show_data_source_creates_table_dock(qtbot):
+    """Calling _show_data_source_in_dock() must create a CDockWidget, not QDockWidget."""
+    from unittest.mock import patch, MagicMock
+    view = MainView()
+    qtbot.addWidget(view)
+    assert view._table_dock is None
+
+    with patch("ripper.rippergui.mainview.Db") as mock_db:
+        mock_db.get_data_source.return_value = {"last_fetched_at": "2024-01-01"}
+        sheet_data = [["ID", "Date", "Description"], ["1", "2024-01-01", "Test"]]
+        view._show_data_source_in_dock(1, "Test Source", sheet_data, {"spreadsheet_id": "s1", "sheet_name": "Sheet1"})
+
+    assert view._table_dock is not None
+    assert isinstance(view._table_dock, ads.CDockWidget)
+
+
 if __name__ == "__main__":
     unittest.main()
