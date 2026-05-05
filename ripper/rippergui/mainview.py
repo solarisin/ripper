@@ -204,10 +204,12 @@ class MainView(QMainWindow):
         self._active_data_source_id: int | None = None
         # Map (spreadsheet_id, sheet_name) -> TransactionTableViewWidget for dashboard data.
         self._table_widgets: dict[tuple[str, str], table_view.TransactionTableViewWidget] = {}
-        # Dock manager and dashboard dock (fully assigned in create_main_layout / _init_dashboard_tab)
+        # Dock manager and dashboard dock (fully assigned in create_main_layout / _init_dashboard_dock)
         self._dock_manager: ads.CDockManager
         self._dashboard_dock: ads.CDockWidget | None = None
         self._sources_dock: ads.CDockWidget | None = None
+        # Dashboard content widget; set to None until _init_dashboard_dock() succeeds.
+        self.dashboard_widget: QWidget | None = None
 
         # Setup monospace font for tooltips
         QToolTip.setFont(FontManager().get(FontId.TOOLTIP))
@@ -294,10 +296,8 @@ class MainView(QMainWindow):
 
         # Initialize auth status display
         self.update_auth_status(AuthManager().auth_info())
-        # Dashboard tab widget; set to None until _init_dashboard_tab() succeeds.
-        self.dashboard_tab: QWidget | None = None
 
-    def _init_dashboard_tab(self) -> None:
+    def _init_dashboard_dock(self) -> None:
         """Initialize the dashboard dock widget."""
         try:
             from ripper.rippergui.dashboard import DashboardManagerWidget
@@ -305,12 +305,12 @@ class MainView(QMainWindow):
             # Create dashboard widget
             dashboards_dir = Path(get_app_data_dir()) / "dashboards"
             dashboards_dir.mkdir(parents=True, exist_ok=True)
-            self.dashboard_tab = DashboardManagerWidget(
+            self.dashboard_widget = DashboardManagerWidget(
                 storage_dir=dashboards_dir,
                 records_fn=self._get_records_for_dashboard,
             )
             self._dashboard_dock = ads.CDockWidget(self._dock_manager, "Dashboard")
-            self._dashboard_dock.setWidget(self.dashboard_tab)
+            self._dashboard_dock.setWidget(self.dashboard_widget)
             self._dock_manager.addDockWidget(ads.RightDockWidgetArea, self._dashboard_dock)
 
         except ImportError as e:
@@ -363,7 +363,7 @@ class MainView(QMainWindow):
         self._dock_manager.addDockWidget(ads.LeftDockWidgetArea, self._sources_dock)
 
         # Initialize dashboard dock
-        self._init_dashboard_tab()
+        self._init_dashboard_dock()
 
     def _load_data_source_by_id(self, ds_id: int, stamp_on_success: bool = False) -> None:
         """

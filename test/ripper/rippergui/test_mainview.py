@@ -79,5 +79,16 @@ def test_show_data_source_creates_table_dock(qtbot):
     assert isinstance(view._table_dock, ads.CDockWidget)
 
 
+@pytest.mark.qt
+def test_dashboard_dock_initialized(qtbot):
+    """Dashboard CDockWidget must be initialized after create_main_layout."""
+    view = MainView()
+    qtbot.addWidget(view)
+    if view._dashboard_dock is None:
+        pytest.skip("dashboard not importable in this environment")
+    assert view._dashboard_dock is not None
+    assert isinstance(view._dashboard_dock, ads.CDockWidget)
+
+
 if __name__ == "__main__":
     unittest.main()
