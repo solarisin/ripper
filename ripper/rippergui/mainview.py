@@ -373,8 +373,10 @@ class MainView(QMainWindow):
         QMessageBox.information(self, "Layout Reset", "Layout will reset to default on next launch.")
 
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
-        """Save layout on close."""
+        """Save layout and wait briefly for any in-flight data fetches before closing."""
         self._save_layout()
+        for worker in list(self._active_workers):
+            worker.wait(2000)
         super().closeEvent(event)
 
     def create_main_layout(self) -> None:

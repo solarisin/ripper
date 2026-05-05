@@ -218,6 +218,23 @@ class SheetsSelectionDialog(QDialog):
         # Load spreadsheets on a background thread
         self.load_spreadsheets()
 
+    def _stop_loaders(self) -> None:
+        """Disconnect and wait briefly for any running background loaders."""
+        for attr in ("_loader", "_sheet_loader"):
+            loader = getattr(self, attr, None)
+            if loader is not None and loader.isRunning():
+                try:
+                    loader.finished.disconnect()
+                    loader.error.disconnect()
+                except RuntimeError:
+                    pass
+                loader.wait(1000)
+
+    def done(self, result: int) -> None:
+        """Stop any running loaders before the dialog closes."""
+        self._stop_loaders()
+        super().done(result)
+
     def load_spreadsheets(self) -> None:
         """
         Kick off a background fetch of Google Spreadsheets from Drive.
