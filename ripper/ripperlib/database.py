@@ -256,9 +256,13 @@ class RipperDb:
             if cols_to_drop:
                 logger.info(f"Migrating data_sources: dropping legacy columns {sorted(cols_to_drop)}")
                 for col in cols_to_drop:
-                    c.execute(f"ALTER TABLE data_sources DROP COLUMN {col}")
-                    existing_cols.discard(col)
-                    logger.info(f"Migration complete: dropped column '{col}'")
+                    try:
+                        c.execute(f"ALTER TABLE data_sources DROP COLUMN {col}")
+                        existing_cols.discard(col)
+                        logger.info(f"Migration complete: dropped column '{col}'")
+                    except Exception as exc:
+                        # DROP COLUMN requires SQLite >= 3.35; skip silently on older builds
+                        logger.warning(f"Could not drop legacy column '{col}': {exc}")
             # Add any columns that are in the current schema but absent from the table
             migrations = [
                 ("name", "TEXT NOT NULL DEFAULT ''"),

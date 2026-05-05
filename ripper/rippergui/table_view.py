@@ -352,7 +352,7 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
         source_model = self.sourceModel()
         if not hasattr(source_model, "_data") or not hasattr(source_model, "_headers"):
             log.warning(f"filterAcceptsRow: source model missing _data/_headers (type={type(source_model).__name__})")
-            return False
+            return super().filterAcceptsRow(source_row, source_parent)
 
         data_list: list[dict[str, Any]] = source_model._data
         if source_row < 0 or source_row >= len(data_list):

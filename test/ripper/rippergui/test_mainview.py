@@ -92,8 +92,9 @@ def test_dashboard_dock_initialized(qtbot):
 
 
 @pytest.mark.qt
-def test_close_saves_layout(qtbot):
+def test_close_saves_layout(qtbot, monkeypatch, tmp_path):
     """Closing MainView must persist dock layout to QSettings."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     view = MainView()
     qtbot.addWidget(view)
     QSettings("solarisin", "ripper").remove("dock_layout/state")  # start clean
@@ -103,8 +104,9 @@ def test_close_saves_layout(qtbot):
 
 
 @pytest.mark.qt
-def test_reset_layout_clears_settings(qtbot):
+def test_reset_layout_clears_settings(qtbot, monkeypatch, tmp_path):
     """_reset_layout must remove the saved layout key from QSettings."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     view = MainView()
     qtbot.addWidget(view)
     QSettings("solarisin", "ripper").setValue("dock_layout/state", b"dummy")
@@ -114,17 +116,15 @@ def test_reset_layout_clears_settings(qtbot):
 
 
 @pytest.mark.qt
-def test_restore_layout_invalid_state_no_crash(qtbot):
+def test_restore_layout_invalid_state_no_crash(qtbot, monkeypatch, tmp_path):
     """_restore_layout must not crash when QSettings contains garbage."""
     from PySide6.QtCore import QByteArray
 
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     view = MainView()
     qtbot.addWidget(view)
-    view._restore_layout.__func__  # just verify it's callable
-    # Inject garbage directly
     QSettings("solarisin", "ripper").setValue("dock_layout/state", QByteArray(b"not-valid-state"))
     view._restore_layout()  # must not raise
-    QSettings("solarisin", "ripper").remove("dock_layout/state")
 
 
 if __name__ == "__main__":
