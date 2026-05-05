@@ -1,16 +1,15 @@
-import logging
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from beartype.typing import Any, Dict, List, Optional, Set, cast
+from beartype.typing import Any, Dict, List, Optional, Set
+from loguru import logger as log
 from PySide6.QtCore import (
     QAbstractTableModel,
     QDate,
     QModelIndex,
     QObject,
     QPersistentModelIndex,
-    QRegularExpression,
     QSortFilterProxyModel,
     Qt,
     Signal,
@@ -32,7 +31,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-log = logging.getLogger("ripper:table_view")
 # --- Helper functions for parsing numbers and dates ---
 """
 Helper functions for parsing numbers and dates for TransactionModel and sorting.
@@ -352,53 +350,51 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
             return True
 
         source_model = self.sourceModel()
-        if not hasattr(source_model, "_headers"):
+        if not hasattr(source_model, "_data") or not hasattr(source_model, "_headers"):
+            log.warning(f"filterAcceptsRow: source model missing _data/_headers (type={type(source_model).__name__})")
+            return super().filterAcceptsRow(source_row, source_parent)
+
+        data_list: list[dict[str, Any]] = source_model._data
+        if source_row < 0 or source_row >= len(data_list):
             return False
-        # Cast to QAbstractTableModel for type checking
-        source_model_table = cast(QAbstractTableModel, source_model)
-        for column_index, filter_info in self._filters.items():
+        record = data_list[source_row]
+
+        for _column_index, filter_info in self._filters.items():
             filter_value = filter_info["value"]
-            header_name = filter_info["header"]  # Get header name from stored info
-            if not self._check_row_against_filter(
-                source_model_table, source_row, column_index, filter_value, header_name
-            ):
+            header_name = filter_info["header"]
+            if not self._check_record_against_filter(record, filter_value, header_name):
                 return False
         return True
 
-    def _check_row_against_filter(
-        self, model: QAbstractTableModel, source_row: int, column_index: int, filter_value: Any, header_name: str
-    ) -> bool:
+    def _check_record_against_filter(self, record: dict[str, Any], filter_value: Any, header_name: str) -> bool:
         """
-        Check if a specific cell matches the filter criteria.
+        Check if a record's field matches the filter criteria.
+
+        Accesses the record dict directly rather than going through the Qt
+        model/index path, which avoids any potential index-validity issues
+        when ``filterAcceptsRow`` is called during a layout change.
 
         Args:
-            model: Source model
-            source_row: Row index in the source model
-            column_index: Column index in the source model
-            filter_value: Filter value to check against
-            header_name: Name of the column header
+            record: The raw data dict for the row being tested.
+            filter_value: Filter value to compare against the field.
+            header_name: Name of the column header (dict key) to check.
 
         Returns:
-            True if the cell matches the filter, False otherwise
+            True if the field matches the filter, False otherwise.
         """
-        idx = model.index(source_row, column_index, QModelIndex())
-        if not idx.isValid():
-            return False
-
-        data_to_check = model.data(idx, Qt.ItemDataRole.DisplayRole)
+        raw_value = record.get(header_name)
 
         if header_name in ["Description", "Category", "ID"]:
-            if isinstance(filter_value, QRegularExpression):
-                return filter_value.match(str(data_to_check)).hasMatch()
-            return str(filter_value).lower() in str(data_to_check).lower()
-        elif header_name == "Account":  # Account is usually an exact match from ComboBox
-            return str(filter_value) == str(data_to_check)
+            text = str(raw_value) if raw_value is not None else ""
+            return str(filter_value).lower() in text.lower()
+        elif header_name == "Account":
+            return str(filter_value) == str(raw_value) if raw_value is not None else False
         elif header_name == "Amount":
             min_val, max_val = filter_value
             try:
-                # Ensure data_to_check is cleaned (e.g. remove currency symbols if any from displayrole)
-                # However, our display role already formats it as a plain number string.
-                amount = Decimal(data_to_check)
+                # Strip currency symbols, commas, and whitespace before parsing
+                cleaned = str(raw_value).replace("$", "").replace(",", "").strip()
+                amount = Decimal(cleaned)
                 passes_min = min_val is None or amount >= min_val
                 passes_max = max_val is None or amount <= max_val
                 return passes_min and passes_max
@@ -425,14 +421,6 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
             return False
 
         col_type = source_model.infer_column_type(col)
-        log.debug(
-            "Comparing column %d (%s) of type '%s' between '%s' and '%s'",
-            col,
-            source_model.headerData(col, Qt.Orientation.Horizontal),
-            col_type,
-            left_raw,
-            right_raw,
-        )
         if col_type == "number":
             left_num = parse_number(left_raw)
             right_num = parse_number(right_raw)
@@ -568,17 +556,13 @@ class FilterDialog(QDialog):
         Fills in the filter input fields with values from the currently active filters.
         """
         desc_filter = self._current_filters.get(self._source_model_headers.index("Description"))
-        if desc_filter and isinstance(desc_filter["value"], QRegularExpression):
-            self.description_filter_input.setText(desc_filter["value"].pattern())
-        elif desc_filter:  # Should not happen if we always use regex
+        if desc_filter:
             self.description_filter_input.setText(str(desc_filter.get("value", "")))
         else:
             self.description_filter_input.clear()
 
         cat_filter = self._current_filters.get(self._source_model_headers.index("Category"))
-        if cat_filter and isinstance(cat_filter["value"], QRegularExpression):
-            self.category_filter_input.setText(cat_filter["value"].pattern())
-        elif cat_filter:
+        if cat_filter:
             self.category_filter_input.setText(str(cat_filter.get("value", "")))
         else:
             self.category_filter_input.clear()
@@ -619,32 +603,26 @@ class FilterDialog(QDialog):
         """
         filters: Dict[str, Any] = {}
 
-        # Description
+        # Description — stored as plain string; _check_record_against_filter uses case-insensitive "in" match
         desc_text = self.description_filter_input.text().strip()
         if desc_text:
-            filters["Description"] = QRegularExpression(
-                desc_text, QRegularExpression.PatternOption.CaseInsensitiveOption
-            )
+            filters["Description"] = desc_text
 
-        # Category
+        # Category — same plain-string approach
         cat_text = self.category_filter_input.text().strip()
         if cat_text:
-            filters["Category"] = QRegularExpression(cat_text, QRegularExpression.PatternOption.CaseInsensitiveOption)
+            filters["Category"] = cat_text
 
         # Account
         acc_text = self.account_filter_combo.currentText()
         if acc_text != "All Accounts":
             filters["Account"] = acc_text
 
-        # Amount
+        # Amount — treat spinbox at its boundary (minimum/maximum) as "no filter"
         min_val = self.amount_min_input.value()
         max_val = self.amount_max_input.value()
-        actual_min = (
-            None if self.amount_min_input.text() == self.amount_min_input.specialValueText() else Decimal(str(min_val))
-        )
-        actual_max = (
-            None if self.amount_max_input.text() == self.amount_max_input.specialValueText() else Decimal(str(max_val))
-        )
+        actual_min = None if min_val == self.amount_min_input.minimum() else Decimal(str(min_val))
+        actual_max = None if max_val == self.amount_max_input.maximum() else Decimal(str(max_val))
 
         if actual_min is not None or actual_max is not None:
             filters["Amount"] = (actual_min, actual_max)
@@ -716,6 +694,11 @@ class TransactionTableViewWidget(QWidget):
         self.table_view.setAlternatingRowColors(True)
         self.table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
 
+        # Hide the "ID" column — data rarely has an "ID" key and it would show None.
+        id_col_index = self.source_model._headers.index("ID") if "ID" in self.source_model._headers else -1
+        if id_col_index != -1:
+            self.table_view.setColumnHidden(id_col_index, True)
+
         date_col_index = self.source_model._headers.index("Date")
         if date_col_index != -1:
             self.table_view.sortByColumn(date_col_index, Qt.SortOrder.DescendingOrder)
@@ -759,6 +742,13 @@ class TransactionTableViewWidget(QWidget):
             except ValueError:
                 log.warning(f"Header '{header_name}' not found in model headers.")
 
+        total = self.source_model.rowCount()
+        visible = self.proxy_model.rowCount()
+        if new_filters_dict:
+            log.info(f"Filter applied {new_filters_dict!r} — {visible}/{total} rows visible")
+        else:
+            log.info(f"Filters cleared — {visible}/{total} rows visible")
+
     @Slot()
     def clear_all_table_filters(self) -> None:
         """
@@ -770,3 +760,23 @@ class TransactionTableViewWidget(QWidget):
             log.debug("All filters cleared from table.")
         else:
             log.debug("No active filters to clear.")
+
+    def get_filtered_records(self) -> list[dict[str, Any]]:
+        """
+        Return the currently visible (filtered) records with normalized lowercase keys.
+
+        The returned dicts use lowercase underscore keys (e.g. ``"transaction_id"``,
+        ``"description"``), matching the format produced by
+        ``records_from_sheet_data()`` so they are compatible with
+        ``DashboardDataService._apply_filters()``.
+
+        Returns:
+            List of record dicts for all rows that pass the current proxy filters.
+        """
+        result: list[dict[str, Any]] = []
+        for row in range(self.proxy_model.rowCount()):
+            source_idx = self.proxy_model.mapToSource(self.proxy_model.index(row, 0))
+            raw_record = self.source_model._data[source_idx.row()]
+            normalized = {str(k).strip().lower().replace(" ", "_"): v for k, v in raw_record.items()}
+            result.append(normalized)
+        return result

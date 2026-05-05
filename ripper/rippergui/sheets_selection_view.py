@@ -1,18 +1,17 @@
 """
-Dialog for selecting and validating Google Sheets and ranges in the ripper application.
+Dialog for creating and configuring a named data source from a Google Sheet range.
 
 This module provides SheetsSelectionDialog, a Qt dialog for browsing, selecting, and validating Google Sheets
-and their ranges. It includes input validation, error feedback, and emits a signal when a sheet and range are selected.
-
+and their ranges. It includes input validation, error feedback, and emits a signal when a sheet and range are
+selected. Network calls are performed on background threads to keep the UI responsive.
 """
 
 import traceback
 
 from beartype.typing import Optional
 from loguru import logger
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -21,6 +20,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -35,36 +35,98 @@ from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.defs import SheetProperties, SpreadsheetProperties
 
 
-class SheetsSelectionDialog(QDialog):
+class _SpreadsheetLoader(QThread):
     """
-    Dialog for selecting Google Sheets and specifying a range.
+    Background worker that fetches the list of Google Spreadsheets from Drive.
 
     Signals:
-        sheet_selected (dict): Emitted when the user confirms a sheet and range selection.
-
-    This dialog displays a grid of thumbnails for all Google Sheets in the user's Drive,
-    allows the user to select one, view details, and specify a range for further operations.
-    Input is validated and errors are shown in the dialog.
+        finished (list): Emitted with the retrieved spreadsheet list on success.
+        error (str): Emitted with an error message on failure.
     """
 
-    # Signal emitted when the user chooses a sheet
+    finished: Signal = Signal(list)  # type: ignore[misc]
+    error: Signal = Signal(str)
+
+    def run(self) -> None:  # noqa: D102
+        """Fetch spreadsheets in the background."""
+        try:
+            drive_service = AuthManager().create_drive_service()
+            if not drive_service:
+                self.error.emit("Not authenticated. Please authenticate with Google first.")
+                return
+            spreadsheets = sheets_backend.retrieve_spreadsheets(drive_service)
+            self.finished.emit(spreadsheets)
+        except Exception as e:  # pragma: no cover
+            logger.error(f"Error loading spreadsheets: {e}, {traceback.format_exc()}")
+            self.error.emit(str(e))
+
+
+class _SheetMetadataLoader(QThread):
+    """
+    Background worker that fetches the sheet-tab metadata for a single spreadsheet.
+
+    Signals:
+        finished (list): Emitted with the list of SheetProperties on success.
+        error (str): Emitted with an error message on failure.
+    """
+
+    finished: Signal = Signal(list)  # type: ignore[misc]
+    error: Signal = Signal(str)
+
+    def __init__(self, spreadsheet_id: str, parent: Optional[QWidget] = None) -> None:
+        """Initialise with the target spreadsheet ID."""
+        super().__init__(parent)
+        self._spreadsheet_id = spreadsheet_id
+
+    def run(self) -> None:  # noqa: D102
+        """Fetch sheet metadata in the background."""
+        try:
+            sheets_service = AuthManager().create_sheets_service()
+            if not sheets_service:
+                self.error.emit("Could not create Sheets service.")
+                return
+            sheet_props = sheets_backend.retrieve_sheets_of_spreadsheet(sheets_service, self._spreadsheet_id)
+            self.finished.emit(sheet_props)
+        except Exception as e:  # pragma: no cover
+            logger.error(f"Error loading sheet metadata: {e}, {traceback.format_exc()}")
+            self.error.emit(str(e))
+
+
+class SheetsSelectionDialog(QDialog):
+    """
+    Dialog for creating a named data source from a Google Sheet range.
+
+    The dialog lets the user browse their Google Drive for spreadsheets, select one,
+    choose a sheet tab and range, and give the resulting data source a human-readable
+    name.  Network I/O (spreadsheet list, sheet metadata) is performed on background
+    threads so the main UI stays responsive.
+
+    Signals:
+        sheet_selected (dict): Emitted when the user confirms the selection.  Dict keys:
+            ``spreadsheet_name``, ``spreadsheet_id``, ``sheet_name``, ``sheet_range``,
+            ``data_source_name``.
+    """
+
+    # Signal emitted when the user saves a data source
     sheet_selected = Signal(dict)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """
-        Initialize the sheets selection dialog.
+        Initialize the data source creation dialog.
 
         Args:
-            parent: Parent widget
+            parent: Parent widget.
         """
         super().__init__(parent)
-        self.setWindowTitle("Select Google Sheet")
+        self.setWindowTitle("Create Data Source")
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
         self.resize(1600, 900)
 
         self.selected_spreadsheet: SpreadsheetProperties | None = None
         self.sheet_properties_list: list[SheetProperties] = []
+        self._loader: Optional[_SpreadsheetLoader] = None
+        self._sheet_loader: Optional[_SheetMetadataLoader] = None
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -107,20 +169,29 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = ""
         details_layout.addWidget(self.details_content)
 
-        # Sheet name and range input
-        advanced_options_layout = QFormLayout()
+        # Sheet name, range, and data source name fields
+        options_layout = QFormLayout()
+
+        # Data source name (the human-readable label the user gives this source)
+        self.data_source_name_input = QLineEdit()
+        self.data_source_name_input.setPlaceholderText("e.g. Tiller Transactions 2024")
+        options_layout.addRow("Data Source Name:", self.data_source_name_input)
 
         # Sheet name combobox
         self.sheet_name_combobox = QComboBox()
-        advanced_options_layout.addRow("Sheet Name:", self.sheet_name_combobox)
+        options_layout.addRow("Sheet Name:", self.sheet_name_combobox)
 
         # Sheet range input
         self.sheet_range_input = QLineEdit()
-        advanced_options_layout.addRow("Sheet Range:", self.sheet_range_input)
+        options_layout.addRow("Sheet Range:", self.sheet_range_input)
         self.sheet_range_input.textChanged.connect(lambda text: self._validate_sheet_range(text) if text else None)
 
-        # Add the form layout directly to details_layout
-        details_layout.addLayout(advanced_options_layout)
+        # Wire name auto-population: update when sheet tab selection changes
+        self.sheet_name_combobox.currentTextChanged.connect(self._auto_populate_name)
+        # Connect sheet-name selection once here so callbacks never create duplicates
+        self.sheet_name_combobox.currentIndexChanged.connect(lambda idx: self._sheet_name_selected(idx))
+
+        details_layout.addLayout(options_layout)
 
         # Add widgets to splitter
         splitter.addWidget(thumbnails_widget)
@@ -132,7 +203,7 @@ class SheetsSelectionDialog(QDialog):
         # Buttons
         buttons_layout = QHBoxLayout()
 
-        self.select_button = QPushButton("Select Sheet")
+        self.select_button = QPushButton("Save Data Source")
         self.select_button.setEnabled(False)
         self.select_button.clicked.connect(self.user_confirmed_sheet)
 
@@ -144,34 +215,76 @@ class SheetsSelectionDialog(QDialog):
 
         main_layout.addLayout(buttons_layout)
 
-        # Load spreadsheets
+        # Load spreadsheets on a background thread
         self.load_spreadsheets()
+
+    def _stop_loaders(self) -> None:
+        """Disconnect and wait briefly for any running background loaders."""
+        for attr in ("_loader", "_sheet_loader"):
+            loader = getattr(self, attr, None)
+            if loader is not None and loader.isRunning():
+                try:
+                    loader.finished.disconnect()
+                    loader.error.disconnect()
+                except RuntimeError:
+                    pass
+                loader.setParent(None)  # detach so dialog destruction won't force-destroy a running thread
+                loader.wait(1000)
+
+    def done(self, result: int) -> None:
+        """Stop any running loaders before the dialog closes."""
+        self._stop_loaders()
+        super().done(result)
 
     def load_spreadsheets(self) -> None:
         """
-        Load Google Spreadsheets from Drive and display them in the grid.
+        Kick off a background fetch of Google Spreadsheets from Drive.
 
-        Fetches the list of Google Spreadsheets from the user's Drive and displays them
-        in the grid. Shows an error message if authentication fails or an error occurs.
+        Results are delivered via :py:meth:`_on_spreadsheets_loaded`.  An
+        indeterminate progress dialog is shown while the fetch is in flight.
+        Any previously-running loader is stopped before starting a new one.
         """
-        try:
-            # Get Drive service
-            drive_service = AuthManager().create_drive_service()
-            if not drive_service:
-                self.show_error("Not authenticated. Please authenticate with Google first.")
-                return
+        # Disconnect any in-flight loader so its results are silently discarded;
+        # don't quit()/wait() — that would block the UI while the network call runs.
+        if self._loader is not None and self._loader.isRunning():
+            self._loader.finished.disconnect()
+            self._loader.error.disconnect()
 
-            # Fetch and store sheets using the backend function
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            self.spreadsheets_list = sheets_backend.retrieve_spreadsheets(drive_service)
-            QApplication.restoreOverrideCursor()
+        self._progress = QProgressDialog("Loading spreadsheets…", "", 0, 0, self)
+        self._progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._progress.setMinimumDuration(300)
+        self._progress.setValue(0)
 
-            # Display sheets in grid
-            self.display_spreadsheets()
+        self._loader = _SpreadsheetLoader(self)
+        self._loader.finished.connect(self._on_spreadsheets_loaded)
+        self._loader.error.connect(self._on_load_error)
+        self._loader.finished.connect(self._progress.reset)
+        self._loader.error.connect(self._progress.reset)
+        self._loader.finished.connect(self._loader.deleteLater)
+        self._loader.finished.connect(lambda *_: setattr(self, "_loader", None))
+        self._loader.error.connect(self._loader.deleteLater)
+        self._loader.error.connect(lambda *_: setattr(self, "_loader", None))
+        self._loader.start()
 
-        except Exception as e:
-            logger.error(f"Error loading sheets: {e}, {traceback.format_exc()}")
-            self.show_error(f"Error loading sheets: {str(e)}")
+    def _on_spreadsheets_loaded(self, spreadsheets: list) -> None:
+        """
+        Receive the spreadsheet list from the background loader and populate the grid.
+
+        Args:
+            spreadsheets: List of SpreadsheetProperties returned by the loader.
+        """
+        self.spreadsheets_list = spreadsheets
+        self.display_spreadsheets()
+
+    def _on_load_error(self, message: str) -> None:
+        """
+        Show a load error in the details panel.
+
+        Args:
+            message: Human-readable error description.
+        """
+        logger.error(f"Spreadsheet load error: {message}")
+        self.show_error(f"Error loading sheets: {message}")
 
     def display_spreadsheets(self) -> None:
         """
@@ -249,64 +362,120 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = details
         self.details_content.setText(self.details_text)
 
-        sheets_service = AuthManager().create_sheets_service()
-        if sheets_service:
-            spreadsheet_id = spreadsheet_properties.id
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            self.sheet_properties_list = sheets_backend.retrieve_sheets_of_spreadsheet(sheets_service, spreadsheet_id)
-            logger.debug(f"Spreadsheet contains {len(self.sheet_properties_list)} sheets")
-            QApplication.restoreOverrideCursor()
+        # Disconnect any in-flight metadata loader so its stale results are silently
+        # discarded.  Don't quit()/wait() — that would block the UI during a slow
+        # network call.  Stale results are also guarded by the loaded_for_id check.
+        if self._sheet_loader is not None and self._sheet_loader.isRunning():
+            self._sheet_loader.finished.disconnect()
+            self._sheet_loader.error.disconnect()
 
-        # Block signals temporarily instead of disconnecting
+        # Fetch sheet metadata on a background thread
+        self._sheet_progress = QProgressDialog("Loading sheet details…", "", 0, 0, self)
+        self._sheet_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._sheet_progress.setMinimumDuration(300)
+        self._sheet_progress.setValue(0)
+
+        # Capture the ID so stale results can be discarded in the callback
+        loading_for_id = spreadsheet_properties.id
+        self._sheet_loader = _SheetMetadataLoader(loading_for_id, self)
+        self._sheet_loader.finished.connect(
+            lambda props, _id=loading_for_id: self._on_sheet_metadata_loaded(props, _id)
+        )
+        self._sheet_loader.error.connect(self._on_sheet_metadata_error)
+        self._sheet_loader.finished.connect(self._sheet_progress.reset)
+        self._sheet_loader.error.connect(self._sheet_progress.reset)
+        self._sheet_loader.finished.connect(self._sheet_loader.deleteLater)
+        self._sheet_loader.finished.connect(lambda *_: setattr(self, "_sheet_loader", None))
+        self._sheet_loader.error.connect(self._sheet_loader.deleteLater)
+        self._sheet_loader.error.connect(lambda *_: setattr(self, "_sheet_loader", None))
+        self._sheet_loader.start()
+
+    def _on_sheet_metadata_loaded(self, sheet_props: list, loaded_for_id: str) -> None:
+        """
+        Populate the sheet combobox after background metadata fetch completes.
+
+        Discards results if the user has already selected a different spreadsheet
+        since the load was kicked off.
+
+        Args:
+            sheet_props: List of SheetProperties for the selected spreadsheet.
+            loaded_for_id: The spreadsheet id that was being fetched.
+        """
+        # Discard stale results if the user selected a different spreadsheet
+        if self.selected_spreadsheet is None or self.selected_spreadsheet.id != loaded_for_id:
+            logger.debug(f"Discarding stale metadata for spreadsheet id '{loaded_for_id}'")
+            return
+
+        self.sheet_properties_list = sheet_props
+        logger.debug(f"Spreadsheet contains {len(self.sheet_properties_list)} sheets")
+
+        # Block signals while repopulating to avoid spurious callbacks
         old_state = self.sheet_name_combobox.blockSignals(True)
-
         self.sheet_name_combobox.clear()
         self.sheet_range_input.clear()
 
-        if len(self.sheet_properties_list) > 0:
+        if self.sheet_properties_list:
             sheet_names = [sheet.title for sheet in self.sheet_properties_list]
             self.sheet_name_combobox.addItems(sheet_names)
+            # currentIndexChanged is already connected once in __init__; no reconnect here
+            self.sheet_name_combobox.setCurrentIndex(0)
+            self._sheet_name_selected(0)
+            self._auto_populate_name(self.sheet_name_combobox.currentText())
 
-            # Connect the signal if not already connected
-            # This is safe to call multiple times as it won't create duplicate connections
-            self.sheet_name_combobox.currentIndexChanged.connect(self._sheet_name_selected)
-
-            # Select the first sheet by default and update the range
-            if sheet_names:
-                self.sheet_name_combobox.setCurrentIndex(0)
-                # Explicitly call the function to ensure it runs
-                self._sheet_name_selected(0)
-
-        # Restore the previous signal blocking state
         self.sheet_name_combobox.blockSignals(old_state)
+
+    def _on_sheet_metadata_error(self, message: str) -> None:
+        """
+        Show a sheet metadata load error in the details panel.
+
+        Args:
+            message: Human-readable error description.
+        """
+        logger.error(f"Sheet metadata load error: {message}")
+        self.show_error(f"Error loading sheet details: {message}")
 
     def _sheet_name_selected(self, index: int) -> None:
         """
         Handle sheet name selection from the combobox and update the range input.
 
         Args:
-            index (int): Index of the selected sheet in the combobox.
+            index: Index of the selected sheet in the combobox.
         """
         if 0 <= index < len(self.sheet_properties_list) and self.selected_spreadsheet:
             selected_sheet_props = self.sheet_properties_list[index]
 
-            # Calculate the range (e.g., Sheet1!A1:Z100)
             row_count = selected_sheet_props.grid.row_count
             col_count = selected_sheet_props.grid.column_count
-
-            # Convert column index to letter (A=1, B=2, etc.)
             end_column_letter = col_to_letter(col_count)
 
             sheet_range = f"A1:{end_column_letter}{row_count}"
             self.sheet_range_input.setText(sheet_range)
-            # Store the full calculated range for validation
             self._current_full_range = sheet_range
-            # Also trigger validation for the pre-filled text
             self._validate_sheet_range(sheet_range)
         else:
             self.sheet_range_input.clear()
             self.select_button.setEnabled(False)
             return
+
+    def _auto_populate_name(self, sheet_tab_name: str) -> None:
+        """
+        Auto-populate the data source name field when the sheet selection changes.
+
+        Only updates the field when it is empty or still contains a previously
+        auto-generated value so that a user-typed name is never overwritten.
+
+        Args:
+            sheet_tab_name: The newly selected sheet tab name.
+        """
+        if not self.selected_spreadsheet or not sheet_tab_name:
+            return
+
+        proposed = f"{self.selected_spreadsheet.name} – {sheet_tab_name}"
+
+        current = self.data_source_name_input.text()
+        # Overwrite only if the field is empty or already an auto-generated value
+        if not current or current.startswith(self.selected_spreadsheet.name):
+            self.data_source_name_input.setText(proposed)
 
     def _validate_sheet_range(self, text: str) -> None:
         """
@@ -399,11 +568,18 @@ class SheetsSelectionDialog(QDialog):
         if not self.select_button.isEnabled():
             return
 
+        data_source_name = self.data_source_name_input.text().strip()
+        if not data_source_name:
+            # Fall back to an auto-generated name if the user left the field blank
+            data_source_name = f"{spreadsheet_name} – {sheet_name}"
+            self.data_source_name_input.setText(data_source_name)
+
         sheet_info = {
             "spreadsheet_name": spreadsheet_name,
             "spreadsheet_id": spreadsheet_id,
             "sheet_name": sheet_name,
             "sheet_range": sheet_range,
+            "data_source_name": data_source_name,
         }
 
         self.print_spreadsheet_info()
@@ -423,5 +599,4 @@ class SheetsSelectionDialog(QDialog):
             # Add a line break if the current text doesn't end with one
             current_text += "<br>"
         self.details_content.setText(f"{current_text}<br><br><br><span style='color: red;'>{message}</span>")
-        logger.error(message)
         logger.error(message)

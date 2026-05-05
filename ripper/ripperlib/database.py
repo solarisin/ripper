@@ -9,10 +9,12 @@ application-wide use.
 import json
 import os
 import sqlite3 as sqlite
+import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
-from beartype.typing import Any, Optional, Tuple
+from beartype.typing import Any, Generator, Optional, Tuple
 from loguru import logger
 
 import ripper.ripperlib.defs as defs
@@ -43,6 +45,7 @@ class RipperDb:
             f"Creating new RipperDb instance {self._db_identifier} targeting database file: {str(self._db_file_path)}"
         )
         self._conn: sqlite.Connection | None = None
+        self._lock = threading.RLock()
         self.open()
 
     @staticmethod
@@ -59,52 +62,65 @@ class RipperDb:
         Raises:
             sqlite.Error: If the database cannot be opened or initialized.
         """
-        if self._conn:
-            logger.debug(f"Database {self._db_file_path} already open")
-            return
+        with self._lock:
+            if self._conn:
+                logger.debug(f"Database {self._db_file_path} already open")
+                return
 
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(self._db_file_path), exist_ok=True)
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(self._db_file_path), exist_ok=True)
 
-        try:
-            self._conn = sqlite.connect(self._db_file_path, timeout=20)
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA busy_timeout=10000")
-            self._conn.execute("PRAGMA foreign_keys = ON")
-            self.create_tables()
-        except sqlite.Error as e:
-            logger.error(f"Error opening database {self._db_file_path}: {e}")
-            raise
+            try:
+                self._conn = sqlite.connect(self._db_file_path, timeout=20, check_same_thread=False)
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA busy_timeout=10000")
+                self._conn.execute("PRAGMA foreign_keys = ON")
+                self.create_tables()
+            except sqlite.Error as e:
+                logger.error(f"Error opening database {self._db_file_path}: {e}")
+                raise
 
     def close(self) -> None:
         """
         Close the database connection if open.
         """
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn:
+                self._conn.close()
+                self._conn = None
 
-    def execute_query(self, query: str, params: Tuple[Any, ...] = ()) -> Optional[sqlite.Cursor]:
+    @contextmanager
+    def _transaction(self) -> Generator[None, None, None]:
         """
-        Execute a SQL query with parameters.
+        Context manager that serialises DB access across threads.
+
+        Acquires the instance-level RLock and wraps the body in a SQLite
+        transaction (``with self._conn:``).  All methods that write to or
+        read from the database should use this instead of touching
+        ``self._conn`` directly.
+        """
+        with self._lock:
+            if self._conn is None:
+                raise sqlite.ProgrammingError("Database is not open")
+            with self._conn:
+                yield
+
+    def execute_query(self, query: str, params: Tuple[Any, ...] = ()) -> list[Any] | None:
+        """
+        Execute a SQL query with parameters and return all rows.
 
         Args:
             query: SQL query string
             params: Query parameters
 
         Returns:
-            Cursor object or None if execution fails
+            List of result rows, or None if execution fails.
         """
-        if self._conn is None:
-            logger.error("Database not open")
-            return None
-
         try:
-            cursor = self._conn.cursor()
-            cursor.execute(query, params)
-            if not query.lower().startswith("select"):
-                self._conn.commit()  # Commit non-SELECT queries
-            return cursor
+            with self._transaction():
+                cursor = self._conn.cursor()  # type: ignore[union-attr]
+                cursor.execute(query, params)
+                return cursor.fetchall()
         except sqlite.Error as e:
             logger.error(f"Error executing query: {e}")
             return None
@@ -139,7 +155,7 @@ class RipperDb:
             logger.error("Database not open")
             return
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
             # Enable foreign key constraints
             c.execute("PRAGMA foreign_keys = ON")
@@ -210,7 +226,68 @@ class RipperDb:
                 """CREATE INDEX IF NOT EXISTS idx_sheet_data_cells_position
                    ON sheet_data_cells(range_id, row_num, col_num);"""
             )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS data_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    spreadsheet_id TEXT NOT NULL,
+                    sheet_name TEXT NOT NULL,
+                    range_a1 TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_fetched_at TIMESTAMP,
+                    FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
+                );"""
+            )
+            self._migrate_data_sources_schema(c)
+            c.execute(
+                """CREATE INDEX IF NOT EXISTS idx_data_sources_spreadsheet
+                   ON data_sources(spreadsheet_id);"""
+            )
             logger.info("Database tables created successfully")
+
+    def _migrate_data_sources_schema(self, c: sqlite.Cursor) -> None:  # noqa: C901
+        """Apply incremental migrations to the data_sources table for deployments that predate schema changes."""
+        c.execute("PRAGMA table_info(data_sources)")
+        existing_cols = {row[1] for row in c.fetchall()}
+        logger.debug(f"data_sources schema check — existing columns: {sorted(existing_cols)}")
+        if "range_name" in existing_cols and "range_a1" not in existing_cols:
+            logger.info("Migrating data_sources: renaming column 'range_name' -> 'range_a1'")
+            try:
+                c.execute("ALTER TABLE data_sources RENAME COLUMN range_name TO range_a1")
+                existing_cols.discard("range_name")
+                existing_cols.add("range_a1")
+                logger.info("Migration complete: renamed 'range_name' to 'range_a1'")
+            except Exception as exc:
+                # RENAME COLUMN requires SQLite >= 3.25; skip silently on older builds
+                logger.warning(f"Could not rename column 'range_name': {exc}")
+        legacy_cols = {"range_name", "cell_range"}
+        cols_to_drop = legacy_cols & existing_cols
+        if cols_to_drop:
+            logger.info(f"Migrating data_sources: dropping legacy columns {sorted(cols_to_drop)}")
+            for col in cols_to_drop:
+                try:
+                    c.execute(f"ALTER TABLE data_sources DROP COLUMN {col}")
+                    existing_cols.discard(col)
+                    logger.info(f"Migration complete: dropped column '{col}'")
+                except Exception as exc:
+                    # DROP COLUMN requires SQLite >= 3.35; skip silently on older builds
+                    logger.warning(f"Could not drop legacy column '{col}': {exc}")
+        migrations = [
+            ("name", "TEXT NOT NULL DEFAULT ''"),
+            ("spreadsheet_id", "TEXT NOT NULL DEFAULT ''"),
+            ("sheet_name", "TEXT NOT NULL DEFAULT ''"),
+            ("range_a1", "TEXT NOT NULL DEFAULT ''"),
+            ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+            ("last_fetched_at", "TIMESTAMP"),
+        ]
+        cols_to_add = [(n, d) for n, d in migrations if n not in existing_cols]
+        if cols_to_add:
+            logger.info(f"Migrating data_sources: adding missing columns {[n for n, _ in cols_to_add]}")
+            for col_name, col_def in cols_to_add:
+                c.execute(f"ALTER TABLE data_sources ADD COLUMN {col_name} {col_def}")
+                logger.info(f"Migration complete: added column '{col_name}'")
+        if not cols_to_drop and not cols_to_add and "range_name" not in existing_cols:
+            logger.debug("data_sources schema is up to date, no migration needed")
 
     def store_sheet_properties(self, spreadsheet_id: str, sheet_properties: list[SheetProperties]) -> bool:
         """
@@ -230,7 +307,7 @@ class RipperDb:
             logger.error("Database not open")
             return False
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
 
             # Check if spreadsheet exists
@@ -297,7 +374,7 @@ class RipperDb:
             logger.error("Database not open")
             return []
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
 
             # Get all sheets for this spreadsheet
@@ -339,7 +416,7 @@ class RipperDb:
             logger.error("Database not open")
             return
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
 
             # Check if spreadsheet exists
@@ -369,7 +446,7 @@ class RipperDb:
             logger.error("Database not open")
             return None
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
             c.execute("SELECT thumbnail FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
             result = c.fetchone()
@@ -393,7 +470,7 @@ class RipperDb:
             logger.error("Database not open")
             return False
 
-        with self._conn:
+        with self._transaction():
             c = self._conn.cursor()
 
             # Check if spreadsheet exists and get the current modifiedTime if
@@ -471,7 +548,7 @@ class RipperDb:
             return None
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Insert or update the range record
@@ -528,7 +605,7 @@ class RipperDb:
             return []
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
                 c.execute(
                     """SELECT id, start_row, start_col, end_row, end_col, cached_at
@@ -577,7 +654,7 @@ class RipperDb:
             return None
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Find all ranges that intersect with the requested range
@@ -669,7 +746,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 if sheet_name is None:
@@ -706,7 +783,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Get all ranges for this sheet. The range primary key is
@@ -770,7 +847,7 @@ class RipperDb:
             return 0
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Find ranges with no cell data. The range primary key is
@@ -821,7 +898,7 @@ class RipperDb:
             return []
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Get all ranges with their expected and actual cell counts
@@ -872,7 +949,7 @@ class RipperDb:
             return False
 
         try:
-            with self._conn:
+            with self._transaction():
                 c = self._conn.cursor()
 
                 # Delete the range (cells will be deleted by CASCADE)
@@ -888,6 +965,218 @@ class RipperDb:
 
         except sqlite.Error as e:
             logger.error(f"Error deleting range {range_id}: {e}")
+            return False
+
+    # ---- Data source CRUD -------------------------------------------------------
+
+    def create_data_source(
+        self,
+        name: str,
+        spreadsheet_id: str,
+        sheet_name: str,
+        range_a1: str,
+    ) -> Optional[int]:
+        """
+        Insert a new named data source record.
+
+        Args:
+            name: Human-readable label for this data source.
+            spreadsheet_id: Google Sheets spreadsheet ID (must exist in spreadsheets table).
+            sheet_name: Name of the sheet tab within the spreadsheet.
+            range_a1: Range in A1 notation (e.g. ``A1:Z500``).
+
+        Returns:
+            The new row's ``id`` on success, or ``None`` on failure.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return None
+
+        try:
+            with self._transaction():
+                c = self._conn.cursor()
+                c.execute(
+                    """INSERT INTO data_sources (name, spreadsheet_id, sheet_name, range_a1)
+                       VALUES (?, ?, ?, ?)""",
+                    (name, spreadsheet_id, sheet_name, range_a1),
+                )
+                last_row_id = c.lastrowid
+                if last_row_id is None:
+                    logger.error(f"INSERT for data source '{name}' returned no row id")
+                    return None
+                row_id: int = last_row_id
+                logger.info(f"Created data source '{name}' (id={row_id})")
+                return row_id
+        except sqlite.Error as e:
+            logger.error(f"Error creating data source '{name}': {e}")
+            return None
+
+    def list_data_sources(self) -> list[dict[str, Any]]:
+        """
+        Return all saved data sources ordered by name.
+
+        Returns:
+            List of dicts with keys: ``id``, ``name``, ``spreadsheet_id``,
+            ``sheet_name``, ``range_a1``, ``created_at``, ``last_fetched_at``.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return []
+
+        try:
+            with self._transaction():
+                c = self._conn.cursor()
+                c.execute(
+                    """SELECT ds.id, ds.name, ds.spreadsheet_id, ds.sheet_name,
+                              ds.range_a1, ds.created_at, ds.last_fetched_at,
+                              sp.name AS spreadsheet_name
+                       FROM data_sources ds
+                       LEFT JOIN spreadsheets sp ON ds.spreadsheet_id = sp.spreadsheet_id
+                       ORDER BY ds.name COLLATE NOCASE"""
+                )
+                rows = c.fetchall()
+                columns = [desc[0] for desc in c.description]
+                return [dict(zip(columns, row)) for row in rows]
+        except sqlite.Error as e:
+            logger.error(f"Error listing data sources: {e}")
+            return []
+
+    def get_data_source(self, data_source_id: int) -> Optional[dict[str, Any]]:
+        """
+        Fetch a single data source by its primary key.
+
+        Args:
+            data_source_id: Primary key of the data source row.
+
+        Returns:
+            Dict with data source fields, or ``None`` if not found.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return None
+
+        try:
+            with self._transaction():
+                c = self._conn.cursor()
+                c.execute(
+                    """SELECT ds.id, ds.name, ds.spreadsheet_id, ds.sheet_name,
+                              ds.range_a1, ds.created_at, ds.last_fetched_at,
+                              sp.name AS spreadsheet_name
+                       FROM data_sources ds
+                       LEFT JOIN spreadsheets sp ON ds.spreadsheet_id = sp.spreadsheet_id
+                       WHERE ds.id = ?""",
+                    (data_source_id,),
+                )
+                row = c.fetchone()
+                if row is None:
+                    return None
+                columns = [desc[0] for desc in c.description]
+                return dict(zip(columns, row))
+        except sqlite.Error as e:
+            logger.error(f"Error fetching data source {data_source_id}: {e}")
+            return None
+
+    def update_data_source(
+        self,
+        data_source_id: int,
+        name: str,
+        sheet_name: str,
+        range_a1: str,
+    ) -> bool:
+        """
+        Update the editable fields of a data source.
+
+        Args:
+            data_source_id: Primary key of the row to update.
+            name: New human-readable label.
+            sheet_name: New sheet tab name.
+            range_a1: New range in A1 notation.
+
+        Returns:
+            ``True`` on success, ``False`` otherwise.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._transaction():
+                c = self._conn.cursor()
+                c.execute(
+                    """UPDATE data_sources
+                       SET name = ?, sheet_name = ?, range_a1 = ?
+                       WHERE id = ?""",
+                    (name, sheet_name, range_a1, data_source_id),
+                )
+                if c.rowcount == 0:
+                    logger.warning(f"Data source {data_source_id} not found for update")
+                    return False
+                logger.info(f"Updated data source {data_source_id} → '{name}'")
+                return True
+        except sqlite.Error as e:
+            logger.error(f"Error updating data source {data_source_id}: {e}")
+            return False
+
+    def delete_data_source(self, data_source_id: int) -> bool:
+        """
+        Delete a data source record.
+
+        The raw cell cache (``sheet_data_ranges`` / ``sheet_data_cells``) is left
+        intact because it may be shared by other sources or future refreshes.
+
+        Args:
+            data_source_id: Primary key of the data source to delete.
+
+        Returns:
+            ``True`` on success, ``False`` otherwise.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._transaction():
+                c = self._conn.cursor()
+                c.execute("DELETE FROM data_sources WHERE id = ?", (data_source_id,))
+                if c.rowcount == 0:
+                    logger.warning(f"Data source {data_source_id} not found for deletion")
+                    return False
+                logger.info(f"Deleted data source {data_source_id}")
+                return True
+        except sqlite.Error as e:
+            logger.error(f"Error deleting data source {data_source_id}: {e}")
+            return False
+
+    def update_data_source_fetched_at(self, data_source_id: int) -> bool:
+        """
+        Stamp ``last_fetched_at`` with the current UTC time for a data source.
+
+        Called after a successful data fetch so the sidebar can show when the
+        data was last synced from Google Sheets.
+
+        Args:
+            data_source_id: Primary key of the data source to update.
+
+        Returns:
+            ``True`` on success, ``False`` otherwise.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._transaction():
+                c = self._conn.cursor()
+                c.execute(
+                    "UPDATE data_sources SET last_fetched_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (data_source_id,),
+                )
+                if c.rowcount == 0:
+                    logger.warning(f"Data source {data_source_id} not found when stamping fetch time")
+                    return False
+                return True
+        except sqlite.Error as e:
+            logger.error(f"Error stamping fetch time for data source {data_source_id}: {e}")
             return False
 
 

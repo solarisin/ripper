@@ -275,9 +275,10 @@ class TestSpreadsheetThumbnailWidget:
 class TestSheetsSelectionDialog:
     """Test cases for the SheetsSelectionDialog class."""
 
+    @patch("ripper.rippergui.sheets_selection_view._SpreadsheetLoader.start")
     @patch("ripper.rippergui.sheets_selection_view.AuthManager")
     @patch("ripper.ripperlib.sheets_backend.retrieve_spreadsheets")
-    def test_initialization(self, mock_fetch, mock_auth_manager, qtbot):
+    def test_initialization(self, mock_fetch, mock_auth_manager, mock_loader_start, qtbot):
         """Test that the dialog initializes correctly."""
         # Create a mock auth manager
         mock_auth_instance = MagicMock()
@@ -311,21 +312,29 @@ class TestSheetsSelectionDialog:
         # Set up the mock to return a list of spreadsheets
         mock_fetch.return_value = [sheet1, sheet2]
 
-        # Create the dialog
+        # Create the dialog — _SpreadsheetLoader.start is patched so no background
+        # thread races with our assertions.  load_spreadsheets() still runs normally
+        # so all internal state is set up correctly.
         dialog = SheetsSelectionDialog()
         qtbot.addWidget(dialog)
+        # Simulate what the background loader would deliver
+        dialog._on_spreadsheets_loaded([sheet1, sheet2])
 
         # Check that the dialog was initialized correctly
-        assert dialog.windowTitle() == "Select Google Sheet"
+        assert dialog.windowTitle() == "Create Data Source"
         assert dialog.selected_spreadsheet is None
         assert len(dialog.spreadsheets_list) == 2
         assert dialog.spreadsheets_list[0].id == "sheet1"
         assert dialog.spreadsheets_list[1].id == "sheet2"
 
+    @patch("ripper.rippergui.sheets_selection_view._SpreadsheetLoader.start")
+    @patch("ripper.rippergui.sheets_selection_view._SheetMetadataLoader.start")
     @patch("ripper.rippergui.sheets_selection_view.AuthManager")
     @patch("ripper.ripperlib.sheets_backend.retrieve_spreadsheets")
     @patch("ripper.ripperlib.sheets_backend.retrieve_sheets_of_spreadsheet")
-    def test_select_spreadsheet(self, mock_retrieve_sheets, mock_fetch, mock_auth_manager, qtbot):
+    def test_select_spreadsheet(
+        self, mock_retrieve_sheets, mock_fetch, mock_auth_manager, mock_meta_start, mock_loader_start, qtbot
+    ):
         """Test selecting a spreadsheet."""
         # Create a mock auth manager
         mock_auth_instance = MagicMock()
@@ -363,23 +372,25 @@ class TestSheetsSelectionDialog:
         ]
         mock_retrieve_sheets.return_value = mock_sheet_props
 
-        # Select the spreadsheet
+        # Select the spreadsheet — metadata thread is patched so it won't start;
+        # we call the callback directly to simulate a successful load.
         dialog.select_spreadsheet(sheet1)
 
-        # Check that the spreadsheet was selected
+        # Check that the spreadsheet was selected and UI updated synchronously
         assert dialog.selected_spreadsheet == sheet1
         assert dialog.select_button.isEnabled()
         assert "Test Sheet 1" in dialog.details_content.text()
 
-        # Verify that retrieve_sheets_of_spreadsheet was called
-        mock_retrieve_sheets.assert_called_once_with(mock_auth_instance.create_sheets_service.return_value, sheet1.id)
+        # Simulate what the background metadata thread would deliver
+        dialog._on_sheet_metadata_loaded(mock_sheet_props, sheet1.id)
 
         # Verify that the sheet properties list is updated in the dialog
         assert dialog.sheet_properties_list == mock_sheet_props
 
+    @patch("ripper.rippergui.sheets_selection_view._SpreadsheetLoader.start")
     @patch("ripper.rippergui.sheets_selection_view.AuthManager")
     @patch("ripper.ripperlib.sheets_backend.retrieve_spreadsheets")
-    def test_sheet_name_selected(self, mock_fetch, mock_auth_manager, qtbot):
+    def test_sheet_name_selected(self, mock_fetch, mock_auth_manager, mock_loader_start, qtbot):
         """Test that selecting a sheet name in the combobox updates the range input."""
         # Create a mock auth manager
         mock_auth_instance = MagicMock()

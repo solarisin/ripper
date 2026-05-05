@@ -3,7 +3,7 @@ import warnings
 from decimal import Decimal
 
 import pytest
-from PySide6.QtCore import QDate, QRegularExpression, Qt
+from PySide6.QtCore import QDate, Qt
 
 from ripper.rippergui.table_view import (
     FilterDialog,
@@ -405,8 +405,8 @@ class TestFilterDialog:
 
         # Check that the filters were collected correctly
         assert "Description" in filters
-        assert isinstance(filters["Description"], QRegularExpression)
-        assert filters["Description"].pattern() == "Coffee"
+        assert isinstance(filters["Description"], str)
+        assert filters["Description"] == "Coffee"
 
         assert "Account" in filters
         assert filters["Account"] == "Checking"
@@ -435,5 +435,5 @@ class TestFilterDialog:
         # Check that the signal was emitted with the correct filters
         filters = blocker.args[0]
         assert "Description" in filters
-        assert isinstance(filters["Description"], QRegularExpression)
-        assert filters["Description"].pattern() == "Coffee"
+        assert isinstance(filters["Description"], str)
+        assert filters["Description"] == "Coffee"
