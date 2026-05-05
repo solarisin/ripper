@@ -776,6 +776,8 @@ class DashboardEditor(QWidget):
             return
 
         selected_item = list_widget.currentItem()
+        if selected_item is None:
+            return
         rec = selected_item.data(Qt.ItemDataRole.UserRole)
 
         data_source = DataSource(

@@ -62,30 +62,32 @@ class RipperDb:
         Raises:
             sqlite.Error: If the database cannot be opened or initialized.
         """
-        if self._conn:
-            logger.debug(f"Database {self._db_file_path} already open")
-            return
+        with self._lock:
+            if self._conn:
+                logger.debug(f"Database {self._db_file_path} already open")
+                return
 
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(self._db_file_path), exist_ok=True)
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(self._db_file_path), exist_ok=True)
 
-        try:
-            self._conn = sqlite.connect(self._db_file_path, timeout=20, check_same_thread=False)
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA busy_timeout=10000")
-            self._conn.execute("PRAGMA foreign_keys = ON")
-            self.create_tables()
-        except sqlite.Error as e:
-            logger.error(f"Error opening database {self._db_file_path}: {e}")
-            raise
+            try:
+                self._conn = sqlite.connect(self._db_file_path, timeout=20, check_same_thread=False)
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA busy_timeout=10000")
+                self._conn.execute("PRAGMA foreign_keys = ON")
+                self.create_tables()
+            except sqlite.Error as e:
+                logger.error(f"Error opening database {self._db_file_path}: {e}")
+                raise
 
     def close(self) -> None:
         """
         Close the database connection if open.
         """
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn:
+                self._conn.close()
+                self._conn = None
 
     @contextmanager
     def _transaction(self) -> Generator[None, None, None]:
@@ -98,7 +100,9 @@ class RipperDb:
         ``self._conn`` directly.
         """
         with self._lock:
-            with self._conn:  # type: ignore[union-attr]
+            if self._conn is None:
+                raise sqlite.ProgrammingError("Database is not open")
+            with self._conn:
                 yield
 
     def execute_query(self, query: str, params: Tuple[Any, ...] = ()) -> Optional[sqlite.Cursor]:

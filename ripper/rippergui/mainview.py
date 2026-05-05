@@ -782,6 +782,7 @@ class MainView(QMainWindow):
             key = (source_info.get("spreadsheet_id", ""), source_info.get("sheet_name", ""))
             if key[0] and key[1]:
                 self._table_widgets[key] = table_widget
+                table_widget.destroyed.connect(lambda _, k=key: self._table_widgets.pop(k, None))
 
         if self._table_dock is None:
             self._table_dock = ads.CDockWidget(self._dock_manager, title)
