@@ -66,7 +66,6 @@ def test_central_widget_is_dock_manager(qtbot):
 @pytest.mark.qt
 def test_show_data_source_creates_table_dock(qtbot):
     """Calling _show_data_source_in_dock() must create a CDockWidget, not QDockWidget."""
-    from unittest.mock import patch, MagicMock
     view = MainView()
     qtbot.addWidget(view)
     assert view._table_dock is None

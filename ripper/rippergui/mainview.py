@@ -826,6 +826,7 @@ class MainView(QMainWindow):
         if self._table_dock is None:
             self._table_dock = ads.CDockWidget(self._dock_manager, title)
             self._dock_manager.addDockWidget(ads.CenterDockWidgetArea, self._table_dock)
+            # View menu toggle action is wired in Phase 6 alongside the other dock actions.
         else:
             self._table_dock.setWindowTitle(title)
 
