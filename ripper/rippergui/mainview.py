@@ -207,6 +207,8 @@ class MainView(QMainWindow):
         self._active_data_source_id: int | None = None
         # Map (spreadsheet_id, sheet_name) -> TransactionTableViewWidget for dashboard data.
         self._table_widgets: dict[tuple[str, str], table_view.TransactionTableViewWidget] = {}
+        # Keeps Python references to running background workers so they aren't GC'd before finishing.
+        self._active_workers: set[_DataFetchWorker] = set()
         # Dock manager and dashboard dock (fully assigned in create_main_layout / _init_dashboard_dock)
         self._dock_manager: ads.CDockManager
         self._dashboard_dock: ads.CDockWidget | None = None
@@ -434,8 +436,10 @@ class MainView(QMainWindow):
         progress.setValue(0)
 
         worker = _DataFetchWorker(spreadsheet_id, range_name, self)
+        self._active_workers.add(worker)
 
         def on_finished(sheet_data: list, range_sources: list) -> None:
+            self._active_workers.discard(worker)
             progress.reset()
             if not sheet_data:
                 QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
@@ -457,6 +461,7 @@ class MainView(QMainWindow):
             _log_range_sources(range_sources, sheet_data)
 
         def on_error(message: str) -> None:
+            self._active_workers.discard(worker)
             progress.reset()
             QMessageBox.warning(self, "Google Sheets", message)
 
@@ -702,8 +707,10 @@ class MainView(QMainWindow):
         progress.setValue(0)
 
         worker = _DataFetchWorker(spreadsheet_id, range_name, self)
+        self._active_workers.add(worker)
 
         def on_finished(sheet_data: list, range_sources: list) -> None:
+            self._active_workers.discard(worker)
             progress.reset()
             if not sheet_data:
                 QMessageBox.warning(self, "Google Sheets", "No data found in the selected range.")
@@ -726,6 +733,7 @@ class MainView(QMainWindow):
             _log_range_sources(range_sources, sheet_data)
 
         def on_error(message: str) -> None:
+            self._active_workers.discard(worker)
             progress.reset()
             QMessageBox.warning(self, "Google Sheets", message)
 

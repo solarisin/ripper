@@ -10,7 +10,6 @@ from beartype.typing import Optional
 from loguru import logger
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QInputDialog,
     QLabel,
     QListWidget,
@@ -214,31 +213,3 @@ class DataSourceListWidget(QWidget):
             self.refresh()
         else:
             QMessageBox.warning(self, "Delete Failed", "Could not delete the data source.")
-
-
-class DataSourceBannerWidget(QWidget):
-    """
-    Thin horizontal banner shown above the data table inside the dock.
-
-    Displays the data source name and the last-synced timestamp.
-    """
-
-    def __init__(self, title: str, fetched_at: str, parent: Optional[QWidget] = None) -> None:
-        """
-        Initialise the banner with a title and timestamp.
-
-        Args:
-            title: Data source name to display.
-            fetched_at: ISO-format timestamp string (or empty string for "never").
-            parent: Parent widget.
-        """
-        super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 2, 8, 2)
-
-        timestamp = fetched_at[:16] if fetched_at and len(fetched_at) > 16 else (fetched_at or "never")
-        text = f"{title}  —  last synced: {timestamp}"
-        label = QLabel(text)
-        label.setStyleSheet("color: #aaa; font-size: 11px;")
-        layout.addWidget(label)
-        layout.addStretch()

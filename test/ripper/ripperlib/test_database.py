@@ -49,10 +49,9 @@ class TestDatabaseIntegration(unittest.TestCase):
     def test_execute_query(self) -> None:
         """Test the execute_query method for successful and failed queries."""
         # Test successful query
-        cursor = self.db.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
-        self.assertIsNotNone(cursor)
-        tables = cursor.fetchall() if cursor else []
-        self.assertGreater(len(tables), 0)
+        rows = self.db.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
+        self.assertIsNotNone(rows)
+        self.assertGreater(len(rows or []), 0)
 
         # Test query with parameters
         test_id = "test_id"
@@ -71,15 +70,14 @@ class TestDatabaseIntegration(unittest.TestCase):
                 }
             ),
         )
-        cursor = self.db.execute_query("SELECT spreadsheet_id FROM spreadsheets WHERE spreadsheet_id = ?", (test_id,))
-        self.assertIsNotNone(cursor)
-        fetched_result = cursor.fetchone() if cursor else None
-        self.assertIsNotNone(fetched_result)
-        self.assertEqual(fetched_result[0], test_id)
+        rows = self.db.execute_query("SELECT spreadsheet_id FROM spreadsheets WHERE spreadsheet_id = ?", (test_id,))
+        self.assertIsNotNone(rows)
+        self.assertGreater(len(rows or []), 0)
+        self.assertEqual((rows or [[]])[0][0], test_id)
 
         # Test failed query (syntax error)
-        cursor = self.db.execute_query("SELECT * FROM non_existent_table")
-        self.assertIsNone(cursor)
+        rows = self.db.execute_query("SELECT * FROM non_existent_table")
+        self.assertIsNone(rows)
 
     def test_get_sheet_metadata(self) -> None:
         """Test retrieving sheet metadata from the database."""

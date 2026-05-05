@@ -105,26 +105,22 @@ class RipperDb:
             with self._conn:
                 yield
 
-    def execute_query(self, query: str, params: Tuple[Any, ...] = ()) -> Optional[sqlite.Cursor]:
+    def execute_query(self, query: str, params: Tuple[Any, ...] = ()) -> list[Any] | None:
         """
-        Execute a SQL query with parameters.
+        Execute a SQL query with parameters and return all rows.
 
         Args:
             query: SQL query string
             params: Query parameters
 
         Returns:
-            Cursor object or None if execution fails
+            List of result rows, or None if execution fails.
         """
-        if self._conn is None:
-            logger.error("Database not open")
-            return None
-
         try:
             with self._transaction():
-                cursor = self._conn.cursor()
+                cursor = self._conn.cursor()  # type: ignore[union-attr]
                 cursor.execute(query, params)
-                return cursor
+                return cursor.fetchall()
         except sqlite.Error as e:
             logger.error(f"Error executing query: {e}")
             return None
@@ -242,53 +238,56 @@ class RipperDb:
                     FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
                 );"""
             )
-            # Migrate existing data_sources tables that may be missing columns
-            # added after the initial schema was deployed.
-            c.execute("PRAGMA table_info(data_sources)")
-            existing_cols = {row[1] for row in c.fetchall()}
-            logger.debug(f"data_sources schema check — existing columns: {sorted(existing_cols)}")
-            # Handle column rename: range_name -> range_a1 (SQLite >= 3.25)
-            if "range_name" in existing_cols and "range_a1" not in existing_cols:
-                logger.info("Migrating data_sources: renaming column 'range_name' -> 'range_a1'")
-                c.execute("ALTER TABLE data_sources RENAME COLUMN range_name TO range_a1")
-                existing_cols.discard("range_name")
-                existing_cols.add("range_a1")
-                logger.info("Migration complete: renamed 'range_name' to 'range_a1'")
-            # Drop legacy columns that are no longer part of the schema (SQLite >= 3.35)
-            legacy_cols = {"range_name", "cell_range"}
-            cols_to_drop = legacy_cols & existing_cols
-            if cols_to_drop:
-                logger.info(f"Migrating data_sources: dropping legacy columns {sorted(cols_to_drop)}")
-                for col in cols_to_drop:
-                    try:
-                        c.execute(f"ALTER TABLE data_sources DROP COLUMN {col}")
-                        existing_cols.discard(col)
-                        logger.info(f"Migration complete: dropped column '{col}'")
-                    except Exception as exc:
-                        # DROP COLUMN requires SQLite >= 3.35; skip silently on older builds
-                        logger.warning(f"Could not drop legacy column '{col}': {exc}")
-            # Add any columns that are in the current schema but absent from the table
-            migrations = [
-                ("name", "TEXT NOT NULL DEFAULT ''"),
-                ("spreadsheet_id", "TEXT NOT NULL DEFAULT ''"),
-                ("sheet_name", "TEXT NOT NULL DEFAULT ''"),
-                ("range_a1", "TEXT NOT NULL DEFAULT ''"),
-                ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
-                ("last_fetched_at", "TIMESTAMP"),
-            ]
-            cols_to_add = [(n, d) for n, d in migrations if n not in existing_cols]
-            if cols_to_add:
-                logger.info(f"Migrating data_sources: adding missing columns {[n for n, _ in cols_to_add]}")
-                for col_name, col_def in cols_to_add:
-                    c.execute(f"ALTER TABLE data_sources ADD COLUMN {col_name} {col_def}")
-                    logger.info(f"Migration complete: added column '{col_name}'")
-            if not cols_to_drop and not cols_to_add and "range_name" not in existing_cols:
-                logger.debug("data_sources schema is up to date, no migration needed")
+            self._migrate_data_sources_schema(c)
             c.execute(
                 """CREATE INDEX IF NOT EXISTS idx_data_sources_spreadsheet
                    ON data_sources(spreadsheet_id);"""
             )
             logger.info("Database tables created successfully")
+
+    def _migrate_data_sources_schema(self, c: sqlite.Cursor) -> None:  # noqa: C901
+        """Apply incremental migrations to the data_sources table for deployments that predate schema changes."""
+        c.execute("PRAGMA table_info(data_sources)")
+        existing_cols = {row[1] for row in c.fetchall()}
+        logger.debug(f"data_sources schema check — existing columns: {sorted(existing_cols)}")
+        if "range_name" in existing_cols and "range_a1" not in existing_cols:
+            logger.info("Migrating data_sources: renaming column 'range_name' -> 'range_a1'")
+            try:
+                c.execute("ALTER TABLE data_sources RENAME COLUMN range_name TO range_a1")
+                existing_cols.discard("range_name")
+                existing_cols.add("range_a1")
+                logger.info("Migration complete: renamed 'range_name' to 'range_a1'")
+            except Exception as exc:
+                # RENAME COLUMN requires SQLite >= 3.25; skip silently on older builds
+                logger.warning(f"Could not rename column 'range_name': {exc}")
+        legacy_cols = {"range_name", "cell_range"}
+        cols_to_drop = legacy_cols & existing_cols
+        if cols_to_drop:
+            logger.info(f"Migrating data_sources: dropping legacy columns {sorted(cols_to_drop)}")
+            for col in cols_to_drop:
+                try:
+                    c.execute(f"ALTER TABLE data_sources DROP COLUMN {col}")
+                    existing_cols.discard(col)
+                    logger.info(f"Migration complete: dropped column '{col}'")
+                except Exception as exc:
+                    # DROP COLUMN requires SQLite >= 3.35; skip silently on older builds
+                    logger.warning(f"Could not drop legacy column '{col}': {exc}")
+        migrations = [
+            ("name", "TEXT NOT NULL DEFAULT ''"),
+            ("spreadsheet_id", "TEXT NOT NULL DEFAULT ''"),
+            ("sheet_name", "TEXT NOT NULL DEFAULT ''"),
+            ("range_a1", "TEXT NOT NULL DEFAULT ''"),
+            ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+            ("last_fetched_at", "TIMESTAMP"),
+        ]
+        cols_to_add = [(n, d) for n, d in migrations if n not in existing_cols]
+        if cols_to_add:
+            logger.info(f"Migrating data_sources: adding missing columns {[n for n, _ in cols_to_add]}")
+            for col_name, col_def in cols_to_add:
+                c.execute(f"ALTER TABLE data_sources ADD COLUMN {col_name} {col_def}")
+                logger.info(f"Migration complete: added column '{col_name}'")
+        if not cols_to_drop and not cols_to_add and "range_name" not in existing_cols:
+            logger.debug("data_sources schema is up to date, no migration needed")
 
     def store_sheet_properties(self, spreadsheet_id: str, sheet_properties: list[SheetProperties]) -> bool:
         """
