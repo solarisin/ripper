@@ -13,10 +13,8 @@ import click
 import toml
 from click import pass_context
 from loguru import logger
-from PySide6.QtWidgets import QApplication
 
 import ripper.ripperlib.database
-from ripper.rippergui.mainview import MainView
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import LOG_FILE_PATH
@@ -144,6 +142,12 @@ def cli(
         # Clear the credential cache if requested
         if clear_credential_cache:
             AuthManager().clear_stored_credentials()
+
+        # Import Qt lazily so non-GUI entry points (CLI subcommands, version checks,
+        # and tests) don't pull in the GUI stack at module import time.
+        from PySide6.QtWidgets import QApplication
+
+        from ripper.rippergui.mainview import MainView
 
         # Initialize the main window
         app = QApplication(sys.argv)

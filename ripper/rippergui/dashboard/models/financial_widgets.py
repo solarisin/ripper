@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from loguru import logger
 from PySide6.QtCharts import (
@@ -24,12 +24,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .dashboard import Dashboard
 from .tiller_data import TillerDataProcessor
 from .widget_types import WidgetType
 from .widgets import BaseWidget, WidgetConfig, register_widget
-
-if TYPE_CHECKING:
-    from .dashboard import Dashboard
 
 # Default colors for charts
 CHART_COLORS = [
@@ -50,7 +48,7 @@ CHART_COLORS = [
 class SpendingTrendWidget(BaseWidget):
     """Shows monthly spending trends over time."""
 
-    def __init__(self, config: WidgetConfig, dashboard: "Dashboard") -> None:
+    def __init__(self, config: WidgetConfig, dashboard: Dashboard) -> None:
         super().__init__(config, dashboard)
         self.chart_view: QChartView | None = None
         self.data_processor: TillerDataProcessor | None = None
@@ -175,7 +173,7 @@ class SpendingTrendWidget(BaseWidget):
 class CategoryBreakdownWidget(BaseWidget):
     """Shows a breakdown of spending by category."""
 
-    def __init__(self, config: WidgetConfig, dashboard: "Dashboard") -> None:
+    def __init__(self, config: WidgetConfig, dashboard: Dashboard) -> None:
         super().__init__(config, dashboard)
         self.chart_view: QChartView | None = None
         self.data_processor: TillerDataProcessor | None = None
@@ -323,7 +321,7 @@ class CategoryBreakdownWidget(BaseWidget):
 class BudgetVsActualWidget(BaseWidget):
     """Shows budget vs actual spending comparison."""
 
-    def __init__(self, config: WidgetConfig, dashboard: "Dashboard") -> None:
+    def __init__(self, config: WidgetConfig, dashboard: Dashboard) -> None:
         super().__init__(config, dashboard)
         self.chart_view: QChartView | None = None
         self.data_processor: Any = None
@@ -442,7 +440,7 @@ class BudgetVsActualWidget(BaseWidget):
 class TopExpensesWidget(BaseWidget):
     """Shows a table of the top expenses."""
 
-    def __init__(self, config: WidgetConfig, dashboard: "Dashboard") -> None:
+    def __init__(self, config: WidgetConfig, dashboard: Dashboard) -> None:
         super().__init__(config, dashboard)
         self.table: QTableWidget | None = None
         self.data_processor: TillerDataProcessor | None = None

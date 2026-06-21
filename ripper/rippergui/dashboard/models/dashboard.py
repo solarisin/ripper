@@ -228,3 +228,12 @@ class DashboardManager:
             del self._dashboards[dashboard_id]
             return True
         return False
+
+
+# widgets.py annotates parameters with "Dashboard" but cannot import this module at top
+# level (this module imports WidgetConfig from it). Publish the now-defined Dashboard into
+# that module's namespace so runtime type checkers (beartype) can resolve the forward
+# reference; static checkers use widgets.py's own TYPE_CHECKING import.
+from . import widgets as _widgets  # noqa: E402
+
+_widgets.Dashboard = Dashboard  # type: ignore[misc]
