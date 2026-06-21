@@ -53,6 +53,23 @@ class TestSpreadsheetProperties(unittest.TestCase):
         self.assertEqual(props.size, 0)
         self.assertIsNone(props.thumbnail)
 
+    def test_initialization_missing_drive_fields_uses_defaults(self):
+        """Drive omits optional fields on some files; init must not raise (#34)."""
+        # Only the always-present fields; createdTime/webViewLink/owners/shared absent.
+        mock_properties = {
+            "id": "test_id_3",
+            "name": "Sparse Spreadsheet",
+            "modifiedTime": "2023-01-03T11:00:00Z",
+        }
+        props = SpreadsheetProperties(mock_properties)
+
+        self.assertEqual(props.id, "test_id_3")
+        self.assertEqual(props.modified_time, "2023-01-03T11:00:00Z")
+        self.assertEqual(props.created_time, "")
+        self.assertEqual(props.web_view_link, "")
+        self.assertEqual(props.owners, [])
+        self.assertFalse(props.shared)
+
     def test_to_dict(self):
         """Test that to_dict method returns the correct dictionary representation."""
         mock_properties = {

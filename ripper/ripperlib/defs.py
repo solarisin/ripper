@@ -110,11 +110,14 @@ class SpreadsheetProperties:
         logger.debug(f"SpreadsheetProperties: {properties}")
         self.id = properties["id"]
         self.name = properties["name"]
-        self.created_time = properties["createdTime"]
         self.modified_time = properties["modifiedTime"]
-        self.web_view_link = properties["webViewLink"]
-        self.owners = properties["owners"]
-        self.shared = properties["shared"]
+        # The Drive API does not guarantee these on every file (e.g. files you own may omit
+        # `shared`, and some files lack `owners`/`webViewLink`), so default them rather than
+        # raising KeyError and aborting the whole listing.
+        self.created_time = properties.get("createdTime", "")
+        self.web_view_link = properties.get("webViewLink", "")
+        self.owners = properties.get("owners", [])
+        self.shared = properties.get("shared", False)
         if "thumbnailLink" in properties:
             self.thumbnail_link = properties["thumbnailLink"]
         else:
