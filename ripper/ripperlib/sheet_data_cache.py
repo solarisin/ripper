@@ -91,6 +91,13 @@ class SheetDataCache:
         """Serve a (resolved, bounded) range from cache, fetching only the missing sub-ranges."""
         cached_ranges = self._get_cached_ranges(spreadsheet_id, sheet_name)
 
+        # Open-ended ranges (A:Z) are resolved to a grid-sized rectangle far larger than the
+        # actual data, so they can't use the bounded "must fully contain" cache check without
+        # thrashing. Handle them separately: serve whatever is cached in the region, otherwise
+        # fetch once and store under the data's *actual* extent.
+        if self._is_open_ended(range_str):
+            return self._load_open_ended(service, spreadsheet_id, sheet_name, range_str, requested_range, cached_ranges)
+
         # Check if we can satisfy the request entirely from cache
         if RangeOptimizer.can_satisfy_from_cache(requested_range, cached_ranges):
             data = self._get_data_from_cache(spreadsheet_id, sheet_name, requested_range)
@@ -130,6 +137,63 @@ class SheetDataCache:
             range_sources = [(source, range_str)]
 
         return self._finalize(result_data, range_str), range_sources
+
+    def _load_open_ended(
+        self,
+        service: SheetsService,
+        spreadsheet_id: str,
+        sheet_name: str,
+        range_str: str,
+        requested_range: CellRange,
+        cached_ranges: list[CachedRange],
+    ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
+        """Serve an open-ended range (e.g. A:Z) from cache, or fetch once and cache it.
+
+        The cache holds the actual data extent; an open-ended request means "everything in
+        these columns", so any cached data in the region IS the answer (freshness is handled
+        by modifiedTime-based invalidation in store_spreadsheet_properties). On a miss we fetch
+        the resolved rectangle once and store it under the data's actual extent (padded to a
+        rectangle) so it isn't later flagged as an incomplete grid-sized range and re-fetched.
+        """
+        overlapping = RangeOptimizer.find_overlapping_cached_ranges(requested_range, cached_ranges)
+        if overlapping:
+            bounding_box = self._bounding_box(overlapping)
+            data = self._combine_range_data(spreadsheet_id, sheet_name, bounding_box, overlapping, {})
+            return self._finalize(data, range_str), [(LoadSource.DATABASE, range_str)]
+
+        from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
+
+        range_notation = f"{sheet_name}!{requested_range.to_a1_notation()}"
+        data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
+        if data:
+            self._store_actual_extent(spreadsheet_id, sheet_name, requested_range, data)
+        return self._finalize(data, range_str), [(LoadSource.API, range_str)]
+
+    @staticmethod
+    def _bounding_box(ranges: list[CachedRange]) -> CellRange:
+        """Return the smallest CellRange containing all of the given cached ranges."""
+        start_row = min(r.range_obj.start_row for r in ranges)
+        start_col = min(r.range_obj.start_col for r in ranges)
+        end_row = max(r.range_obj.end_row for r in ranges)
+        end_col = max(r.range_obj.end_col for r in ranges)
+        return CellRange(start_row, start_col, end_row, end_col)
+
+    def _store_actual_extent(
+        self, spreadsheet_id: str, sheet_name: str, requested_range: CellRange, data: SheetData
+    ) -> None:
+        """Store fetched data under its actual (rectangular) extent, anchored at the request start."""
+        rectangle = _pad_to_rectangle(data)
+        rows = len(rectangle)
+        cols = len(rectangle[0]) if rectangle else 0
+        if rows == 0 or cols == 0:
+            return
+        extent = CellRange(
+            requested_range.start_row,
+            requested_range.start_col,
+            requested_range.start_row + rows - 1,
+            requested_range.start_col + cols - 1,
+        )
+        self._store_range_data(spreadsheet_id, sheet_name, extent, rectangle)
 
     def _resolve_grid_dimensions(self, spreadsheet_id: str, sheet_name: str) -> tuple[Optional[int], Optional[int]]:
         """Look up (row_count, column_count) for a sheet from stored metadata, if available."""
@@ -440,6 +504,16 @@ class SheetDataCache:
 def _is_empty_cell(value: Any) -> bool:
     """Return True for cells that an unbounded API read would treat as absent."""
     return value is None or value == ""
+
+
+def _pad_to_rectangle(data: SheetData) -> SheetData:
+    """Pad ragged rows to a uniform width so the stored range has a complete cell grid.
+
+    Without this, ragged API data stored under a rectangular range looks "incomplete" to
+    detect_incomplete_ranges (fewer cells than rows*cols) and gets evicted, defeating caching.
+    """
+    width = max((len(row) for row in data), default=0)
+    return [list(row) + [None] * (width - len(row)) for row in data]
 
 
 def _trim_trailing_empty_rows(data: SheetData) -> SheetData:

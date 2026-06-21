@@ -273,6 +273,26 @@ class TestSheetDataCache(unittest.TestCase):
             self.mock_sheets_service, self.test_spreadsheet_id, f"{self.test_sheet_name}!A1:Z10"
         )
 
+    def test_get_sheet_data_open_ended_second_call_uses_cache(self) -> None:
+        """A repeated open-ended request is served from cache rather than re-fetching (#30, #66 review)."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            first, _ = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+            second, second_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        self.assertEqual(first, api_data)
+        self.assertEqual(second, api_data)
+        # The stored ragged data is not flagged incomplete, so the second call hits the cache.
+        self._assert_single_source(second_sources, LoadSource.DATABASE)
+        mock_fetch.assert_called_once()
+
     def test_get_sheet_data_open_ended_without_grid_dims_falls_back(self) -> None:
         """Without stored grid dims, an open-ended range falls back to a direct API read (#30)."""
         api_data = [["Date", "Amount"]]
