@@ -1,7 +1,7 @@
 """Dashboard editor view."""
 
 import uuid
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
 from PySide6.QtCore import QMimeData, QObject, QSize, Qt, Signal
@@ -419,18 +419,28 @@ class DashboardEditor(QWidget):
     and configuring widgets.
     """
 
-    def __init__(self, dashboard: Dashboard, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        dashboard: Dashboard,
+        parent: Optional[QWidget] = None,
+        data_source_provider: Optional[Callable[[], list[dict[str, Any]]]] = None,
+    ) -> None:
         """Initialize the dashboard editor.
 
         Args:
             dashboard: Dashboard to edit
             parent: Parent widget
+            data_source_provider: Optional callable returning the loaded data-source records,
+                injectable for testing. Defaults to the shared database singleton.
         """
         super().__init__(parent)
         self.dashboard = dashboard
         self.signals = DashboardSignals()
         self._selected_widget_id: Optional[str] = None
         self.data_service = DashboardDataService()
+        self._data_source_provider: Callable[[], list[dict[str, Any]]] = (
+            data_source_provider if data_source_provider is not None else Db.list_data_sources
+        )
         self._init_ui()
 
         # Connect signals
@@ -733,7 +743,7 @@ class DashboardEditor(QWidget):
         Shows a warning if no data sources have been loaded yet (direct the user
         to load one via the main window's "New Source" action first).
         """
-        records = Db.list_data_sources()
+        records = self._data_source_provider()
         if not records:
             QMessageBox.information(
                 self,

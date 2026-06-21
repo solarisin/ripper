@@ -41,6 +41,16 @@ def test_dashboard_view_renders_widget_config(tmp_path, qtbot):
     assert any(label.text() == "Line Chart: Line" for label in labels)
 
 
+def test_dashboard_editor_uses_injected_data_source_provider(qtbot):
+    """DashboardEditor takes an injectable data-source provider instead of the Db singleton (#33)."""
+    dashboard = Dashboard.create_new("Finance")
+    sentinel = [{"id": "ds-1", "name": "Test", "spreadsheet_id": "s1", "sheet_name": "Sheet1", "range_a1": "A1:E10"}]
+    editor = DashboardEditor(dashboard, data_source_provider=lambda: sentinel)
+    qtbot.addWidget(editor)
+
+    assert editor._data_source_provider() == sentinel
+
+
 def test_dashboard_editor_keeps_canvas_scrollable_and_properties_visible(qtbot):
     dashboard = Dashboard.create_new("Finance")
     editor = DashboardEditor(dashboard)

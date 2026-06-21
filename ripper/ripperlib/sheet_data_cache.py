@@ -25,6 +25,10 @@ class SheetDataCache:
     - Merging new data with existing cache
     - Optimizing API calls by minimizing redundant requests"""
 
+    # Upper bound on the cell count of a resolved range before we decline to cache it and
+    # fetch directly instead (guards against open-ended ranges on huge grids).
+    _MAX_CACHEABLE_CELLS = 2_000_000
+
     def __init__(self, db: Optional[RipperDb] = None) -> None:
         """Initialize the sheet data cache."""
         self._db = db or Db
@@ -35,77 +39,192 @@ class SheetDataCache:
         """
         Get sheet data from cache or API, with intelligent range optimization.
 
+        Open-ended ranges (e.g. ``A:Z``) are resolved against the sheet's grid dimensions so
+        they can use the cache; the result is trimmed of trailing empty rows/columns to match
+        what a direct unbounded API read would return.
+
         Args:
             service: Authenticated Google Sheets API service
             spreadsheet_id: The ID of the spreadsheet
             sheet_name: The name of the sheet
-            range_str: Range in A1 notation (e.g., 'A1:C10')
+            range_str: Range in A1 notation (e.g., 'A1:C10', 'A:Z')
 
         Returns:
             Tuple of (sheet_data, load_source) where sheet_data is a 2D list
             and load_source indicates whether data came from cache or API
-
-        Raises:
-            ValueError: If the range format is invalid
         """
+        # Resolve open-ended ranges using the sheet's grid dimensions so the smart cache can
+        # serve unbounded requests instead of silently falling back to the API every time.
+        max_row, max_col = self._resolve_grid_dimensions(spreadsheet_id, sheet_name)
         try:
-            # Parse the requested range
-            requested_range = CellRange.from_a1_notation(range_str)  # Get cached ranges for this sheet
-            cached_ranges = self._get_cached_ranges(spreadsheet_id, sheet_name)
+            requested_range = CellRange.from_a1_notation(range_str, max_row=max_row, max_col=max_col)
+        except ValueError as e:
+            # Expected for ranges we can't resolve (e.g. open-ended with unknown grid dims).
+            # Fall back to a direct API read without the per-call error noise.
+            logger.debug(f"Range {range_str!r} is not cacheable ({e}); fetching directly from the API")
+            return self._fetch_direct(service, spreadsheet_id, sheet_name, range_str)
 
-            # Check if we can satisfy the request entirely from cache
-            if RangeOptimizer.can_satisfy_from_cache(requested_range, cached_ranges):
-                data = self._get_data_from_cache(spreadsheet_id, sheet_name, requested_range)
-                range_sources = [(LoadSource.DATABASE, range_str)]
-                return data, range_sources  # Find what ranges we need to fetch from API
-            missing_ranges = RangeOptimizer.find_missing_ranges(requested_range, cached_ranges)
-            overlapping_cached = RangeOptimizer.find_overlapping_cached_ranges(requested_range, cached_ranges)
-
-            # Fetch missing data from API
-            api_data = {}
-            for missing_range in missing_ranges:
-                range_notation = f"{sheet_name}!{missing_range.to_a1_notation()}"
-                # Import here to avoid circular imports
-                from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
-
-                data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
-                # Store in cache regardless of whether data is empty
-                api_data[missing_range] = data
-                if data:  # Only store non-empty data in cache
-                    self._store_range_data(spreadsheet_id, sheet_name, missing_range, data)
-
-            # Combine cached and API data to build the final result
-            result_data = self._combine_range_data(
-                spreadsheet_id, sheet_name, requested_range, overlapping_cached, api_data
+        cell_count = (requested_range.end_row - requested_range.start_row + 1) * (
+            requested_range.end_col - requested_range.start_col + 1
+        )
+        if cell_count > self._MAX_CACHEABLE_CELLS:
+            logger.debug(
+                f"Range {range_str!r} resolves to {cell_count} cells "
+                f"(> {self._MAX_CACHEABLE_CELLS}); fetching directly from the API"
             )
-            # Build range sources list based on what was fetched
-            range_sources = []
+            return self._fetch_direct(service, spreadsheet_id, sheet_name, range_str)
 
-            # Add cached ranges
-            for cached_range in overlapping_cached:
-                range_sources.append((LoadSource.DATABASE, cached_range.range_obj.to_a1_notation()))
-
-            # Add API ranges
-            for missing_range in missing_ranges:
-                range_sources.append((LoadSource.API, missing_range.to_a1_notation()))
-
-            # If no specific ranges, use the original request
-            if not range_sources:
-                if not missing_ranges:
-                    range_sources = [(LoadSource.DATABASE, range_str)]
-                else:
-                    range_sources = [(LoadSource.API, range_str)]
-
-            return result_data, range_sources
-
+        try:
+            return self._load_with_cache(service, spreadsheet_id, sheet_name, range_str, requested_range)
         except Exception as e:
-            logger.error(f"Error getting sheet data: {e}")
-            # Fallback to direct API call
-            from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
+            logger.error(f"Error reading sheet data from cache for {range_str!r}, falling back to API: {e}")
+            return self._fetch_direct(service, spreadsheet_id, sheet_name, range_str)
 
-            range_notation = f"{sheet_name}!{range_str}"
+    def _load_with_cache(
+        self,
+        service: SheetsService,
+        spreadsheet_id: str,
+        sheet_name: str,
+        range_str: str,
+        requested_range: CellRange,
+    ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
+        """Serve a (resolved, bounded) range from cache, fetching only the missing sub-ranges."""
+        # Open-ended ranges (A:Z) resolve to a grid-sized rectangle far larger than the actual
+        # data and can't be soundly satisfied from the bounded cache, so handle them separately
+        # (always fetch fresh; see _load_open_ended).
+        if self._is_open_ended(range_str):
+            return self._load_open_ended(service, spreadsheet_id, sheet_name, range_str, requested_range)
+
+        cached_ranges = self._get_cached_ranges(spreadsheet_id, sheet_name)
+
+        # Check if we can satisfy the request entirely from cache
+        if RangeOptimizer.can_satisfy_from_cache(requested_range, cached_ranges):
+            data = self._get_data_from_cache(spreadsheet_id, sheet_name, requested_range)
+            return self._finalize(data, range_str), [(LoadSource.DATABASE, range_str)]
+
+        # Find what ranges we need to fetch from API
+        missing_ranges = RangeOptimizer.find_missing_ranges(requested_range, cached_ranges)
+        overlapping_cached = RangeOptimizer.find_overlapping_cached_ranges(requested_range, cached_ranges)
+
+        # Fetch missing data from API
+        from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
+
+        api_data = {}
+        for missing_range in missing_ranges:
+            range_notation = f"{sheet_name}!{missing_range.to_a1_notation()}"
             data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
-            return data, [(LoadSource.API, range_str)]
+            # Store in cache regardless of whether data is empty
+            api_data[missing_range] = data
+            if data:  # Only store non-empty data in cache
+                self._store_range_data(spreadsheet_id, sheet_name, missing_range, data)
+
+        # Combine cached and API data to build the final result
+        result_data = self._combine_range_data(
+            spreadsheet_id, sheet_name, requested_range, overlapping_cached, api_data
+        )
+
+        # Build range sources list based on what was fetched
+        range_sources: list[tuple[LoadSource, str]] = []
+        for cached_range in overlapping_cached:
+            range_sources.append((LoadSource.DATABASE, cached_range.range_obj.to_a1_notation()))
+        for missing_range in missing_ranges:
+            range_sources.append((LoadSource.API, missing_range.to_a1_notation()))
+
+        # If no specific ranges, use the original request
+        if not range_sources:
+            source = LoadSource.DATABASE if not missing_ranges else LoadSource.API
+            range_sources = [(source, range_str)]
+
+        return self._finalize(result_data, range_str), range_sources
+
+    def _load_open_ended(
+        self,
+        service: SheetsService,
+        spreadsheet_id: str,
+        sheet_name: str,
+        range_str: str,
+        requested_range: CellRange,
+    ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
+        """Fetch an open-ended range (e.g. A:Z) fresh, caching only its actual extent.
+
+        Open-ended completeness cannot be inferred from arbitrary cached overlap: a cached
+        bounded range (say A1:B2) does NOT prove the rest of A:Z is cached, and a wider
+        overlapping range could pull in columns outside the request. So we always fetch the
+        resolved rectangle once (correct for growing data) and store it under the data's
+        *actual* extent, padded to a complete rectangle so it isn't later mis-flagged as an
+        incomplete grid-sized range. This keeps the cache sound and still lets bounded
+        sub-range requests be served from the stored extent.
+        """
+        from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
+
+        range_notation = f"{sheet_name}!{requested_range.to_a1_notation()}"
+        data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
+        if data:
+            self._store_actual_extent(spreadsheet_id, sheet_name, requested_range, data)
+        return self._finalize(data, range_str), [(LoadSource.API, range_str)]
+
+    def _store_actual_extent(
+        self, spreadsheet_id: str, sheet_name: str, requested_range: CellRange, data: SheetData
+    ) -> None:
+        """Store fetched data under its actual (rectangular) extent, anchored at the request start."""
+        rectangle = _pad_to_rectangle(data)
+        rows = len(rectangle)
+        cols = len(rectangle[0]) if rectangle else 0
+        if rows == 0 or cols == 0:
+            return
+        extent = CellRange(
+            requested_range.start_row,
+            requested_range.start_col,
+            requested_range.start_row + rows - 1,
+            requested_range.start_col + cols - 1,
+        )
+        self._store_range_data(spreadsheet_id, sheet_name, extent, rectangle)
+
+    def _resolve_grid_dimensions(self, spreadsheet_id: str, sheet_name: str) -> tuple[Optional[int], Optional[int]]:
+        """Look up (row_count, column_count) for a sheet from stored metadata, if available."""
+        try:
+            sheets = self._db.get_sheet_properties_of_spreadsheet(spreadsheet_id)
+        except Exception as e:
+            logger.debug(f"Could not load grid dimensions for {spreadsheet_id!r}: {e}")
+            return None, None
+        for sheet in sheets:
+            if sheet.title == sheet_name:
+                return sheet.grid.row_count, sheet.grid.column_count
+        return None, None
+
+    def _fetch_direct(
+        self, service: SheetsService, spreadsheet_id: str, sheet_name: str, range_str: str
+    ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
+        """Fetch a range directly from the API, bypassing the cache."""
+        from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
+
+        range_notation = f"{sheet_name}!{range_str}"
+        data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
+        return data, [(LoadSource.API, range_str)]
+
+    def _finalize(self, data: SheetData, range_str: str) -> SheetData:
+        """Trim trailing empty rows/columns for open-ended requests to match a direct read.
+
+        An unbounded range (e.g. ``A:Z``) is resolved to a fixed rectangle from the grid
+        dimensions, but a direct API read of the same range returns ragged data with trailing
+        empty rows/columns omitted. Trim both so cached and direct results are equivalent
+        (and so callers like ``get_tiller_transactions`` don't see padded None columns/rows).
+        """
+        if self._is_open_ended(range_str):
+            data = _trim_trailing_empty_rows(data)
+            data = _trim_trailing_empty_columns(data)
+        return data
+
+    @staticmethod
+    def _is_open_ended(range_str: str) -> bool:
+        """True when the range's end omits a row or a column (e.g. 'A:Z', '2:10', 'A5:Z')."""
+        if ":" not in range_str:
+            return False
+        _, end_cell = range_str.split(":", 1)
+        end_cell = end_cell.strip()
+        has_row = any(ch.isdigit() for ch in end_cell)
+        has_col = any(ch.isalpha() for ch in end_cell)
+        return not (has_row and has_col)
 
     def invalidate_cache(self, spreadsheet_id: str, sheet_name: Optional[str] = None) -> bool:
         """
@@ -365,3 +484,39 @@ class SheetDataCache:
         except Exception as e:
             logger.error(f"Error validating cache integrity: {e}")
             return False
+
+
+def _is_empty_cell(value: Any) -> bool:
+    """Return True for cells that an unbounded API read would treat as absent."""
+    return value is None or value == ""
+
+
+def _pad_to_rectangle(data: SheetData) -> SheetData:
+    """Pad ragged rows to a uniform width so the stored range has a complete cell grid.
+
+    Without this, ragged API data stored under a rectangular range looks "incomplete" to
+    detect_incomplete_ranges (fewer cells than rows*cols) and gets evicted, defeating caching.
+    """
+    width = max((len(row) for row in data), default=0)
+    return [list(row) + [None] * (width - len(row)) for row in data]
+
+
+def _trim_trailing_empty_rows(data: SheetData) -> SheetData:
+    """Drop trailing rows whose cells are all empty (matches an unbounded API read)."""
+    end = len(data)
+    while end > 0 and all(_is_empty_cell(cell) for cell in data[end - 1]):
+        end -= 1
+    return data[:end]
+
+
+def _trim_trailing_empty_columns(data: SheetData) -> SheetData:
+    """Drop trailing columns whose cells are all empty across every row."""
+    if not data:
+        return data
+    last_col = 0
+    for row in data:
+        for idx in range(len(row) - 1, -1, -1):
+            if not _is_empty_cell(row[idx]):
+                last_col = max(last_col, idx + 1)
+                break
+    return [row[:last_col] for row in data]

@@ -58,17 +58,23 @@ class UserInfoService(Protocol):
 SheetData = list[list[Any]]
 
 
-def get_app_data_dir() -> str:
+def get_app_data_dir(ensure_exists: bool = False) -> str:
     """
     Get the application data directory for the current user using platformdirs.
+
+    Args:
+        ensure_exists: When True, create the directory if it does not exist. Defaults to
+            False so merely resolving the path (e.g. at import) has no filesystem side effect.
 
     Returns:
         The path to the application data directory.
     """
     # Use platformdirs to get the user data directory
-    return platformdirs.user_data_dir(appname="ripper", ensure_exists=True)
+    return platformdirs.user_data_dir(appname="ripper", ensure_exists=ensure_exists)
 
 
+# Resolved at import without creating directories; the directory is created lazily on use
+# (the DB connection's open() and the loguru file sink both create it as needed).
 LOG_FILE_PATH = Path(get_app_data_dir()) / "ripper.log"
 
 DRIVE_FILE_FIELDS: frozenset[str] = frozenset(
@@ -110,11 +116,14 @@ class SpreadsheetProperties:
         logger.debug(f"SpreadsheetProperties: {properties}")
         self.id = properties["id"]
         self.name = properties["name"]
-        self.created_time = properties["createdTime"]
         self.modified_time = properties["modifiedTime"]
-        self.web_view_link = properties["webViewLink"]
-        self.owners = properties["owners"]
-        self.shared = properties["shared"]
+        # The Drive API does not guarantee these on every file (e.g. files you own may omit
+        # `shared`, and some files lack `owners`/`webViewLink`), so default them rather than
+        # raising KeyError and aborting the whole listing.
+        self.created_time = properties.get("createdTime", "")
+        self.web_view_link = properties.get("webViewLink", "")
+        self.owners = properties.get("owners", [])
+        self.shared = properties.get("shared", False)
         if "thumbnailLink" in properties:
             self.thumbnail_link = properties["thumbnailLink"]
         else:

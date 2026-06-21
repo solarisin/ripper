@@ -325,8 +325,10 @@ class TestCellRange:
             (":A1", "Invalid cell reference format"),
             ("A1B2", "Invalid cell reference format"),
             ("A1:B2:C3", "Invalid cell reference format"),
-            ("A1:B", "Invalid cell reference format"),
-            ("A:B2", "Invalid cell reference format"),
+            # 'A1:B' is a valid half-open range; without grid dims it can't be resolved.
+            ("A1:B", "requires the sheet's row count"),
+            # 'A:B2' mixes an open column start with a bounded end, which is unsupported.
+            ("A:B2", "Unsupported A1 range notation"),
             ("A1:1B", "Invalid cell reference format"),
             ("A1:B2:-", "Invalid cell reference format"),
             ("ZZZZ1:A1", "Start cell must be before or equal to end cell"),
@@ -335,6 +337,29 @@ class TestCellRange:
     def test_from_a1_notation_invalid(self, a1_notation: str, error_msg: str) -> None:
         """Test invalid A1 notation raises ValueError with correct message."""
         with pytest.raises(ValueError, match=error_msg):
+            CellRange.from_a1_notation(a1_notation)
+
+    @pytest.mark.parametrize(
+        "a1_notation,max_row,max_col,expected",
+        [
+            ("A:Z", 100, 50, (1, 1, 100, 26)),  # whole-column range
+            ("A:C", 10, 50, (1, 1, 10, 3)),  # narrower whole-column range
+            ("A5:Z", 100, 50, (5, 1, 100, 26)),  # half-open column-bounded range
+            ("2:10", 100, 50, (2, 1, 10, 50)),  # whole-row range
+            ("B1:D4", 100, 50, (1, 2, 4, 4)),  # bounded ranges ignore the dims
+        ],
+    )
+    def test_from_a1_notation_open_ended(
+        self, a1_notation: str, max_row: int, max_col: int, expected: tuple[int, int, int, int]
+    ) -> None:
+        """Open-ended ranges resolve their missing bound from the grid dimensions (#30)."""
+        range_obj = CellRange.from_a1_notation(a1_notation, max_row=max_row, max_col=max_col)
+        assert (range_obj.start_row, range_obj.start_col, range_obj.end_row, range_obj.end_col) == expected
+
+    @pytest.mark.parametrize("a1_notation", ["A:Z", "A5:Z", "2:10"])
+    def test_from_a1_notation_open_ended_without_dims_raises(self, a1_notation: str) -> None:
+        """Open-ended ranges require grid dimensions; without them a ValueError is raised (#30)."""
+        with pytest.raises(ValueError):
             CellRange.from_a1_notation(a1_notation)
 
     @pytest.mark.parametrize("large_range", ["A1:ZZZZ1", "A1:ZZZZ2147483647"])

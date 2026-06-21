@@ -13,6 +13,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from beartype.typing import Any, Generator, Optional, Tuple
 from loguru import logger
@@ -32,14 +33,15 @@ class RipperDb:
     Handles connection management, schema creation, and CRUD operations for the ripper application.
     """
 
-    def __init__(self, db_file_path: str = str(default_db_path())) -> None:
+    def __init__(self, db_file_path: Optional[str] = None) -> None:
         """
         Initialize the database implementation and open a connection.
 
         Args:
-            db_file_path (str): Path to the database file.
+            db_file_path (str): Path to the database file. Defaults to the application data
+                location, resolved here (not at import) so the default path is computed lazily.
         """
-        self._db_file_path = db_file_path
+        self._db_file_path = db_file_path if db_file_path is not None else str(default_db_path())
         self._db_identifier = self.generate_db_identifier()
         logger.info(
             f"Creating new RipperDb instance {self._db_identifier} targeting database file: {str(self._db_file_path)}"
@@ -310,9 +312,11 @@ class RipperDb:
         with self._transaction():
             c = self._conn.cursor()
 
-            # Check if spreadsheet exists
+            # Check if spreadsheet exists. SELECT leaves cursor.rowcount at -1, so the
+            # count must be read from the result row (matching store_spreadsheet_thumbnail).
             c.execute("SELECT COUNT(*) FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            if c.rowcount == 0:
+            row = c.fetchone()
+            if row is None or row[0] == 0:
                 raise ValueError(
                     f"""Spreadsheet {spreadsheet_id} not found in database. Cannot store sheet metadata without a
                     spreadsheet."""
@@ -1180,5 +1184,57 @@ class RipperDb:
             return False
 
 
-# Global singleton instance for application-wide use
-Db = RipperDb()
+class _LazyDb:
+    """Lazy proxy for the application-wide ``RipperDb`` singleton.
+
+    The real ``RipperDb`` (which opens a connection, creates directories and runs migrations)
+    is constructed on first *use*, not when this module — or any consumer doing
+    ``from ripper.ripperlib.database import Db`` — is imported. This keeps imports free of
+    filesystem/DB side effects (important for test isolation) while leaving every existing
+    ``Db.<method>()`` call site unchanged.
+
+    Both reads and writes are forwarded to the underlying instance so that, e.g.,
+    ``Db._db_file_path = ...`` mutates the real RipperDb rather than silently diverging on the
+    proxy. Tests can inject an isolated database with ``Db._instance = RipperDb(tmp_path)``
+    (the only attribute kept on the proxy itself), guaranteeing the real user database is
+    never touched.
+    """
+
+    def __init__(self) -> None:
+        # Set via object.__setattr__ so it lands on the proxy, not a forwarded RipperDb.
+        object.__setattr__(self, "_instance", None)
+
+    def _resolve(self) -> RipperDb:
+        instance: Optional[RipperDb] = object.__getattribute__(self, "_instance")
+        if instance is None:
+            instance = RipperDb()
+            object.__setattr__(self, "_instance", instance)
+        return instance
+
+    def __getattr__(self, name: str) -> Any:
+        # Only reached for attributes not defined on the proxy itself; forward to the real Db.
+        return getattr(self._resolve(), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # `_instance` is the proxy's own backing slot (allows test injection); everything else
+        # is forwarded to the underlying RipperDb so assignments don't diverge from reads.
+        if name == "_instance":
+            object.__setattr__(self, "_instance", value)
+        else:
+            setattr(self._resolve(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        # Forward deletes to the underlying too, so set/delete stay symmetric (e.g. mock.patch
+        # sets an attribute then deletes it on teardown).
+        if name == "_instance":
+            object.__delattr__(self, "_instance")
+        else:
+            delattr(self._resolve(), name)
+
+
+if TYPE_CHECKING:
+    # Let static checkers treat the module-level `Db` as a RipperDb (its runtime behaviour
+    # via the proxy is attribute-identical).
+    Db: RipperDb
+else:
+    Db = _LazyDb()

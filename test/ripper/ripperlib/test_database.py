@@ -126,6 +126,53 @@ class TestDatabaseIntegration(unittest.TestCase):
         retrieved_metadata = self.db.get_sheet_properties_of_spreadsheet("non_existent_id")
         self.assertEqual(len(retrieved_metadata), 0)
 
+    def test_store_sheet_properties_raises_for_missing_spreadsheet(self) -> None:
+        """store_sheet_properties must reject a parent spreadsheet absent from the DB (#32)."""
+        metadata: Dict[str, Any] = {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": 1,
+                        "index": 0,
+                        "title": "Sheet 1",
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 100, "columnCount": 26},
+                    }
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            self.db.store_sheet_properties("nonexistent_spreadsheet", SheetProperties.from_api_result(metadata))
+
+    def test_db_singleton_is_lazy_proxy(self) -> None:
+        """`Db` is a lazy proxy (imports don't construct it) that forwards to a RipperDb (#33)."""
+        import ripper.ripperlib.database as database_module
+
+        self.assertIsInstance(database_module.Db, database_module._LazyDb)
+
+    def test_lazy_db_proxy_injection_and_forwarding(self) -> None:
+        """The proxy is lazy and forwards reads AND writes to the injected instance (#33, #66 review).
+
+        This guards the safety regression where assignments landed on the proxy while reads
+        (clean/open) hit the underlying real database. Uses an isolated temp RipperDb so the
+        real application database is never targeted.
+        """
+        from ripper.ripperlib.database import _LazyDb
+
+        proxy = _LazyDb()
+        # Lazy: nothing constructed until first use.
+        self.assertIsNone(proxy._instance)
+
+        # Inject an isolated temp database (self.db points at a temp file).
+        proxy._instance = self.db
+        self.assertIs(proxy._resolve(), self.db)
+        # Reads forward to the injected instance — the underlying target is the temp DB.
+        self.assertEqual(proxy._db_file_path, self.db_path)
+        # Writes forward to the injected instance, not the proxy.
+        proxy._db_file_path = "/some/other/path.db"
+        self.assertEqual(self.db._db_file_path, "/some/other/path.db")
+        self.assertNotIn("_db_file_path", proxy.__dict__)
+
     def test_get_thumbnail_not_found(self) -> None:
         # Test retrieving thumbnail for a spreadsheet that exists but has no thumbnail data
         sid_no_thumbnail = "spreadsheet_no_thumb"

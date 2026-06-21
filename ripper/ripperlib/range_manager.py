@@ -34,29 +34,60 @@ class CellRange:
             raise ValueError("Start cell must be before or equal to end cell")
 
     @classmethod
-    def from_a1_notation(cls, range_str: str) -> "CellRange":
+    def from_a1_notation(
+        cls, range_str: str, max_row: Optional[int] = None, max_col: Optional[int] = None
+    ) -> "CellRange":
         """
         Create a CellRange from A1 notation string (e.g., 'A1:B5' or 'A1').
 
+        Supports open-ended ranges by resolving the missing bound from the sheet's grid
+        dimensions:
+        - column-only ``A:Z``      -> rows 1..max_row, cols A..Z
+        - row-only ``2:10``        -> rows 2..10, cols 1..max_col
+        - half-open ``A5:Z``       -> rows 5..max_row, cols A..Z
+
         Args:
             range_str: Range string in A1 notation
+            max_row: Sheet row count, used to resolve an open-ended end row
+            max_col: Sheet column count, used to resolve an open-ended end column
 
         Returns:
             CellRange instance
 
         Raises:
-            ValueError: If the range format is invalid
+            ValueError: If the range format is invalid, or an open-ended bound cannot be
+                resolved because the corresponding grid dimension was not provided.
         """
+        range_str = range_str.strip()
         if ":" not in range_str:
             # Handle single cell reference (e.g., 'A1')
-            row, col = _parse_cell_reference(range_str.strip())
+            row, col = _parse_cell_reference(range_str)
             return cls(row, col, row, col)
 
         start_cell, end_cell = range_str.split(":", 1)
-        start_row, start_col = _parse_cell_reference(start_cell.strip())
-        end_row, end_col = _parse_cell_reference(end_cell.strip())
+        start_row, start_col = _parse_partial_cell_reference(start_cell.strip())
+        end_row, end_col = _parse_partial_cell_reference(end_cell.strip())
 
-        return cls(start_row, start_col, end_row, end_col)
+        # Bounded range, e.g. 'A1:B5'.
+        if start_row is not None and start_col is not None and end_row is not None and end_col is not None:
+            return cls(start_row, start_col, end_row, end_col)
+        # Whole-column range, e.g. 'A:Z' (no rows on either side).
+        if start_row is None and end_row is None and start_col is not None and end_col is not None:
+            if max_row is None:
+                raise ValueError(f"Open-ended range {range_str!r} requires the sheet's row count to resolve")
+            return cls(1, start_col, max_row, end_col)
+        # Whole-row range, e.g. '2:10' (no columns on either side).
+        if start_col is None and end_col is None and start_row is not None and end_row is not None:
+            if max_col is None:
+                raise ValueError(f"Open-ended range {range_str!r} requires the sheet's column count to resolve")
+            return cls(start_row, 1, end_row, max_col)
+        # Half-open column-bounded range, e.g. 'A5:Z' (full start, column-only end).
+        if start_row is not None and start_col is not None and end_row is None and end_col is not None:
+            if max_row is None:
+                raise ValueError(f"Open-ended range {range_str!r} requires the sheet's row count to resolve")
+            return cls(start_row, start_col, max_row, end_col)
+
+        raise ValueError(f"Unsupported A1 range notation: {range_str!r}")
 
     def to_a1_notation(self) -> str:
         """
@@ -273,9 +304,48 @@ class CachedRange:
     range_id: Optional[int] = None
 
 
+def _parse_partial_cell_reference(cell_ref: str) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Parse a possibly open-ended A1 reference into (row, column).
+
+    Either component may be ``None`` for open-ended references:
+    - ``'A5'`` -> ``(5, 1)``
+    - ``'A'``  -> ``(None, 1)`` (column only)
+    - ``'5'``  -> ``(5, None)`` (row only)
+
+    Args:
+        cell_ref: Cell reference string (e.g., 'A1', 'A', '5')
+
+    Returns:
+        Tuple of (row, column) as 1-based integers, each possibly ``None``
+
+    Raises:
+        ValueError: If the reference format is invalid
+    """
+    cell_ref = cell_ref.strip()
+    match = re.fullmatch(r"([A-Za-z]*)(\d*)", cell_ref)
+    if not match or cell_ref == "":
+        raise ValueError(f"Invalid cell reference format: {cell_ref}")
+
+    col_str, row_str = match.group(1), match.group(2)
+    if not col_str and not row_str:
+        raise ValueError(f"Invalid cell reference format: {cell_ref}")
+
+    col_num: Optional[int] = None
+    if col_str:
+        # Convert column letters to number (A=1, B=2, ..., Z=26, AA=27, etc.)
+        col_num = 0
+        for char in col_str.upper():
+            col_num = col_num * 26 + (ord(char) - ord("A") + 1)
+
+    row_num = int(row_str) if row_str else None
+
+    return row_num, col_num
+
+
 def _parse_cell_reference(cell_ref: str) -> Tuple[int, int]:
     """
-    Parse a cell reference like 'A1' into row and column numbers.
+    Parse a fully-qualified cell reference like 'A1' into row and column numbers.
 
     Args:
         cell_ref: Cell reference string (e.g., 'A1', 'BC123')
@@ -284,25 +354,11 @@ def _parse_cell_reference(cell_ref: str) -> Tuple[int, int]:
         Tuple of (row, column) as 1-based integers
 
     Raises:
-        ValueError: If the cell reference format is invalid
+        ValueError: If the cell reference format is invalid or open-ended
     """
-    if not re.match(r"^[A-Za-z]+\d+$", cell_ref):
+    row_num, col_num = _parse_partial_cell_reference(cell_ref)
+    if row_num is None or col_num is None:
         raise ValueError(f"Invalid cell reference format: {cell_ref}")
-
-    # Separate letters and numbers
-    col_str = "".join(char for char in cell_ref if char.isalpha())
-    row_str = "".join(char for char in cell_ref if char.isdigit())
-
-    if not col_str or not row_str:
-        raise ValueError(f"Invalid cell reference format: {cell_ref}")
-
-    # Convert column letters to number (A=1, B=2, ..., Z=26, AA=27, etc.)
-    col_num = 0
-    for char in col_str.upper():
-        col_num = col_num * 26 + (ord(char) - ord("A") + 1)
-
-    row_num = int(row_str)
-
     return row_num, col_num
 
 

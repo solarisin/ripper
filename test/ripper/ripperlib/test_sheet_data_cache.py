@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from beartype.typing import Any
 
 from ripper.ripperlib.database import RipperDb
-from ripper.ripperlib.defs import LoadSource, SpreadsheetProperties
+from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProperties
 from ripper.ripperlib.sheet_data_cache import SheetDataCache
 
 
@@ -236,6 +236,112 @@ class TestSheetDataCache(unittest.TestCase):
             self.assertEqual(result_data, [])
             self._assert_single_source(range_sources, LoadSource.API)
             mock_fetch.assert_called_once()
+
+    def _store_grid_dimensions(self, row_count: int, column_count: int) -> None:
+        """Store sheet metadata so open-ended ranges can be resolved against the grid (#30)."""
+        metadata = {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": 1,
+                        "index": 0,
+                        "title": self.test_sheet_name,
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": row_count, "columnCount": column_count},
+                    }
+                }
+            ]
+        }
+        self.db.store_sheet_properties(self.test_spreadsheet_id, SheetProperties.from_api_result(metadata))
+
+    def test_get_sheet_data_open_ended_resolves_and_trims(self) -> None:
+        """An 'A:Z' request resolves via grid dims, uses the cache, and trims trailing empties (#30)."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            result_data, range_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        # The padded 10x26 rectangle is trimmed back to the actual data extent.
+        self.assertEqual(result_data, api_data)
+        self._assert_single_source(range_sources, LoadSource.API)
+        # The open-ended range was resolved to a bounded one before the API call.
+        mock_fetch.assert_called_once_with(
+            self.mock_sheets_service, self.test_spreadsheet_id, f"{self.test_sheet_name}!A1:Z10"
+        )
+
+    def test_get_sheet_data_open_ended_always_fetches_fresh(self) -> None:
+        """Open-ended requests fetch fresh each time; cached overlap can't prove completeness (#30, #66 review)."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            first, _ = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+            second, second_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        self.assertEqual(first, api_data)
+        self.assertEqual(second, api_data)
+        self._assert_single_source(second_sources, LoadSource.API)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    def test_open_ended_fetch_does_not_falsely_satisfy_from_partial_cache(self) -> None:
+        """A smaller bounded cache entry must not be treated as a complete open-ended result (#66 review)."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        # Seed a small bounded range, then request A:Z — the open-ended read must still go to the API.
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = [["A1", "B1"], ["A2", "B2"]]
+            self.cache.get_sheet_data(self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A1:B2")
+            mock_fetch.reset_mock()
+            mock_fetch.return_value = [["Date", "Amount", "Cat"], ["2024-01-01", "-5", "Food"]]
+            result, sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        # Did NOT return the stale 2x2 cached data as if complete.
+        self.assertEqual(result, [["Date", "Amount", "Cat"], ["2024-01-01", "-5", "Food"]])
+        self._assert_single_source(sources, LoadSource.API)
+        mock_fetch.assert_called_once()
+
+    def test_open_ended_fetch_caches_actual_extent_for_bounded_subrange(self) -> None:
+        """The actual extent stored by an open-ended fetch serves a later bounded sub-range from cache (#30)."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]  # 2x2 -> actual extent A1:B2
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            self.cache.get_sheet_data(self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z")
+            sub, sub_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A1:B2"
+            )
+
+        self.assertEqual(sub, api_data)
+        self._assert_single_source(sub_sources, LoadSource.DATABASE)
+        # Only the open-ended fetch hit the API; the bounded sub-range was served from cache.
+        self.assertEqual(mock_fetch.call_count, 1)
+
+    def test_get_sheet_data_open_ended_without_grid_dims_falls_back(self) -> None:
+        """Without stored grid dims, an open-ended range falls back to a direct API read (#30)."""
+        api_data = [["Date", "Amount"]]
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            result_data, range_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        self.assertEqual(result_data, api_data)
+        self._assert_single_source(range_sources, LoadSource.API)
+        # Falls back to the unbounded range verbatim (no resolution possible).
+        mock_fetch.assert_called_once_with(
+            self.mock_sheets_service, self.test_spreadsheet_id, f"{self.test_sheet_name}!A:Z"
+        )
 
     def test_get_sheet_data_empty_range(self) -> None:
         """Test handling of empty range."""

@@ -53,6 +53,23 @@ class TestSpreadsheetProperties(unittest.TestCase):
         self.assertEqual(props.size, 0)
         self.assertIsNone(props.thumbnail)
 
+    def test_initialization_missing_drive_fields_uses_defaults(self):
+        """Drive omits optional fields on some files; init must not raise (#34)."""
+        # Only the always-present fields; createdTime/webViewLink/owners/shared absent.
+        mock_properties = {
+            "id": "test_id_3",
+            "name": "Sparse Spreadsheet",
+            "modifiedTime": "2023-01-03T11:00:00Z",
+        }
+        props = SpreadsheetProperties(mock_properties)
+
+        self.assertEqual(props.id, "test_id_3")
+        self.assertEqual(props.modified_time, "2023-01-03T11:00:00Z")
+        self.assertEqual(props.created_time, "")
+        self.assertEqual(props.web_view_link, "")
+        self.assertEqual(props.owners, [])
+        self.assertFalse(props.shared)
+
     def test_to_dict(self):
         """Test that to_dict method returns the correct dictionary representation."""
         mock_properties = {
@@ -165,13 +182,21 @@ class TestAppDataDir(unittest.TestCase):
     """Test cases for the get_app_data_dir function."""
 
     @patch("platformdirs.user_data_dir")
-    def test_get_app_data_dir(self, mock_user_data_dir):
-        """Test that get_app_data_dir calls platformdirs.user_data_dir correctly."""
+    def test_get_app_data_dir_does_not_create_by_default(self, mock_user_data_dir):
+        """By default the path is resolved without creating the directory (#33)."""
         mock_user_data_dir.return_value = "/fake/app/data/dir"
         data_dir = get_app_data_dir()
 
-        mock_user_data_dir.assert_called_once_with(appname="ripper", ensure_exists=True)
+        mock_user_data_dir.assert_called_once_with(appname="ripper", ensure_exists=False)
         self.assertEqual(data_dir, "/fake/app/data/dir")
+
+    @patch("platformdirs.user_data_dir")
+    def test_get_app_data_dir_ensure_exists_passthrough(self, mock_user_data_dir):
+        """ensure_exists=True is forwarded so callers can create the directory on demand."""
+        mock_user_data_dir.return_value = "/fake/app/data/dir"
+        get_app_data_dir(ensure_exists=True)
+
+        mock_user_data_dir.assert_called_once_with(appname="ripper", ensure_exists=True)
 
 
 class TestSheetProperties(unittest.TestCase):
