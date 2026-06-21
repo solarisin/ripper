@@ -1,9 +1,13 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PySide6.QtWidgets import QGroupBox, QLineEdit, QRadioButton
 
 from ripper.rippergui.oauth_client_config_view import AuthView
+
+# Constructs Qt widgets (relies on an implicit QApplication), so it needs a display.
+pytestmark = pytest.mark.qt
 
 
 class TestAuthView(unittest.TestCase):

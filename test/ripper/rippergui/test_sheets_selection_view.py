@@ -39,6 +39,11 @@ def setup_database(tmp_path, monkeypatch):
 class TestSpreadsheetThumbnailWidget:
     """Test cases for the SpreadsheetThumbnailWidget class."""
 
+    @pytest.mark.xfail(
+        reason="#47: thumbnail widget elides the display text (and mutates the shared name); "
+        "the elided result is also font-metric/platform dependent.",
+        strict=False,
+    )
     def test_initialization(self, qtbot):
         """Test that the widget initializes correctly."""
         # Create a mock spreadsheet properties

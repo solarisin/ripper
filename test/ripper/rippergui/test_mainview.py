@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 from ripper.rippergui.mainview import MainView
 
 
+@pytest.mark.qt
 class TestMainView(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
