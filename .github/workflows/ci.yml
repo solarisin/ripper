@@ -26,13 +26,14 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install Poetry
-      run: |
-        curl -sSL https://install.python-poetry.org | python -
-        poetry config virtualenvs.create true
-        poetry config virtualenvs.in-project true
+      uses: snok/install-poetry@v1
+      with:
+        version: 2.4.1
+        virtualenvs-create: true
+        virtualenvs-in-project: true
 
     - name: Cache Poetry dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ./.venv
         key: ${{ runner.os }}-${{ matrix.python-version }}-poetry-${{ hashFiles('poetry.lock') }}
@@ -41,17 +42,22 @@ jobs:
           ${{ runner.os }}-poetry-
 
     - name: Install dependencies
-      run: |
-        poetry install --with dev
-        poetry remove pytest-qt # remove pytest-qt to avoid INTERNALERROR
+      run: poetry install --with dev
 
-    - name: Lint code
+    - name: Lint (ruff)
       run: |
-        poetry run flake8 --config=pyproject.toml
+        poetry run ruff check .
+        poetry run ruff format --check .
+
+    - name: Type check (mypy)
+      run: poetry run mypy
 
     - name: Run tests
-      run: | # ignore any test files that import a Qt GUI library
-        poetry run pytest -m "not qt" --ignore=test/ripper/test_main.py --ignore=test/ripper/rippergui/
+      # Qt GUI tests are excluded via the `qt` marker; pytest-qt is disabled so its
+      # plugin doesn't crash collection on the headless runner (poetry.lock stays intact).
+      run: >-
+        poetry run pytest -m "not qt" -p no:pytest_qt
+        --cov=ripper --cov-report=xml --cov-fail-under=40
 
     - name: Upload coverage report
       uses: actions/upload-artifact@v4
