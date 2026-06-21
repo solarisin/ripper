@@ -1,0 +1,3 @@
+# Keep the uv lockfile LF-normalized so it stays byte-stable across platforms
+# (the repo's core.autocrlf=true would otherwise check it out with CRLF on Windows).
+uv.lock text eol=lf

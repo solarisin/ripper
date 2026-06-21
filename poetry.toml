@@ -1,3 +1,0 @@
-# poetry project config file https://python-poetry.org/docs/configuration/
-[virtualenvs]
-in-project = true

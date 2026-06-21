@@ -5,28 +5,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-poetry install          # install dependencies
-poetry sync             # sync exactly to lock file
-poetry run python -m ripper.main                      # run the app
-poetry run python -m ripper.main --log-level INFO     # with verbose logging
-poetry run python -m ripper.main --clear-credential-cache
-poetry run python -m ripper.main db create            # create SQLite DB and schema
-poetry run python -m ripper.main db clean             # delete the DB file
+uv sync                 # create .venv and install deps exactly to the lock file (incl. dev)
+uv run python -m ripper.main                      # run the app
+uv run python -m ripper.main --log-level INFO     # with verbose logging
+uv run python -m ripper.main --clear-credential-cache
+uv run python -m ripper.main db create            # create SQLite DB and schema
+uv run python -m ripper.main db clean             # delete the DB file
 ```
 
 **Validation (run narrowest first, then broaden before finishing):**
 
 ```bash
-poetry run pytest test/ripper/ripperlib/test_database.py     # focused lib test
-poetry run pytest test/ripper/rippergui/test_mainview.py -m qt  # focused Qt test
-poetry run pytest                                              # all tests
-poetry run ruff check .                                       # lint
-poetry run ruff format --check .                              # formatting check
-poetry run mypy
-poetry run python scripts/pre-commit.py   # runs ruff (lint + format) → mypy → pytest in order
+uv run pytest test/ripper/ripperlib/test_database.py     # focused lib test
+uv run pytest test/ripper/rippergui/test_mainview.py -m qt  # focused Qt test
+uv run pytest                                              # all tests
+uv run ruff check .                                       # lint
+uv run ruff format --check .                              # formatting check
+uv run mypy
+uv run python scripts/pre-commit.py   # runs ruff (lint + format) → mypy → pytest in order
 ```
 
-Run `poetry run ruff format .` to apply formatting and `poetry run ruff check --fix .` to auto-fix lint/import order — only when needed, to avoid unrelated churn. ruff is the single source of truth for linting, import sorting, and formatting (it replaces flake8, isort, and black).
+Run `uv run ruff format .` to apply formatting and `uv run ruff check --fix .` to auto-fix lint/import order — only when needed, to avoid unrelated churn. ruff is the single source of truth for linting, import sorting, and formatting (it replaces flake8, isort, and black).
 
 ## Architecture
 
