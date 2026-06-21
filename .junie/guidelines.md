@@ -156,18 +156,17 @@ def test_main_view_initialization(qtbot):
 
 ### Code Style
 
-The project uses:
-- Black for code formatting (line length: 120)
-- Flake8 for linting
+The project uses ruff for linting, import sorting, and formatting (line length: 120),
+replacing flake8, isort, and black.
 
-Format code with Black:
+Format code with ruff:
 ```bash
-poetry run black .
+poetry run ruff format .
 ```
 
-Check code with Flake8:
+Lint code with ruff:
 ```bash
-poetry run flake8
+poetry run ruff check .
 ```
 
 ### Authentication Flow

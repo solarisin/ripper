@@ -20,13 +20,13 @@ poetry run python -m ripper.main db clean             # delete the DB file
 poetry run pytest test/ripper/ripperlib/test_database.py     # focused lib test
 poetry run pytest test/ripper/rippergui/test_mainview.py -m qt  # focused Qt test
 poetry run pytest                                              # all tests
-poetry run flake8
-poetry run ruff check
+poetry run ruff check .                                       # lint
+poetry run ruff format --check .                              # formatting check
 poetry run mypy
-poetry run python scripts/pre-commit.py   # runs flake8 → mypy → pytest in order
+poetry run python scripts/pre-commit.py   # runs ruff (lint + format) → mypy → pytest in order
 ```
 
-Run `poetry run black .` and `poetry run isort .` only when formatting/import order changes are needed — avoid unrelated churn.
+Run `poetry run ruff format .` to apply formatting and `poetry run ruff check --fix .` to auto-fix lint/import order — only when needed, to avoid unrelated churn. ruff is the single source of truth for linting, import sorting, and formatting (it replaces flake8, isort, and black).
 
 ## Architecture
 
@@ -57,8 +57,8 @@ Run `poetry run black .` and `poetry run isort .` only when formatting/import or
 ## Key Constraints
 
 - **Singletons** (`Db`, `AuthManager`, `FontManager`) are established patterns — do not introduce new singleton-style global state.
-- **mypy** is currently scoped to `ripper/main.py` only (`[tool.mypy].files = ["ripper/main.py"]`); do not widen this scope unintentionally.
-- **beartype** runtime checking is present in dev dependencies and available but currently commented out in `pytest addopts`.
+- **mypy** checks the whole `ripper` package (`[tool.mypy].files = ["ripper"]`) and runs in CI; keep it green. `warn_unused_ignores` is intentionally disabled (fragile across the 3.11–3.13 / stub-version matrix).
+- **beartype** runtime type checking is enabled for the whole package during tests (`--beartype-packages=ripper` in `pytest addopts`); new code must pass it. Test doubles need to satisfy the declared types/protocols (use `MagicMock()`/`MagicMock(spec=...)` rather than bare `object()`).
 - **No live API calls in tests** — mock Google API clients, keyring, filesystem paths, and network downloads.
 - **Long-running/networked work** must not run in direct Qt UI event handlers; use background threads (existing code uses `QThread`-based workers).
 - Use **Qt signals/slots** for cross-widget state changes rather than direct coupling.

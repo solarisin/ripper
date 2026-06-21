@@ -23,7 +23,7 @@ The repository also contains an embedded dashboard subsystem. It stores dashboar
 - `ripper/rippergui/dashboard/`: Dashboard models, dashboard editor/view widgets, financial widgets, and dashboard data refresh services.
 - `test/`: Pytest test suite mirroring the package layout.
 - `scripts/`: Developer helper scripts, including pre-commit checks and Qt test discovery.
-- `res/`: Application image/resource helpers. This directory is excluded from flake8.
+- `res/`: Application image/resource helpers. This directory is excluded from ruff.
 
 ## Runtime Dependencies
 
@@ -298,11 +298,11 @@ poetry run pytest test/ripper/ripperlib/test_database.py
 poetry run pytest test/ripper/rippergui/test_mainview.py -m qt
 ```
 
-Run linting:
+Run linting and formatting checks:
 
 ```bash
-poetry run flake8
-poetry run ruff check
+poetry run ruff check .
+poetry run ruff format --check .
 ```
 
 Run type checking:
@@ -317,7 +317,7 @@ Run the project pre-commit helper:
 poetry run python scripts/pre-commit.py
 ```
 
-The pre-commit helper runs flake8, mypy, and pytest in that order.
+The pre-commit helper runs ruff (lint + format check), mypy, and pytest in that order.
 
 Find Qt GUI tests that may need to be excluded in headless CI:
 

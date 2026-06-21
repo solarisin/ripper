@@ -135,11 +135,11 @@ poetry run pytest test/ripper/ripperlib/test_database.py
 poetry run pytest test/ripper/rippergui/test_mainview.py -m qt
 ```
 
-Run lint and type checks:
+Run lint, formatting, and type checks:
 
 ```bash
-poetry run flake8
-poetry run ruff check
+poetry run ruff check .
+poetry run ruff format --check .
 poetry run mypy
 ```
 
@@ -149,13 +149,11 @@ Run the project pre-commit helper:
 poetry run python scripts/pre-commit.py
 ```
 
-The pre-commit helper runs flake8, mypy, and pytest in that order.
+The pre-commit helper runs ruff (lint + format check), mypy, and pytest in that order.
 
-Find GUI tests that may need to be skipped in headless CI:
-
-```bash
-poetry run python scripts/find_qt_tests.py
-```
+GUI tests that require a display are marked with the `qt` marker. CI runs `pytest -m "not qt"`
+(with `-p no:pytest_qt`) to skip them on the headless runner while still running the rest of
+the GUI/dashboard test tree.
 
 ## Current Notes
 

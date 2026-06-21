@@ -9,7 +9,7 @@ Ripper is a Python GUI application for browsing Google Sheets data and caching s
 - Qt UI code lives under `ripper/rippergui/`.
 - Tests live under `test/` and mirror the package path, for example `test/ripper/ripperlib/test_database.py`.
 - Developer helper scripts live under `scripts/`.
-- Resource helpers live under `res/`; `res/` is excluded from flake8.
+- Resource helpers live under `res/`; `res/` is excluded from ruff.
 
 The main entry point is `ripper/main.py`. It defines the Click CLI, logging setup, database subcommands, and the default GUI startup path.
 
@@ -23,20 +23,20 @@ poetry sync
 $(poetry env activate)
 poetry run python -m ripper.main
 poetry run pytest
-poetry run flake8
+poetry run ruff check .
+poetry run ruff format --check .
 poetry run mypy
-poetry run ruff check
 poetry run python scripts/pre-commit.py
 ```
 
 Notes:
 
 - `pyproject.toml` supports Python `>=3.11,<3.14`; mypy is configured with `python_version = "3.12"`.
-- Pytest is configured with `testpaths = ["test"]`, `pythonpath = ["."]`, coverage for `ripper`, and strict markers.
-- The `qt` pytest marker is declared for Qt-specific tests.
-- Flake8 is configured through `pyproject.toml` via `flake8-pyproject`.
-- Mypy currently checks only `ripper/main.py` because `[tool.mypy].files = ["ripper/main.py"]`.
-- The pre-commit script runs flake8, mypy, and pytest in that order. It does not run black or isort.
+- Pytest is configured with `testpaths = ["test"]`, `pythonpath = ["."]`, `--import-mode=importlib`, beartype runtime checking (`--beartype-packages=ripper`), and strict markers. Coverage is invoked explicitly in CI rather than in default `addopts`.
+- The `qt` pytest marker is declared for Qt-specific tests; CI runs `-m "not qt" -p no:pytest_qt`.
+- ruff is the single tool for linting, import sorting, and formatting (it replaces flake8, isort, and black).
+- Mypy checks the whole `ripper` package because `[tool.mypy].files = ["ripper"]`, and runs in CI.
+- The pre-commit script runs ruff (lint + format check), mypy, and pytest in that order.
 
 For targeted validation during edits, prefer the narrowest relevant command first, then run broader checks before finishing if the change is not trivial.
 
@@ -87,11 +87,12 @@ Before handing off broad changes, run:
 
 ```bash
 poetry run pytest
-poetry run flake8
+poetry run ruff check .
+poetry run ruff format --check .
 poetry run mypy
 ```
 
-Run `poetry run black .` and `poetry run isort .` when formatting/import order changes are needed, but avoid unrelated formatting churn.
+Run `poetry run ruff format .` and `poetry run ruff check --fix .` when formatting/import order changes are needed, but avoid unrelated formatting churn.
 
 ## When Updating Existing Guidance
 
@@ -99,5 +100,5 @@ The older `.junie/guidelines.md` and `.windsurf/rules/` files are useful backgro
 
 - Tests are under `test/ripper/...`, not `test/ripperlib/...`.
 - `ripper/main.py` is the entry point; `ripperlib` and `rippergui` are subpackages under `ripper/`.
-- The pre-commit helper does not run black or isort.
-- Mypy is currently scoped to `ripper/main.py`, not the full package.
+- ruff (lint + format) replaces flake8, isort, and black; the pre-commit helper runs ruff, mypy, then pytest.
+- Mypy checks the full `ripper` package (`[tool.mypy].files = ["ripper"]`).
