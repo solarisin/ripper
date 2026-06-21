@@ -28,15 +28,15 @@ def run_command(command: List[str], description: str) -> Tuple[bool, str]:
 
     Returns:
         Tuple of (success: bool, output: str)"""
-    print(f"🔍 Running {description}...")
+    print(f"Running {description}...")
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False, cwd=Path(__file__).parent.parent)
 
         if result.returncode == 0:
-            print(f"✅ {description} passed")
+            print(f"[PASS] {description}")
             return True, result.stdout
         else:
-            print(f"❌ {description} failed")
+            print(f"[FAIL] {description}")
             print(f"Return code: {result.returncode}")
             if result.stdout:
                 print("STDOUT:")
@@ -47,10 +47,10 @@ def run_command(command: List[str], description: str) -> Tuple[bool, str]:
             return False, result.stderr or result.stdout
 
     except FileNotFoundError as e:
-        print(f"❌ {description} failed - command not found: {e}")
+        print(f"[FAIL] {description} - command not found: {e}")
         return False, str(e)
     except Exception as e:
-        print(f"❌ {description} failed with exception: {e}")
+        print(f"[FAIL] {description} failed with exception: {e}")
         return False, str(e)
 
 
@@ -61,7 +61,7 @@ def main() -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    print("🚀 Starting pre-commit checks for ripper project")
+    print("Starting pre-commit checks for ripper project")
     print("=" * 60)
 
     # Track overall success
@@ -69,10 +69,10 @@ def main() -> int:
 
     # List of checks to run
     checks = [
-        (["poetry", "run", "ruff", "check", "."], "Lint check (ruff)"),
-        (["poetry", "run", "ruff", "format", "--check", "."], "Format check (ruff)"),
-        (["poetry", "run", "mypy"], "Type checking (mypy)"),
-        (["poetry", "run", "pytest"], "Unit tests (pytest)"),
+        (["uv", "run", "ruff", "check", "."], "Lint check (ruff)"),
+        (["uv", "run", "ruff", "format", "--check", "."], "Format check (ruff)"),
+        (["uv", "run", "mypy"], "Type checking (mypy)"),
+        (["uv", "run", "pytest"], "Unit tests (pytest)"),
     ]
 
     # Run each check
@@ -85,10 +85,10 @@ def main() -> int:
     # Final summary
     print("=" * 60)
     if all_passed:
-        print("🎉 All pre-commit checks passed!")
+        print("All pre-commit checks passed!")
         return 0
     else:
-        print("💥 Some pre-commit checks failed!")
+        print("Some pre-commit checks failed!")
         print("Please fix the issues above before committing.")
         return 1
 

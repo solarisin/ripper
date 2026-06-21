@@ -15,18 +15,17 @@ The main entry point is `ripper/main.py`. It defines the Click CLI, logging setu
 
 ## Environment And Commands
 
-Use Poetry for project commands.
+Use uv for project commands.
 
 ```bash
-poetry install
-poetry sync
-$(poetry env activate)
-poetry run python -m ripper.main
-poetry run pytest
-poetry run ruff check .
-poetry run ruff format --check .
-poetry run mypy
-poetry run python scripts/pre-commit.py
+uv sync                        # create .venv and install deps (incl. dev) exactly to uv.lock
+source .venv/bin/activate      # optional; on Windows: .venv\Scripts\activate
+uv run python -m ripper.main
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+uv run python scripts/pre-commit.py
 ```
 
 Notes:
@@ -79,20 +78,20 @@ For targeted validation during edits, prefer the narrowest relevant command firs
 - Prefer focused test runs while iterating, for example:
 
 ```bash
-poetry run pytest test/ripper/ripperlib/test_database.py
-poetry run pytest test/ripper/rippergui/test_mainview.py -m qt
+uv run pytest test/ripper/ripperlib/test_database.py
+uv run pytest test/ripper/rippergui/test_mainview.py -m qt
 ```
 
 Before handing off broad changes, run:
 
 ```bash
-poetry run pytest
-poetry run ruff check .
-poetry run ruff format --check .
-poetry run mypy
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
 ```
 
-Run `poetry run ruff format .` and `poetry run ruff check --fix .` when formatting/import order changes are needed, but avoid unrelated formatting churn.
+Run `uv run ruff format .` and `uv run ruff check --fix .` when formatting/import order changes are needed, but avoid unrelated formatting churn.
 
 ## When Updating Existing Guidance
 

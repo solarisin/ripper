@@ -27,7 +27,7 @@ The repository also contains an embedded dashboard subsystem. It stores dashboar
 
 ## Runtime Dependencies
 
-Ripper targets Python `>=3.11,<3.14` and uses Poetry for dependency management.
+Ripper targets Python `>=3.11,<3.14` and uses [uv](https://docs.astral.sh/uv/) for dependency management.
 
 The main runtime stack is:
 
@@ -42,32 +42,26 @@ The main runtime stack is:
 
 ## Installation
 
-From the repository root:
+From the repository root, create the virtual environment and install dependencies exactly to the lock file:
 
 ```bash
-poetry install
+uv sync
 ```
 
-To synchronize the virtual environment exactly with the lock file:
+To activate the environment in the current shell:
 
 ```bash
-poetry sync
+source .venv/bin/activate   # on Windows: .venv\Scripts\activate
 ```
 
-To activate the Poetry environment in the current shell:
-
-```bash
-$(poetry env activate)
-```
-
-Commands can also be run without activating the environment by prefixing them with `poetry run`.
+Commands can also be run without activating the environment by prefixing them with `uv run`.
 
 ## Running The Main Application
 
 Start the main Ripper GUI with:
 
 ```bash
-poetry run python -m ripper.main
+uv run python -m ripper.main
 ```
 
 The application opens a Qt main window with:
@@ -84,9 +78,9 @@ The File menu and toolbar currently include actions such as New Source, Select G
 The root command accepts:
 
 ```bash
-poetry run python -m ripper.main --log-level INFO
-poetry run python -m ripper.main --clear-credential-cache
-poetry run python -m ripper.main --debug-cli
+uv run python -m ripper.main --log-level INFO
+uv run python -m ripper.main --clear-credential-cache
+uv run python -m ripper.main --debug-cli
 ```
 
 Options:
@@ -102,20 +96,20 @@ Ripper stores cache data in a SQLite database under the user application data di
 Create the database and schema:
 
 ```bash
-poetry run python -m ripper.main db create
+uv run python -m ripper.main db create
 ```
 
 Delete the database file:
 
 ```bash
-poetry run python -m ripper.main db clean
+uv run python -m ripper.main db clean
 ```
 
 Operate on a specific database file:
 
 ```bash
-poetry run python -m ripper.main db --file-path /path/to/ripper.db create
-poetry run python -m ripper.main db --file-path /path/to/ripper.db clean
+uv run python -m ripper.main db --file-path /path/to/ripper.db create
+uv run python -m ripper.main db --file-path /path/to/ripper.db clean
 ```
 
 The schema stores:
@@ -288,33 +282,33 @@ The current dashboard data-source fetch path accepts date ranges and filter opti
 Run all tests:
 
 ```bash
-poetry run pytest
+uv run pytest
 ```
 
 Run a focused test file:
 
 ```bash
-poetry run pytest test/ripper/ripperlib/test_database.py
-poetry run pytest test/ripper/rippergui/test_mainview.py -m qt
+uv run pytest test/ripper/ripperlib/test_database.py
+uv run pytest test/ripper/rippergui/test_mainview.py -m qt
 ```
 
 Run linting and formatting checks:
 
 ```bash
-poetry run ruff check .
-poetry run ruff format --check .
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 Run type checking:
 
 ```bash
-poetry run mypy
+uv run mypy
 ```
 
 Run the project pre-commit helper:
 
 ```bash
-poetry run python scripts/pre-commit.py
+uv run python scripts/pre-commit.py
 ```
 
 The pre-commit helper runs ruff (lint + format check), mypy, and pytest in that order.
@@ -322,7 +316,7 @@ The pre-commit helper runs ruff (lint + format check), mypy, and pytest in that 
 Find Qt GUI tests that may need to be excluded in headless CI:
 
 ```bash
-poetry run python scripts/find_qt_tests.py
+uv run python scripts/find_qt_tests.py
 ```
 
 ## Test Coverage

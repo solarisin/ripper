@@ -35,22 +35,18 @@ For a fuller architecture and usage walkthrough, see [Project Purpose And Usage]
 
 ## Requirements
 
-- Python `>=3.11,<3.14`
-- Poetry
+- Python `>=3.11,<3.14` (uv can install a matching interpreter for you)
+- [uv](https://docs.astral.sh/uv/)
 - A Google Cloud OAuth client configured for an installed/local desktop app
 
-Runtime dependencies are managed by Poetry and include PySide6, Google API client libraries, keyring, loguru, click, platformdirs, pandas, and SQLite from the Python standard library.
+Runtime dependencies are managed by uv and include PySide6, Google API client libraries, keyring, loguru, click, platformdirs, pandas, and SQLite from the Python standard library.
 
 ## Install
 
-```bash
-poetry install
-```
-
-To sync the environment exactly with the lock file:
+Sync the environment exactly with the lock file (creates `.venv` and installs dev dependencies):
 
 ```bash
-poetry sync
+uv sync
 ```
 
 ## Run
@@ -58,15 +54,15 @@ poetry sync
 Start the main application:
 
 ```bash
-poetry run python -m ripper.main
+uv run python -m ripper.main
 ```
 
 Useful launch options:
 
 ```bash
-poetry run python -m ripper.main --log-level INFO
-poetry run python -m ripper.main --clear-credential-cache
-poetry run python -m ripper.main --debug-cli
+uv run python -m ripper.main --log-level INFO
+uv run python -m ripper.main --clear-credential-cache
+uv run python -m ripper.main --debug-cli
 ```
 
 ## OAuth And Sheet Loading
@@ -98,20 +94,20 @@ The log file rotates at 10 MB and retains 10 days of logs.
 Create the default database and schema:
 
 ```bash
-poetry run python -m ripper.main db create
+uv run python -m ripper.main db create
 ```
 
 Delete the default database file:
 
 ```bash
-poetry run python -m ripper.main db clean
+uv run python -m ripper.main db clean
 ```
 
 Use a specific database file:
 
 ```bash
-poetry run python -m ripper.main db --file-path /path/to/ripper.db create
-poetry run python -m ripper.main db --file-path /path/to/ripper.db clean
+uv run python -m ripper.main db --file-path /path/to/ripper.db create
+uv run python -m ripper.main db --file-path /path/to/ripper.db clean
 ```
 
 ## Dashboard Status
@@ -125,28 +121,28 @@ This area is still partly prototype-level. Several widget types are scaffolding,
 Run tests:
 
 ```bash
-poetry run pytest
+uv run pytest
 ```
 
 Run focused tests:
 
 ```bash
-poetry run pytest test/ripper/ripperlib/test_database.py
-poetry run pytest test/ripper/rippergui/test_mainview.py -m qt
+uv run pytest test/ripper/ripperlib/test_database.py
+uv run pytest test/ripper/rippergui/test_mainview.py -m qt
 ```
 
 Run lint, formatting, and type checks:
 
 ```bash
-poetry run ruff check .
-poetry run ruff format --check .
-poetry run mypy
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
 ```
 
 Run the project pre-commit helper:
 
 ```bash
-poetry run python scripts/pre-commit.py
+uv run python scripts/pre-commit.py
 ```
 
 The pre-commit helper runs ruff (lint + format check), mypy, and pytest in that order.

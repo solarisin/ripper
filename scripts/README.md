@@ -98,8 +98,8 @@ git commit -m "Your commit message"
 
 ## Requirements
 
-- Poetry must be installed and configured
-- All project dependencies must be installed via `poetry install`
+- [uv](https://docs.astral.sh/uv/) must be installed
+- All project dependencies must be installed via `uv sync`
 - The scripts must be run from the project root directory
 
 ## Exit Codes
