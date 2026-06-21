@@ -89,14 +89,13 @@ class SheetDataCache:
         requested_range: CellRange,
     ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
         """Serve a (resolved, bounded) range from cache, fetching only the missing sub-ranges."""
-        cached_ranges = self._get_cached_ranges(spreadsheet_id, sheet_name)
-
-        # Open-ended ranges (A:Z) are resolved to a grid-sized rectangle far larger than the
-        # actual data, so they can't use the bounded "must fully contain" cache check without
-        # thrashing. Handle them separately: serve whatever is cached in the region, otherwise
-        # fetch once and store under the data's *actual* extent.
+        # Open-ended ranges (A:Z) resolve to a grid-sized rectangle far larger than the actual
+        # data and can't be soundly satisfied from the bounded cache, so handle them separately
+        # (always fetch fresh; see _load_open_ended).
         if self._is_open_ended(range_str):
-            return self._load_open_ended(service, spreadsheet_id, sheet_name, range_str, requested_range, cached_ranges)
+            return self._load_open_ended(service, spreadsheet_id, sheet_name, range_str, requested_range)
+
+        cached_ranges = self._get_cached_ranges(spreadsheet_id, sheet_name)
 
         # Check if we can satisfy the request entirely from cache
         if RangeOptimizer.can_satisfy_from_cache(requested_range, cached_ranges):
@@ -145,22 +144,17 @@ class SheetDataCache:
         sheet_name: str,
         range_str: str,
         requested_range: CellRange,
-        cached_ranges: list[CachedRange],
     ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
-        """Serve an open-ended range (e.g. A:Z) from cache, or fetch once and cache it.
+        """Fetch an open-ended range (e.g. A:Z) fresh, caching only its actual extent.
 
-        The cache holds the actual data extent; an open-ended request means "everything in
-        these columns", so any cached data in the region IS the answer (freshness is handled
-        by modifiedTime-based invalidation in store_spreadsheet_properties). On a miss we fetch
-        the resolved rectangle once and store it under the data's actual extent (padded to a
-        rectangle) so it isn't later flagged as an incomplete grid-sized range and re-fetched.
+        Open-ended completeness cannot be inferred from arbitrary cached overlap: a cached
+        bounded range (say A1:B2) does NOT prove the rest of A:Z is cached, and a wider
+        overlapping range could pull in columns outside the request. So we always fetch the
+        resolved rectangle once (correct for growing data) and store it under the data's
+        *actual* extent, padded to a complete rectangle so it isn't later mis-flagged as an
+        incomplete grid-sized range. This keeps the cache sound and still lets bounded
+        sub-range requests be served from the stored extent.
         """
-        overlapping = RangeOptimizer.find_overlapping_cached_ranges(requested_range, cached_ranges)
-        if overlapping:
-            bounding_box = self._bounding_box(overlapping)
-            data = self._combine_range_data(spreadsheet_id, sheet_name, bounding_box, overlapping, {})
-            return self._finalize(data, range_str), [(LoadSource.DATABASE, range_str)]
-
         from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
 
         range_notation = f"{sheet_name}!{requested_range.to_a1_notation()}"
@@ -168,15 +162,6 @@ class SheetDataCache:
         if data:
             self._store_actual_extent(spreadsheet_id, sheet_name, requested_range, data)
         return self._finalize(data, range_str), [(LoadSource.API, range_str)]
-
-    @staticmethod
-    def _bounding_box(ranges: list[CachedRange]) -> CellRange:
-        """Return the smallest CellRange containing all of the given cached ranges."""
-        start_row = min(r.range_obj.start_row for r in ranges)
-        start_col = min(r.range_obj.start_col for r in ranges)
-        end_row = max(r.range_obj.end_row for r in ranges)
-        end_col = max(r.range_obj.end_col for r in ranges)
-        return CellRange(start_row, start_col, end_row, end_col)
 
     def _store_actual_extent(
         self, spreadsheet_id: str, sheet_name: str, requested_range: CellRange, data: SheetData
