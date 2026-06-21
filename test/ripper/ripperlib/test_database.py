@@ -144,19 +144,16 @@ class TestDatabaseIntegration(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.db.store_sheet_properties("nonexistent_spreadsheet", SheetProperties.from_api_result(metadata))
 
-    def test_db_singleton_is_lazy_and_memoized(self) -> None:
-        """Accessing `Db` constructs the singleton lazily and returns the same instance (#33)."""
+    def test_db_singleton_is_lazy_proxy(self) -> None:
+        """`Db` is a lazy proxy so imports don't construct it; calls forward to a real RipperDb (#33)."""
         import ripper.ripperlib.database as database_module
 
-        self.assertIs(database_module.Db, database_module.Db)
-        self.assertIsInstance(database_module.Db, RipperDb)
-
-    def test_database_module_unknown_attribute_raises(self) -> None:
-        """The module __getattr__ only resolves `Db`; other names raise AttributeError (#33)."""
-        import ripper.ripperlib.database as database_module
-
-        with self.assertRaises(AttributeError):
-            _ = database_module.nonexistent_attribute
+        # The module-level Db is the proxy, not an eagerly-built RipperDb.
+        self.assertIsInstance(database_module.Db, database_module._LazyDb)
+        # Forwarded attribute access reaches a real RipperDb (constructed on first use).
+        self.assertIsInstance(database_module.Db.generate_db_identifier(), str)
+        # The underlying instance is memoized.
+        self.assertIs(database_module.Db._resolve(), database_module.Db._resolve())
 
     def test_get_thumbnail_not_found(self) -> None:
         # Test retrieving thumbnail for a spreadsheet that exists but has no thumbnail data

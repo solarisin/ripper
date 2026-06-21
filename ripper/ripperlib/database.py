@@ -1184,25 +1184,32 @@ class RipperDb:
             return False
 
 
-# Application-wide singleton, constructed lazily on first access to `Db` so that merely
-# importing this module has no filesystem/DB side effects (important for test isolation).
-# Consumers keep using `from ripper.ripperlib.database import Db` unchanged.
-_db_singleton: Optional[RipperDb] = None
+class _LazyDb:
+    """Lazy proxy for the application-wide ``RipperDb`` singleton.
+
+    The real ``RipperDb`` (which opens a connection, creates directories and runs migrations)
+    is constructed on first *use*, not when this module — or any consumer doing
+    ``from ripper.ripperlib.database import Db`` — is imported. This keeps imports free of
+    filesystem/DB side effects (important for test isolation) while leaving every existing
+    ``Db.<method>()`` call site unchanged.
+    """
+
+    def __init__(self) -> None:
+        self._instance: Optional[RipperDb] = None
+
+    def _resolve(self) -> RipperDb:
+        if self._instance is None:
+            self._instance = RipperDb()
+        return self._instance
+
+    def __getattr__(self, name: str) -> Any:
+        # Only reached for attributes not defined on the proxy itself; forward to the real Db.
+        return getattr(self._resolve(), name)
+
 
 if TYPE_CHECKING:
-    # Let static checkers treat the module-level `Db` as a RipperDb (its runtime type).
+    # Let static checkers treat the module-level `Db` as a RipperDb (its runtime behaviour
+    # via the proxy is attribute-identical).
     Db: RipperDb
-
-
-def _get_db_singleton() -> RipperDb:
-    global _db_singleton
-    if _db_singleton is None:
-        _db_singleton = RipperDb()
-    return _db_singleton
-
-
-def __getattr__(name: str) -> Any:
-    # PEP 562 module-level attribute access: construct the singleton on first use of `Db`.
-    if name == "Db":
-        return _get_db_singleton()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+else:
+    Db = _LazyDb()
