@@ -126,6 +126,24 @@ class TestDatabaseIntegration(unittest.TestCase):
         retrieved_metadata = self.db.get_sheet_properties_of_spreadsheet("non_existent_id")
         self.assertEqual(len(retrieved_metadata), 0)
 
+    def test_store_sheet_properties_raises_for_missing_spreadsheet(self) -> None:
+        """store_sheet_properties must reject a parent spreadsheet absent from the DB (#32)."""
+        metadata: Dict[str, Any] = {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": 1,
+                        "index": 0,
+                        "title": "Sheet 1",
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 100, "columnCount": 26},
+                    }
+                }
+            ]
+        }
+        with self.assertRaises(ValueError):
+            self.db.store_sheet_properties("nonexistent_spreadsheet", SheetProperties.from_api_result(metadata))
+
     def test_get_thumbnail_not_found(self) -> None:
         # Test retrieving thumbnail for a spreadsheet that exists but has no thumbnail data
         sid_no_thumbnail = "spreadsheet_no_thumb"

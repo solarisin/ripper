@@ -310,9 +310,11 @@ class RipperDb:
         with self._transaction():
             c = self._conn.cursor()
 
-            # Check if spreadsheet exists
+            # Check if spreadsheet exists. SELECT leaves cursor.rowcount at -1, so the
+            # count must be read from the result row (matching store_spreadsheet_thumbnail).
             c.execute("SELECT COUNT(*) FROM spreadsheets WHERE spreadsheet_id = ?", (spreadsheet_id,))
-            if c.rowcount == 0:
+            row = c.fetchone()
+            if row is None or row[0] == 0:
                 raise ValueError(
                     f"""Spreadsheet {spreadsheet_id} not found in database. Cannot store sheet metadata without a
                     spreadsheet."""
