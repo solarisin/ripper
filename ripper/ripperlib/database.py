@@ -1192,19 +1192,44 @@ class _LazyDb:
     ``from ripper.ripperlib.database import Db`` — is imported. This keeps imports free of
     filesystem/DB side effects (important for test isolation) while leaving every existing
     ``Db.<method>()`` call site unchanged.
+
+    Both reads and writes are forwarded to the underlying instance so that, e.g.,
+    ``Db._db_file_path = ...`` mutates the real RipperDb rather than silently diverging on the
+    proxy. Tests can inject an isolated database with ``Db._instance = RipperDb(tmp_path)``
+    (the only attribute kept on the proxy itself), guaranteeing the real user database is
+    never touched.
     """
 
     def __init__(self) -> None:
-        self._instance: Optional[RipperDb] = None
+        # Set via object.__setattr__ so it lands on the proxy, not a forwarded RipperDb.
+        object.__setattr__(self, "_instance", None)
 
     def _resolve(self) -> RipperDb:
-        if self._instance is None:
-            self._instance = RipperDb()
-        return self._instance
+        instance: Optional[RipperDb] = object.__getattribute__(self, "_instance")
+        if instance is None:
+            instance = RipperDb()
+            object.__setattr__(self, "_instance", instance)
+        return instance
 
     def __getattr__(self, name: str) -> Any:
         # Only reached for attributes not defined on the proxy itself; forward to the real Db.
         return getattr(self._resolve(), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # `_instance` is the proxy's own backing slot (allows test injection); everything else
+        # is forwarded to the underlying RipperDb so assignments don't diverge from reads.
+        if name == "_instance":
+            object.__setattr__(self, "_instance", value)
+        else:
+            setattr(self._resolve(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        # Forward deletes to the underlying too, so set/delete stay symmetric (e.g. mock.patch
+        # sets an attribute then deletes it on teardown).
+        if name == "_instance":
+            object.__delattr__(self, "_instance")
+        else:
+            delattr(self._resolve(), name)
 
 
 if TYPE_CHECKING:

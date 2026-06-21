@@ -10,29 +10,15 @@ from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProper
 
 
 @pytest.fixture(autouse=True)
-def setup_database(tmp_path, monkeypatch):
-    """Setup a clean database for each test."""
-    # Create a test database file in a temporary directory
-    test_db_path = str(tmp_path / "test.db")
+def setup_database():
+    """Provide the global Db, which the root conftest isolates to a fresh temp database.
 
-    # Store the original database path
-    original_db_file_path = Db._db_file_path
-
-    # Set the database path to our test path
-    Db._db_file_path = test_db_path
-
-    # Clean any existing data
-    Db.clean()
-    # Initialize the database
-    Db.open()
+    Previously this fixture mutated ``Db._db_file_path`` and called ``Db.clean()``/``open()``
+    on the global singleton; with the lazy Db proxy that risked operating on the real
+    ``ripper.db``. The ``_isolate_global_db`` fixture in test/conftest.py now points Db at a
+    per-test temp database, so no path mutation or global cleanup is needed here.
+    """
     yield Db
-    # Close the database connection
-    Db.close()
-    # Clean the database (but don't delete the file)
-    Db.clean()
-
-    # Restore the original database path
-    Db._db_file_path = original_db_file_path
 
 
 @pytest.mark.qt
