@@ -64,13 +64,7 @@ class TillerDataProcessor:
         if is_parenthesized:
             text = text[1:-1]
 
-        cleaned = (
-            text.replace("$", "")
-            .replace(",", "")
-            .replace(" ", "")
-            .replace("\u2212", "-")
-            .strip()
-        )
+        cleaned = text.replace("$", "").replace(",", "").replace(" ", "").replace("\u2212", "-").strip()
         if not cleaned:
             return None
 

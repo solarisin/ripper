@@ -402,7 +402,7 @@ class AuthManager(QObject):
             Dictionary containing user information, or None if retrieval fails
         """
         try:
-            user_info_service = cast(Optional[UserInfoService], self.create_userinfo_service(cred))
+            user_info_service = self.create_userinfo_service(cred)
             if user_info_service:
                 result = cast(Dict[str, Any], user_info_service.userinfo().get().execute())
                 return result
@@ -579,7 +579,7 @@ class AuthManager(QObject):
         service = build("drive", "v3", credentials=cred)
         return cast(DriveService, cast(Resource, service))
 
-    def create_userinfo_service(self, cred: Optional[Credentials] = None) -> Optional[Resource]:
+    def create_userinfo_service(self, cred: Optional[Credentials] = None) -> Optional[UserInfoService]:
         """
         Create an authenticated Google OAuth2 userinfo API service.
 
@@ -594,4 +594,4 @@ class AuthManager(QObject):
         if not cred:
             return None
         service = build("oauth2", "v2", credentials=cred)
-        return cast(Resource, service)
+        return cast(UserInfoService, cast(Resource, service))

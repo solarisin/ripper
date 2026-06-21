@@ -4,13 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from loguru import logger
 
 from ripper.rippergui.dashboard.models import Dashboard, DataSource, DataSourceType
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.defs import SheetData, SheetsService
+
+
+@runtime_checkable
+class SheetsServiceProvider(Protocol):
+    """Structural type for anything that can build a Sheets service (e.g. ``AuthManager``)."""
+
+    def create_sheets_service(self) -> SheetsService | None: ...
+
 
 REQUIRED_TRANSACTION_COLUMNS = frozenset({"date", "description", "category", "amount", "account"})
 
@@ -72,7 +80,7 @@ class DashboardDataService:
 
     def __init__(
         self,
-        auth_manager: AuthManager | None = None,
+        auth_manager: SheetsServiceProvider | None = None,
         retrieve_sheet_data_fn: Callable[[SheetsService, str, str], tuple[SheetData, list[tuple[Any, str]]]]
         | None = None,
         records_provider: Callable[[str, str], list[dict[str, Any]] | None] | None = None,

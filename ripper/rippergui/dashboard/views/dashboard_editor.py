@@ -776,8 +776,9 @@ class DashboardEditor(QWidget):
             return
 
         selected_item = list_widget.currentItem()
+        # Qt stubs type currentItem() as non-optional, but it returns None when nothing is selected.
         if selected_item is None:
-            return
+            return  # type: ignore[unreachable]
         rec = selected_item.data(Qt.ItemDataRole.UserRole)
 
         data_source = DataSource(

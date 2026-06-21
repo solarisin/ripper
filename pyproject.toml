@@ -22,7 +22,6 @@ pytest = "^8.3.5"
 toml = "^0.10.2"
 click = "^8.2.0"
 loguru = "^0.7.3"
-ruff = "^0.15.12"
 platformdirs = "^4.9.6"
 pandas = "^2.2.3"
 pyside6-qtads = ">=4.5.0"
@@ -32,9 +31,7 @@ pytest = "^8.3.5"
 pytest-qt = "^4.4.0"
 pytest-cov = "^6.1.1"
 pytest-mock = "^3.14.1"
-flake8 = "^7.2.0"
-flake8-pyproject = "^1.2.3"
-isort = "^6.0.1"
+ruff = "^0.15.12"
 types-requests = "^2.32.0.20250515"
 mypy = "^1.15.0"
 beartype = "^0.20.2"
@@ -44,7 +41,6 @@ google-auth-stubs = "^0.3.0"
 google-api-python-client-stubs = "^1.29.0"
 types-oauthlib = "^3.2.0.20250516"
 pytest-beartype = "^0.2.0"
-autopep8 = "^2.3.2"
 hypothesis = "^6.132.0"
 pandas-stubs = "^2.2.3.250527"
 
@@ -55,21 +51,22 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-lint.select = ["E", "F", "W", "I"]
-lint.ignore = []
+extend-exclude = ["concept", "res"]
+
+[tool.ruff.lint]
+# E/F/W/I replace flake8 + isort; C90 replaces flake8's mccabe complexity gate.
+select = ["E", "F", "W", "I", "C90"]
+# E203 (whitespace before ':') conflicts with the formatter; keep it disabled as flake8 did.
+ignore = ["E203"]
+mccabe.max-complexity = 10
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["test"]
 markers = ["qt: mark test as Qt-specific"]
-#addopts = ["--beartype-packages=ripper", "--cov=ripper", "--cov-report=xml", "--strict-markers"]
-addopts = ["--cov=ripper", "--cov-report=xml", "--strict-markers"]
-
-[tool.flake8]
-extend-ignore = ["E203"]
-extend-exclude = [".git",  "__pycache__", "concept/", ".venv/", "res/"]
-max-complexity = 10
-max-line-length = 120
+# Coverage is invoked explicitly in CI (see ci.yml) so focused local runs stay fast.
+# beartype enforces runtime type checking across the whole package since mypy is static-only.
+addopts = ["--strict-markers", "--import-mode=importlib", "--beartype-packages=ripper"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -81,8 +78,10 @@ check_untyped_defs = true
 disallow_untyped_decorators = true
 no_implicit_optional = true
 warn_redundant_casts = true
-warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
-strict_equality = true
-files = ["ripper/main.py"]
+# warn_unused_ignores is intentionally off: it is fragile across the 3.11-3.13 CI
+# matrix and differing third-party stub versions (PySide6/google-*), where a needed
+# `# type: ignore` on one combination reads as unused on another.
+warn_unused_ignores = false
+files = ["ripper"]

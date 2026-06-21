@@ -13,6 +13,9 @@ from ripper.rippergui.widgets.accordion_widget import (
     ClickableHeader,
 )
 
+# These tests instantiate Qt widgets and require a QApplication.
+pytestmark = pytest.mark.qt
+
 
 @pytest.fixture(scope="session", autouse=True)
 def qapp():

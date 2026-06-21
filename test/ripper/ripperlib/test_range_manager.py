@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """Tests for the range_manager module.
 
 This module contains comprehensive tests for the range management functionality,
 including CellRange operations and RangeOptimizer functionality.
 """
+
+from __future__ import annotations
 
 import random
 from datetime import datetime, timezone

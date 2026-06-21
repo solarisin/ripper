@@ -44,6 +44,7 @@ def sample_widget_config():
     )
 
 
+@pytest.mark.qt
 class TestSpendingTrendWidget:
     """Test cases for SpendingTrendWidget."""
 
@@ -83,6 +84,7 @@ class TestSpendingTrendWidget:
         widget.update_data()
 
 
+@pytest.mark.qt
 class TestCategoryBreakdownWidget:
     """Test cases for CategoryBreakdownWidget."""
 
@@ -108,6 +110,7 @@ class TestCategoryBreakdownWidget:
         assert widget.chart_view is not None
 
 
+@pytest.mark.qt
 class TestBudgetVsActualWidget:
     """Test cases for BudgetVsActualWidget."""
 
@@ -133,6 +136,7 @@ class TestBudgetVsActualWidget:
         assert widget.chart_view is not None
 
 
+@pytest.mark.qt
 class TestTopExpensesWidget:
     """Test cases for TopExpensesWidget."""
 

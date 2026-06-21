@@ -1,16 +1,24 @@
 """Tests for dashboard view rendering from widget configs."""
 
+from unittest.mock import MagicMock
+
+import pytest
 from PySide6.QtWidgets import QLabel, QScrollArea, QSplitter
 
 from ripper.rippergui.dashboard.models import Dashboard, WidgetConfig, WidgetType
-from ripper.rippergui.dashboard.services import DashboardRefreshResult
+from ripper.rippergui.dashboard.services import DashboardDataService, DashboardRefreshResult
 from ripper.rippergui.dashboard.views.dashboard_editor import DashboardEditor
 from ripper.rippergui.dashboard.views.dashboard_view import DashboardView
 
+# These tests instantiate Qt widgets via qtbot.
+pytestmark = pytest.mark.qt
 
-class FakeDataService:
-    def refresh_dashboard(self, dashboard):
-        return DashboardRefreshResult()
+
+def _fake_data_service():
+    """A stand-in data service that satisfies the DashboardDataService type contract."""
+    service = MagicMock(spec=DashboardDataService)
+    service.refresh_dashboard.return_value = DashboardRefreshResult()
+    return service
 
 
 def test_dashboard_view_renders_widget_config(tmp_path, qtbot):
@@ -26,7 +34,7 @@ def test_dashboard_view_renders_widget_config(tmp_path, qtbot):
     )
     dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
 
-    view = DashboardView(tmp_path, data_service=FakeDataService())
+    view = DashboardView(tmp_path, data_service=_fake_data_service())
     qtbot.addWidget(view)
 
     labels = view.findChildren(QLabel)

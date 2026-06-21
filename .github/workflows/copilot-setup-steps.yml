@@ -28,13 +28,14 @@ jobs:
         python-version: 3.12
 
     - name: Install Poetry
-      run: |
-        curl -sSL https://install.python-poetry.org | python -
-        poetry config virtualenvs.create true
-        poetry config virtualenvs.in-project true
+      uses: snok/install-poetry@v1
+      with:
+        version: 2.4.1
+        virtualenvs-create: true
+        virtualenvs-in-project: true
 
     - name: Cache Poetry dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ./.venv
         key: ${{ runner.os }}-3.12-poetry-${{ hashFiles('poetry.lock') }}
@@ -43,5 +44,10 @@ jobs:
           ${{ runner.os }}-poetry-
 
     - name: Install dependencies
+      run: poetry install --with dev
+
+    - name: Smoke check (imports + CLI)
+      # Confirm the environment can import the package and run the CLI headlessly.
       run: |
-        poetry install --with dev
+        poetry run python -c "import ripper.main"
+        poetry run python -m ripper.main --help

@@ -1,6 +1,7 @@
 """Tests for dashboard data refresh services."""
 
 from datetime import datetime
+from unittest.mock import MagicMock
 
 from ripper.rippergui.dashboard.models import Dashboard, DataSource, DataSourceType, DateRange, DateRangePreset
 from ripper.rippergui.dashboard.services import DashboardDataService, validate_transaction_sheet_data
@@ -12,6 +13,11 @@ class FakeAuthManager:
 
     def create_sheets_service(self):
         return self.service
+
+
+def _fake_sheets_service():
+    """A stand-in Sheets service that satisfies the SheetsService protocol."""
+    return MagicMock()
 
 
 def make_transaction_source(source_id="source-1"):
@@ -73,7 +79,7 @@ def test_refresh_dashboard_fetches_transaction_source_once():
         )
 
     result = DashboardDataService(
-        FakeAuthManager(service=object()), retrieve_sheet_data_fn=fake_retrieve_sheet_data
+        FakeAuthManager(service=_fake_sheets_service()), retrieve_sheet_data_fn=fake_retrieve_sheet_data
     ).refresh_dashboard(dashboard)
 
     assert calls == [("spreadsheet-1", "Transactions!A1:E10")]
@@ -96,7 +102,7 @@ def test_refresh_dashboard_reports_unsupported_source():
         )
     )
 
-    result = DashboardDataService(FakeAuthManager(service=object())).refresh_dashboard(dashboard)
+    result = DashboardDataService(FakeAuthManager(service=_fake_sheets_service())).refresh_dashboard(dashboard)
 
     assert result.statuses["budget-1"].unsupported
     assert not result.statuses["budget-1"].ok

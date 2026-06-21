@@ -41,9 +41,10 @@ scripts\pre-commit.bat
 
 All scripts run the main Python implementation which performs these checks in order:
 
-1. **flake8** - Code style checking
-2. **mypy** - Type hint validation  
-3. **pytest** - Run all unit tests
+1. **ruff check** - Linting and import-order checking
+2. **ruff format --check** - Formatting check
+3. **mypy** - Type hint validation
+4. **pytest** - Run all unit tests
 
 If any check fails, the script stops and returns a non-zero exit code.
 

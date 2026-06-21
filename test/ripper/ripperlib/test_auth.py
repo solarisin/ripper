@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import Resource
 from keyring.errors import PasswordDeleteError
 
 from ripper.ripperlib.auth import (
@@ -38,8 +37,12 @@ def make_mock_creds(expired=False, valid=True, refresh_token="test_refresh_token
     return mock_cred
 
 
-# Helper: create a mock Resource
-mock_resource = create_autospec(Resource, instance=True)
+# Helper: a stand-in for a built Google API service. A plain MagicMock is used (rather
+# than create_autospec(Resource)) so it structurally satisfies the @runtime_checkable
+# service protocols (SheetsService/DriveService/UserInfoService) that beartype enforces
+# on the create_*_service() return types; an autospec of the bare Resource class lacks
+# the dynamically-added API methods those protocols require.
+mock_resource = MagicMock()
 
 
 class TestAuthState(unittest.TestCase):

@@ -1,15 +1,15 @@
 1. use the command "poetry run pytest" to run the tests
 2. use the command "poetry run mypy" to check the type hints
-3. use the command "poetry run flake8" to check the code style
-4. use the command "poetry run ruff check" to run ruff linting; use "poetry run ruff format" to fix whitespace or formatting issues
+3. use the command "poetry run ruff check ." to check linting and import order
+4. use the command "poetry run ruff format ." to fix whitespace or formatting issues (and "poetry run ruff format --check ." to verify)
 5. generated tests should be placed in the "test" directory
 6. tests that are written should never make network requests, tested code should be mocked
-7. all flake8, mypy and pytest errors should be fixed automatically when introduced in new code
+7. all ruff, mypy and pytest errors should be fixed automatically when introduced in new code
 8. all function parameters and return values should have type hints
 9. prefer typing constructs from the beartype.typing module
 10. when changes are made to the code, ensure that the tests are updated accordingly
-11. when adding tests, only start fixing flake8 or mypy errors in tests after all tests are passing, unless they are causing the tests to fail
-12. after all changes are complete run "poetry run flake8 && poetry run mypy" to validate structure. Fix any errors that arise.
+11. when adding tests, only start fixing ruff or mypy errors in tests after all tests are passing, unless they are causing the tests to fail
+12. after all changes are complete run "poetry run ruff check . && poetry run ruff format --check . && poetry run mypy" to validate structure. Fix any errors that arise.
 13. use descriptive names for functions and variables
 14. avoid using global variables, prefer passing parameters to functions
 15. avoid using mutable default arguments in function definitions
