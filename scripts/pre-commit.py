@@ -3,7 +3,7 @@
 Pre-commit script for the ripper project.
 
 This script runs all code quality checks including:
-- flake8 for code style
+- ruff for linting and formatting
 - mypy for type checking
 - pytest for tests
 
@@ -69,7 +69,8 @@ def main() -> int:
 
     # List of checks to run
     checks = [
-        (["poetry", "run", "flake8"], "Code style check (flake8)"),
+        (["poetry", "run", "ruff", "check", "."], "Lint check (ruff)"),
+        (["poetry", "run", "ruff", "format", "--check", "."], "Format check (ruff)"),
         (["poetry", "run", "mypy"], "Type checking (mypy)"),
         (["poetry", "run", "pytest"], "Unit tests (pytest)"),
     ]
