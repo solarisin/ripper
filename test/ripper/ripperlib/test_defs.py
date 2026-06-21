@@ -182,13 +182,21 @@ class TestAppDataDir(unittest.TestCase):
     """Test cases for the get_app_data_dir function."""
 
     @patch("platformdirs.user_data_dir")
-    def test_get_app_data_dir(self, mock_user_data_dir):
-        """Test that get_app_data_dir calls platformdirs.user_data_dir correctly."""
+    def test_get_app_data_dir_does_not_create_by_default(self, mock_user_data_dir):
+        """By default the path is resolved without creating the directory (#33)."""
         mock_user_data_dir.return_value = "/fake/app/data/dir"
         data_dir = get_app_data_dir()
 
-        mock_user_data_dir.assert_called_once_with(appname="ripper", ensure_exists=True)
+        mock_user_data_dir.assert_called_once_with(appname="ripper", ensure_exists=False)
         self.assertEqual(data_dir, "/fake/app/data/dir")
+
+    @patch("platformdirs.user_data_dir")
+    def test_get_app_data_dir_ensure_exists_passthrough(self, mock_user_data_dir):
+        """ensure_exists=True is forwarded so callers can create the directory on demand."""
+        mock_user_data_dir.return_value = "/fake/app/data/dir"
+        get_app_data_dir(ensure_exists=True)
+
+        mock_user_data_dir.assert_called_once_with(appname="ripper", ensure_exists=True)
 
 
 class TestSheetProperties(unittest.TestCase):

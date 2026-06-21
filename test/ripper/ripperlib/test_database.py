@@ -144,6 +144,20 @@ class TestDatabaseIntegration(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.db.store_sheet_properties("nonexistent_spreadsheet", SheetProperties.from_api_result(metadata))
 
+    def test_db_singleton_is_lazy_and_memoized(self) -> None:
+        """Accessing `Db` constructs the singleton lazily and returns the same instance (#33)."""
+        import ripper.ripperlib.database as database_module
+
+        self.assertIs(database_module.Db, database_module.Db)
+        self.assertIsInstance(database_module.Db, RipperDb)
+
+    def test_database_module_unknown_attribute_raises(self) -> None:
+        """The module __getattr__ only resolves `Db`; other names raise AttributeError (#33)."""
+        import ripper.ripperlib.database as database_module
+
+        with self.assertRaises(AttributeError):
+            _ = database_module.nonexistent_attribute
+
     def test_get_thumbnail_not_found(self) -> None:
         # Test retrieving thumbnail for a spreadsheet that exists but has no thumbnail data
         sid_no_thumbnail = "spreadsheet_no_thumb"

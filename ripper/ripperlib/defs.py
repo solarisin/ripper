@@ -58,17 +58,23 @@ class UserInfoService(Protocol):
 SheetData = list[list[Any]]
 
 
-def get_app_data_dir() -> str:
+def get_app_data_dir(ensure_exists: bool = False) -> str:
     """
     Get the application data directory for the current user using platformdirs.
+
+    Args:
+        ensure_exists: When True, create the directory if it does not exist. Defaults to
+            False so merely resolving the path (e.g. at import) has no filesystem side effect.
 
     Returns:
         The path to the application data directory.
     """
     # Use platformdirs to get the user data directory
-    return platformdirs.user_data_dir(appname="ripper", ensure_exists=True)
+    return platformdirs.user_data_dir(appname="ripper", ensure_exists=ensure_exists)
 
 
+# Resolved at import without creating directories; the directory is created lazily on use
+# (the DB connection's open() and the loguru file sink both create it as needed).
 LOG_FILE_PATH = Path(get_app_data_dir()) / "ripper.log"
 
 DRIVE_FILE_FIELDS: frozenset[str] = frozenset(

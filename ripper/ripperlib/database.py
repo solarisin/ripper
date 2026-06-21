@@ -13,6 +13,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from beartype.typing import Any, Generator, Optional, Tuple
 from loguru import logger
@@ -32,14 +33,15 @@ class RipperDb:
     Handles connection management, schema creation, and CRUD operations for the ripper application.
     """
 
-    def __init__(self, db_file_path: str = str(default_db_path())) -> None:
+    def __init__(self, db_file_path: Optional[str] = None) -> None:
         """
         Initialize the database implementation and open a connection.
 
         Args:
-            db_file_path (str): Path to the database file.
+            db_file_path (str): Path to the database file. Defaults to the application data
+                location, resolved here (not at import) so the default path is computed lazily.
         """
-        self._db_file_path = db_file_path
+        self._db_file_path = db_file_path if db_file_path is not None else str(default_db_path())
         self._db_identifier = self.generate_db_identifier()
         logger.info(
             f"Creating new RipperDb instance {self._db_identifier} targeting database file: {str(self._db_file_path)}"
@@ -1182,5 +1184,25 @@ class RipperDb:
             return False
 
 
-# Global singleton instance for application-wide use
-Db = RipperDb()
+# Application-wide singleton, constructed lazily on first access to `Db` so that merely
+# importing this module has no filesystem/DB side effects (important for test isolation).
+# Consumers keep using `from ripper.ripperlib.database import Db` unchanged.
+_db_singleton: Optional[RipperDb] = None
+
+if TYPE_CHECKING:
+    # Let static checkers treat the module-level `Db` as a RipperDb (its runtime type).
+    Db: RipperDb
+
+
+def _get_db_singleton() -> RipperDb:
+    global _db_singleton
+    if _db_singleton is None:
+        _db_singleton = RipperDb()
+    return _db_singleton
+
+
+def __getattr__(name: str) -> Any:
+    # PEP 562 module-level attribute access: construct the singleton on first use of `Db`.
+    if name == "Db":
+        return _get_db_singleton()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
