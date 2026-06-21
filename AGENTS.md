@@ -33,7 +33,7 @@ Notes:
 
 - `pyproject.toml` supports Python `>=3.11,<3.14`; mypy is configured with `python_version = "3.12"`.
 - Pytest is configured with `testpaths = ["test"]`, `pythonpath = ["."]`, `--import-mode=importlib`, beartype runtime checking (`--beartype-packages=ripper`), and strict markers. Coverage is invoked explicitly in CI rather than in default `addopts`.
-- The `qt` pytest marker is declared for Qt-specific tests; CI runs `-m "not qt" -p no:pytest_qt`.
+- The `qt` pytest marker is declared for Qt-specific tests; CI runs `-m "not qt"` (with the Qt system libraries installed and the offscreen platform).
 - ruff is the single tool for linting, import sorting, and formatting (it replaces flake8, isort, and black).
 - Mypy checks the whole `ripper` package because `[tool.mypy].files = ["ripper"]`, and runs in CI.
 - The pre-commit script runs ruff (lint + format check), mypy, and pytest in that order.

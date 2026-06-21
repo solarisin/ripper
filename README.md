@@ -152,8 +152,9 @@ poetry run python scripts/pre-commit.py
 The pre-commit helper runs ruff (lint + format check), mypy, and pytest in that order.
 
 GUI tests that require a display are marked with the `qt` marker. CI runs `pytest -m "not qt"`
-(with `-p no:pytest_qt`) to skip them on the headless runner while still running the rest of
-the GUI/dashboard test tree.
+to skip them on the headless runner while still running the rest of the GUI/dashboard test
+tree (which imports PySide6, so CI installs the Qt system libraries and runs headless via
+`QT_QPA_PLATFORM=offscreen`).
 
 ## Current Notes
 

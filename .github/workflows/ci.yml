@@ -44,6 +44,14 @@ jobs:
     - name: Install dependencies
       run: poetry install --with dev
 
+    - name: Install Qt system libraries
+      # PySide6 needs these shared libs to even import its GUI modules (e.g. libEGL.so.1).
+      # The non-Qt GUI/dashboard tests transitively import the GUI stack, and tests run
+      # headless via QT_QPA_PLATFORM=offscreen (set in test/conftest.py).
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
     - name: Lint (ruff)
       run: |
         poetry run ruff check .
@@ -53,10 +61,10 @@ jobs:
       run: poetry run mypy
 
     - name: Run tests
-      # Qt GUI tests are excluded via the `qt` marker; pytest-qt is disabled so its
-      # plugin doesn't crash collection on the headless runner (poetry.lock stays intact).
+      # Qt GUI tests are excluded via the `qt` marker. poetry.lock stays intact (pytest-qt
+      # is not removed); the offscreen platform + Qt system libs keep collection healthy.
       run: >-
-        poetry run pytest -m "not qt" -p no:pytest_qt
+        poetry run pytest -m "not qt"
         --cov=ripper --cov-report=xml --cov-fail-under=40
 
     - name: Upload coverage report
