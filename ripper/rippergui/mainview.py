@@ -205,8 +205,10 @@ class MainView(QMainWindow):
         self._table_dock: ads.CDockWidget | None = None
         # ID of the data source currently displayed in the dock
         self._active_data_source_id: int | None = None
-        # Map (spreadsheet_id, sheet_name) -> TransactionTableViewWidget for dashboard data.
-        self._table_widgets: dict[tuple[str, str], table_view.TransactionTableViewWidget] = {}
+        # Map (spreadsheet_id, sheet_name, range_a1) -> TransactionTableViewWidget for dashboard
+        # data. range_a1 is part of the key so two sources on the same tab but different ranges
+        # don't collide and serve each other's rows.
+        self._table_widgets: dict[tuple[str, str, str], table_view.TransactionTableViewWidget] = {}
         # Keeps Python references to running background workers so they aren't GC'd before finishing.
         self._active_workers: set[_DataFetchWorker] = set()
         # Dock manager and dashboard dock (fully assigned in create_main_layout / _init_dashboard_dock)
@@ -327,7 +329,7 @@ class MainView(QMainWindow):
                 self, "Dashboard Error", "Failed to initialize dashboard. Some features may not be available."
             )
 
-    def _get_records_for_dashboard(self, spreadsheet_id: str, sheet_name: str) -> list[dict] | None:
+    def _get_records_for_dashboard(self, spreadsheet_id: str, sheet_name: str, range_a1: str) -> list[dict] | None:
         """Return filtered records from the loaded table widget for a data source.
 
         Called by :class:`DashboardDataService` when refreshing dashboard data.
@@ -337,11 +339,13 @@ class MainView(QMainWindow):
         Args:
             spreadsheet_id: The spreadsheet ID to look up.
             sheet_name: The sheet tab name to look up.
+            range_a1: The A1 range of the source; part of the key so two sources on
+                the same tab with different ranges resolve to their own widget.
 
         Returns:
             List of filtered record dicts or ``None`` if not loaded yet.
         """
-        widget = self._table_widgets.get((spreadsheet_id, sheet_name))
+        widget = self._table_widgets.get((spreadsheet_id, sheet_name, range_a1))
         if widget is None:
             return None
         return widget.get_filtered_records()
@@ -456,6 +460,10 @@ class MainView(QMainWindow):
                     "spreadsheet_id": spreadsheet_id,
                     "spreadsheet_name": record.get("spreadsheet_name", ""),
                     "sheet_name": sheet_name,
+                    # Include the saved range so the dashboard provider key
+                    # (spreadsheet_id, sheet_name, range_a1) matches; otherwise loaded
+                    # sources are stored under "" and the provider always misses (#73 review).
+                    "sheet_range": range_a1,
                 },
             )
             if stamp_on_success:
@@ -788,9 +796,14 @@ class MainView(QMainWindow):
         table_widget = table_view.TransactionTableViewWidget(records)
         container_layout.addWidget(table_widget)
 
-        # Track by (spreadsheet_id, sheet_name) so the dashboard can access filtered rows.
+        # Track by (spreadsheet_id, sheet_name, range_a1) so the dashboard can access filtered
+        # rows for the exact source range (not just the tab).
         if source_info:
-            key = (source_info.get("spreadsheet_id", ""), source_info.get("sheet_name", ""))
+            key = (
+                source_info.get("spreadsheet_id", ""),
+                source_info.get("sheet_name", ""),
+                source_info.get("sheet_range", ""),
+            )
             if key[0] and key[1]:
                 self._table_widgets[key] = table_widget
                 table_widget.destroyed.connect(

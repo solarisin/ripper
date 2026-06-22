@@ -88,6 +88,63 @@ def test_refresh_dashboard_fetches_transaction_source_once():
     assert result.data["source-1"][0]["description"] == "Coffee"
 
 
+def test_refresh_distinguishes_sources_on_same_tab_by_range():
+    """Two sources on the same tab but different ranges must get their own records (#73, bug A)."""
+    dashboard = Dashboard.create_new("Finance")
+    ds_a = make_transaction_source("source-a")
+    ds_b = make_transaction_source("source-b")
+    ds_b.range_a1 = "G1:K10"
+    dashboard.add_data_source(ds_a)
+    dashboard.add_data_source(ds_b)
+
+    records_by_range = {
+        "A1:E10": [
+            {"date": "2024-06-01", "description": "A-coffee", "category": "Food", "amount": "-5", "account": "Visa"}
+        ],
+        "G1:K10": [
+            {"date": "2024-06-02", "description": "B-lunch", "category": "Food", "amount": "-9", "account": "Visa"}
+        ],
+    }
+    seen_args = []
+
+    def provider(spreadsheet_id, sheet_name, range_a1):
+        seen_args.append((spreadsheet_id, sheet_name, range_a1))
+        return records_by_range[range_a1]
+
+    result = DashboardDataService(
+        FakeAuthManager(service=_fake_sheets_service()), records_provider=provider
+    ).refresh_dashboard(dashboard)
+
+    assert ("spreadsheet-1", "Transactions", "A1:E10") in seen_args
+    assert ("spreadsheet-1", "Transactions", "G1:K10") in seen_args
+    assert result.data["source-a"][0]["description"] == "A-coffee"
+    assert result.data["source-b"][0]["description"] == "B-lunch"
+
+
+def test_refresh_succeeds_from_provider_without_creating_service():
+    """Sources satisfiable from pre-fetched records refresh without authenticating (#73, bug B)."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source())
+
+    class CountingAuth:
+        def __init__(self):
+            self.calls = 0
+
+        def create_sheets_service(self):
+            self.calls += 1
+            return None
+
+    auth = CountingAuth()
+    records = [{"date": "2024-06-01", "description": "Coffee", "category": "Food", "amount": "-5", "account": "Visa"}]
+
+    result = DashboardDataService(auth, records_provider=lambda s, sh, r: records).refresh_dashboard(dashboard)
+
+    assert result.statuses["source-1"].ok
+    assert result.statuses["source-1"].row_count == 1
+    # No service was created because the provider satisfied the source.
+    assert auth.calls == 0
+
+
 def test_refresh_dashboard_reports_unsupported_source():
     dashboard = Dashboard.create_new("Finance")
     dashboard.add_data_source(

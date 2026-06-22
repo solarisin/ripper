@@ -37,7 +37,7 @@ class DashboardView(QWidget):
         storage_dir: Path,
         parent: Optional[QWidget] = None,
         data_service: Optional[DashboardDataService] = None,
-        records_fn: Optional[Callable[[str, str], list[dict[str, Any]] | None]] = None,
+        records_fn: Optional[Callable[[str, str, str], list[dict[str, Any]] | None]] = None,
     ):
         """Initialize the dashboard view.
 
@@ -45,8 +45,8 @@ class DashboardView(QWidget):
             storage_dir: Directory where dashboard files are stored
             parent: Parent widget
             data_service: Optional pre-configured data service (used in tests).
-            records_fn: Optional callable ``(spreadsheet_id, sheet_name) ->
-                list[dict] | None`` forwarded to :class:`DashboardDataService`
+            records_fn: Optional callable ``(spreadsheet_id, sheet_name, range_a1)
+                -> list[dict] | None`` forwarded to :class:`DashboardDataService`
                 as its ``records_provider``.  Ignored when *data_service* is
                 supplied directly.
         """
