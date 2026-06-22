@@ -126,6 +126,91 @@ class TestDatabaseIntegration(unittest.TestCase):
         retrieved_metadata = self.db.get_sheet_properties_of_spreadsheet("non_existent_id")
         self.assertEqual(len(retrieved_metadata), 0)
 
+    def _store_single_grid_sheet(self, spreadsheet_id: str, sheet_id: int, title: str) -> None:
+        """Store a spreadsheet with one GRID tab of the given sheetId/title."""
+        self.db.store_spreadsheet_properties(
+            spreadsheet_id,
+            SpreadsheetProperties(
+                {
+                    "id": spreadsheet_id,
+                    "name": spreadsheet_id,
+                    "modifiedTime": "2024-01-01T00:00:00Z",
+                    "createdTime": "2024-01-01T00:00:00Z",
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
+        metadata: Dict[str, Any] = {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        "index": 0,
+                        "title": title,
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 10, "columnCount": 5},
+                    }
+                }
+            ]
+        }
+        self.db.store_sheet_properties(spreadsheet_id, SheetProperties.from_api_result(metadata))
+
+    def test_sheets_with_colliding_sheetid_across_spreadsheets(self) -> None:
+        """Two spreadsheets whose tabs share a sheetId must keep independent metadata (#70)."""
+        # The default first tab of every spreadsheet is sheetId 0, so collisions are common.
+        self._store_single_grid_sheet("book-a", 0, "A tab")
+        self._store_single_grid_sheet("book-b", 0, "B tab")
+
+        a = self.db.get_sheet_properties_of_spreadsheet("book-a")
+        b = self.db.get_sheet_properties_of_spreadsheet("book-b")
+
+        self.assertEqual([s.title for s in a], ["A tab"])
+        self.assertEqual([s.title for s in b], ["B tab"])
+        # Grid dimensions stay attached to the correct spreadsheet's tab.
+        self.assertEqual(a[0].grid.row_count, 10)
+        self.assertEqual(b[0].grid.column_count, 5)
+
+    def test_deleting_one_spreadsheet_keeps_other_colliding_sheet(self) -> None:
+        """Re-storing one spreadsheet's sheets must not disturb another's identical sheetId (#70)."""
+        self._store_single_grid_sheet("book-a", 0, "A tab")
+        self._store_single_grid_sheet("book-b", 0, "B tab")
+
+        # Re-store book-a (the delete+insert path) and confirm book-b is untouched.
+        self._store_single_grid_sheet("book-a", 0, "A tab v2")
+
+        b = self.db.get_sheet_properties_of_spreadsheet("book-b")
+        self.assertEqual([s.title for s in b], ["B tab"])
+
+    def test_legacy_sheetid_schema_is_migrated_on_create_tables(self) -> None:
+        """An old single-PK sheets schema is dropped and recreated with the composite key (#70)."""
+        # Recreate the legacy schema in place (sheetId-only PK, grid_properties without spreadsheet_id).
+        assert self.db._conn is not None
+        c = self.db._conn.cursor()
+        c.execute("DROP TABLE IF EXISTS grid_properties")
+        c.execute("DROP TABLE IF EXISTS sheets")
+        c.execute("CREATE TABLE sheets (sheetId TEXT PRIMARY KEY, spreadsheet_id TEXT NOT NULL)")
+        c.execute("CREATE TABLE grid_properties (sheetId TEXT PRIMARY KEY, rowCount INTEGER, columnCount INTEGER)")
+        c.execute("INSERT INTO sheets (sheetId, spreadsheet_id) VALUES ('0', 'stale-book')")
+        self.db._conn.commit()
+
+        # Re-running create_tables must migrate (drop + recreate) to the new composite schema.
+        self.db.create_tables()
+
+        c.execute("PRAGMA table_info(grid_properties)")
+        grid_cols = {row[1] for row in c.fetchall()}
+        self.assertIn("spreadsheet_id", grid_cols)
+
+        c.execute("PRAGMA table_info(sheets)")
+        sheets_pk = [row[1] for row in c.fetchall() if row[5] > 0]
+        self.assertEqual(set(sheets_pk), {"spreadsheet_id", "sheetId"})
+
+        # Stale legacy rows were discarded (these caches re-populate from the API on next load).
+        c.execute("SELECT COUNT(*) FROM sheets")
+        self.assertEqual(c.fetchone()[0], 0)
+
     def test_store_sheet_properties_raises_for_missing_spreadsheet(self) -> None:
         """store_sheet_properties must reject a parent spreadsheet absent from the DB (#32)."""
         metadata: Dict[str, Any] = {
