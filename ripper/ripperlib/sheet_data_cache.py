@@ -12,7 +12,7 @@ from loguru import logger
 
 from ripper.ripperlib.database import Db, RipperDb
 from ripper.ripperlib.defs import LoadSource, SheetData, SheetsService
-from ripper.ripperlib.range_manager import CachedRange, CellRange, RangeOptimizer
+from ripper.ripperlib.range_manager import CachedRange, CellRange, RangeOptimizer, build_a1_range
 
 
 class SheetDataCache:
@@ -111,7 +111,7 @@ class SheetDataCache:
 
         api_data = {}
         for missing_range in missing_ranges:
-            range_notation = f"{sheet_name}!{missing_range.to_a1_notation()}"
+            range_notation = build_a1_range(sheet_name, missing_range.to_a1_notation())
             data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
             # Store in cache regardless of whether data is empty
             api_data[missing_range] = data
@@ -157,7 +157,7 @@ class SheetDataCache:
         """
         from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
 
-        range_notation = f"{sheet_name}!{requested_range.to_a1_notation()}"
+        range_notation = build_a1_range(sheet_name, requested_range.to_a1_notation())
         data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
         if data:
             self._store_actual_extent(spreadsheet_id, sheet_name, requested_range, data)
@@ -198,7 +198,7 @@ class SheetDataCache:
         """Fetch a range directly from the API, bypassing the cache."""
         from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
 
-        range_notation = f"{sheet_name}!{range_str}"
+        range_notation = build_a1_range(sheet_name, range_str)
         data = fetch_data_from_spreadsheet(service, spreadsheet_id, range_notation)
         return data, [(LoadSource.API, range_str)]
 

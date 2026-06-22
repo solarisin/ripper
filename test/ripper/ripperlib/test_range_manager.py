@@ -20,6 +20,8 @@ from ripper.ripperlib.range_manager import (
     RangeOptimizer,
     _cell_reference_to_a1,
     _parse_cell_reference,
+    build_a1_range,
+    quote_sheet_title,
 )
 
 # Test timestamp for consistent testing
@@ -809,3 +811,34 @@ class TestRangeOptimizer:
         # If we remove all caches, it should return False
         ranges.clear()
         assert not RangeOptimizer.can_satisfy_from_cache(requested, ranges)
+
+
+class TestQualifiedA1RangeBuilding:
+    """Tests for quoting/escaping sheet titles when building qualified A1 ranges (#72)."""
+
+    def test_quotes_title_with_space(self) -> None:
+        assert quote_sheet_title("Monthly Budget") == "'Monthly Budget'"
+
+    def test_doubles_embedded_apostrophe(self) -> None:
+        # A single quote inside the title must be doubled inside the quoted identifier.
+        assert quote_sheet_title("Jon's Data") == "'Jon''s Data'"
+
+    def test_quotes_plain_title(self) -> None:
+        # Always-quote is valid Google Sheets syntax and is required for titles that
+        # would otherwise be ambiguous (e.g. a title that looks like a cell reference).
+        assert quote_sheet_title("Sheet1") == "'Sheet1'"
+
+    def test_build_range_quotes_title_with_space(self) -> None:
+        assert build_a1_range("Monthly Budget", "A1:E10") == "'Monthly Budget'!A1:E10"
+
+    def test_build_range_quotes_title_with_apostrophe(self) -> None:
+        assert build_a1_range("Jon's Data", "A1:B2") == "'Jon''s Data'!A1:B2"
+
+    def test_build_range_quotes_title_containing_bang(self) -> None:
+        # A title that legitimately contains '!' must still be quoted as a unit.
+        assert build_a1_range("Q1!Actuals", "A1") == "'Q1!Actuals'!A1"
+
+    def test_build_range_without_range_returns_quoted_title_only(self) -> None:
+        # When no cell range is supplied, the whole-sheet reference is the quoted title.
+        assert build_a1_range("Monthly Budget", None) == "'Monthly Budget'"
+        assert build_a1_range("Monthly Budget", "") == "'Monthly Budget'"

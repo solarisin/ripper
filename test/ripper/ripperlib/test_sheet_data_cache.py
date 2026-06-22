@@ -143,7 +143,7 @@ class TestSheetDataCache(unittest.TestCase):
             mock_fetch.assert_called_once_with(
                 self.mock_sheets_service,
                 self.test_spreadsheet_id,
-                f"{self.test_sheet_name}!{range_a1}",
+                f"'{self.test_sheet_name}'!{range_a1}",
             )
 
             # Verify data was cached
@@ -270,7 +270,7 @@ class TestSheetDataCache(unittest.TestCase):
         self._assert_single_source(range_sources, LoadSource.API)
         # The open-ended range was resolved to a bounded one before the API call.
         mock_fetch.assert_called_once_with(
-            self.mock_sheets_service, self.test_spreadsheet_id, f"{self.test_sheet_name}!A1:Z10"
+            self.mock_sheets_service, self.test_spreadsheet_id, f"'{self.test_sheet_name}'!A1:Z10"
         )
 
     def test_get_sheet_data_open_ended_always_fetches_fresh(self) -> None:
@@ -340,7 +340,7 @@ class TestSheetDataCache(unittest.TestCase):
         self._assert_single_source(range_sources, LoadSource.API)
         # Falls back to the unbounded range verbatim (no resolution possible).
         mock_fetch.assert_called_once_with(
-            self.mock_sheets_service, self.test_spreadsheet_id, f"{self.test_sheet_name}!A:Z"
+            self.mock_sheets_service, self.test_spreadsheet_id, f"'{self.test_sheet_name}'!A:Z"
         )
 
     def test_get_sheet_data_empty_range(self) -> None:
@@ -414,8 +414,23 @@ class TestSheetDataCache(unittest.TestCase):
             self.assertEqual(result_data, api_data)
             self._assert_single_source(range_sources, LoadSource.API)
 
-            # Verify API was called for Sheet2
-            mock_fetch.assert_called_once_with(self.mock_sheets_service, self.test_spreadsheet_id, f"Sheet2!{range_a1}")
+            # Verify API was called for Sheet2 (title quoted in the qualified A1 range, #72)
+            mock_fetch.assert_called_once_with(
+                self.mock_sheets_service, self.test_spreadsheet_id, f"'Sheet2'!{range_a1}"
+            )
+
+    def test_special_character_sheet_title_is_quoted_for_api(self) -> None:
+        """A sheet title with a space must be single-quoted in the range sent to the API (#72)."""
+        api_data = [["A1", "B1"]]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+
+            self.cache.get_sheet_data(self.mock_sheets_service, self.test_spreadsheet_id, "Monthly Budget", "A1:B1")
+
+            mock_fetch.assert_called_once_with(
+                self.mock_sheets_service, self.test_spreadsheet_id, "'Monthly Budget'!A1:B1"
+            )
 
     def test_invalidate_cache(self) -> None:
         """Test cache invalidation."""
