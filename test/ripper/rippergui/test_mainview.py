@@ -150,3 +150,29 @@ def test_refresh_data_source_invalidates_cache_on_instance() -> None:
             # The fix calls SheetDataCache().invalidate_cache(...), i.e. on the instance.
             mock_cache_cls.return_value.invalidate_cache.assert_called_once_with("book-1", "Transactions")
             mock_self._load_data_source_by_id.assert_called_once_with(7, stamp_on_success=True)
+
+
+def test_data_fetch_worker_passes_sheet_and_range_separately() -> None:
+    """The worker must call retrieve_sheet_data_for with separate sheet_name/range_a1 (#72 review).
+
+    A whole-sheet load of a '!'-containing title must not be collapsed into a combined
+    'Sheet!Range' string (which would misparse 'Q1!Actuals' as sheet 'Q1'). Exercised via the
+    unbound run() with a mock self, so no QThread/QApplication is needed.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from ripper.rippergui.mainview import _DataFetchWorker
+
+    mock_self = MagicMock()
+    mock_self._spreadsheet_id = "book"
+    mock_self._sheet_name = "Q1!Actuals"
+    mock_self._range_a1 = ""  # whole-sheet load
+
+    with patch("ripper.rippergui.mainview.AuthManager") as mock_auth_cls:
+        mock_auth_cls.return_value.create_sheets_service.return_value = MagicMock()
+        with patch("ripper.ripperlib.sheets_backend.retrieve_sheet_data_for") as mock_retrieve:
+            mock_retrieve.return_value = ([], [])
+            _DataFetchWorker.run(mock_self)
+
+            service = mock_auth_cls.return_value.create_sheets_service.return_value
+            mock_retrieve.assert_called_once_with(service, "book", "Q1!Actuals", "")

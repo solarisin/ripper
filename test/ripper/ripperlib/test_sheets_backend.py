@@ -8,6 +8,7 @@ from ripper.ripperlib.sheets_backend import (
     fetch_sheets_of_spreadsheet,
     fetch_spreadsheets,
     retrieve_sheet_data,
+    retrieve_sheet_data_for,
     retrieve_sheets_of_spreadsheet,
     retrieve_spreadsheets,
 )
@@ -209,6 +210,34 @@ class TestSheetsBackend(unittest.TestCase):
 
 class TestRetrieveSheetDataParsing(unittest.TestCase):
     """Tests for sheet-name parsing and quoting in retrieve_sheet_data (#72)."""
+
+    def test_whole_sheet_title_with_bang_via_separate_args(self) -> None:
+        """A whole-sheet load of a '!'-containing title stays a whole-sheet reference (#72 review).
+
+        Passing sheet_name and range separately avoids the combined-string ambiguity where
+        'Q1!Actuals' (no range) would be misparsed as sheet 'Q1' + range 'Actuals'.
+        """
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = []
+            retrieve_sheet_data_for(mock_service, "book", "Q1!Actuals", None)
+            mock_fetch.assert_called_once_with(mock_service, "book", "'Q1!Actuals'")
+
+    def test_empty_range_is_treated_as_whole_sheet(self) -> None:
+        """An empty range_a1 (whole-sheet load) quotes the title rather than appending '!'."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = []
+            retrieve_sheet_data_for(mock_service, "book", "Monthly Budget", "")
+            mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'")
+
+    def test_ranged_separate_args_go_through_cache(self) -> None:
+        """With a range supplied, the bare title + range are handed to the cache verbatim."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.return_value = ([], [])
+            retrieve_sheet_data_for(mock_service, "book", "Q1!Actuals", "A1:B5")
+            mock_get.assert_called_once_with(mock_service, "book", "Q1!Actuals", "A1:B5")
 
     def test_title_containing_bang_is_parsed_on_last_separator(self) -> None:
         """A sheet title that legitimately contains '!' must be split on the LAST '!'.
