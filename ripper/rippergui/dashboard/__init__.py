@@ -13,17 +13,17 @@ class DashboardManagerWidget(QWidget):
         self,
         storage_dir: Path,
         parent: Optional[QWidget] = None,
-        records_fn: Optional[Callable[[str, str], list[dict[str, Any]] | None]] = None,
+        records_fn: Optional[Callable[[str, str, str], list[dict[str, Any]] | None]] = None,
     ):
         """Initialize the dashboard manager.
 
         Args:
             storage_dir: Directory where dashboard files are stored
             parent: Parent widget
-            records_fn: Optional callable ``(spreadsheet_id, sheet_name) ->
-                list[dict] | None`` that returns already-fetched and
-                already-filtered records for a data source.  When provided,
-                the dashboard uses these records instead of a fresh API call.
+            records_fn: Optional callable ``(spreadsheet_id, sheet_name, range_a1)
+                -> list[dict] | None`` that returns already-fetched records for a
+                data source range.  When provided, the dashboard uses these records
+                instead of a fresh API call.
         """
         super().__init__(parent)
         self.storage_dir = storage_dir

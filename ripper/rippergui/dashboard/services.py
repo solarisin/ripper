@@ -83,7 +83,7 @@ class DashboardDataService:
         auth_manager: SheetsServiceProvider | None = None,
         retrieve_sheet_data_fn: Callable[[SheetsService, str, str], tuple[SheetData, list[tuple[Any, str]]]]
         | None = None,
-        records_provider: Callable[[str, str], list[dict[str, Any]] | None] | None = None,
+        records_provider: Callable[[str, str, str], list[dict[str, Any]] | None] | None = None,
     ) -> None:
         """Initialise the service.
 
@@ -91,13 +91,14 @@ class DashboardDataService:
             auth_manager: Optional auth manager; defaults to a shared singleton.
             retrieve_sheet_data_fn: Optional override for the sheet data fetch
                 function, primarily used in tests.
-            records_provider: Optional callable ``(spreadsheet_id, sheet_name)
-                -> list[dict] | None`` that supplies already-fetched and
-                already-filtered records (e.g. from the active table view).
-                When the provider returns a non-None value the API call is
-                skipped and the provided records are used directly before
-                ``DataSource.filters`` (date-range / accounts / categories)
-                are applied.
+            records_provider: Optional callable ``(spreadsheet_id, sheet_name,
+                range_a1) -> list[dict] | None`` that supplies already-fetched
+                records for a specific source range (e.g. from the active table
+                view). The ``range_a1`` is part of the identity: two sources on
+                the same tab but different ranges must not collide. When the
+                provider returns a non-None value the API call is skipped and the
+                provided records are used directly before ``DataSource.filters``
+                (date-range / accounts / categories) are applied.
         """
         self._auth_manager = auth_manager or AuthManager()
         self._retrieve_sheet_data_fn = retrieve_sheet_data_fn
@@ -109,28 +110,34 @@ class DashboardDataService:
 
     def refresh_dashboard(self, dashboard: Dashboard) -> DashboardRefreshResult:
         """Refresh all configured data sources for a dashboard."""
-        service = self.create_sheets_service()
         result = DashboardRefreshResult()
-        if service is None:
-            for data_source_id in dashboard.data_sources:
-                result.statuses[data_source_id] = DataSourceRefreshStatus(
-                    data_source_id=data_source_id,
-                    ok=False,
-                    message="Could not authenticate with Google Sheets API.",
-                )
-            return result
+
+        # Create/authenticate the Sheets service lazily: sources that can be served from
+        # pre-fetched records (the provider fast path) need no auth, so a dashboard backed
+        # entirely by already-loaded data refreshes even when auth is unavailable. We only
+        # pay for a service on the first genuine cache miss, and reuse it thereafter.
+        service_box: list[SheetsService | None] = []
+
+        def get_service() -> SheetsService | None:
+            if not service_box:
+                service_box.append(self.create_sheets_service())
+            return service_box[0]
 
         for data_source in dashboard.data_sources.values():
-            status, records = self.refresh_data_source(service, data_source)
+            status, records = self.refresh_data_source(get_service, data_source)
             result.statuses[data_source.id] = status
             if records is not None:
                 result.data[data_source.id] = records
         return result
 
     def refresh_data_source(
-        self, service: SheetsService, data_source: DataSource
+        self, service_provider: Callable[[], SheetsService | None], data_source: DataSource
     ) -> tuple[DataSourceRefreshStatus, list[dict[str, Any]] | None]:
-        """Refresh one data source."""
+        """Refresh one data source.
+
+        ``service_provider`` is called only on a cache miss, so a source satisfied by the
+        records provider never triggers authentication.
+        """
         if data_source.type != DataSourceType.TILLER_TRANSACTIONS:
             return (
                 DataSourceRefreshStatus(
@@ -142,11 +149,14 @@ class DashboardDataService:
                 None,
             )
 
-        # Use pre-fetched records from the provider when available (e.g. the
-        # active filtered table view), falling back to a fresh API call.
+        # Use pre-fetched records from the provider when available (e.g. the active filtered
+        # table view), falling back to a fresh API call. The range_a1 is part of the identity
+        # so two sources on the same tab with different ranges don't collide.
         pre_fetched: list[dict[str, Any]] | None = None
         if self._records_provider is not None:
-            pre_fetched = self._records_provider(data_source.spreadsheet_id, data_source.sheet_name)
+            pre_fetched = self._records_provider(
+                data_source.spreadsheet_id, data_source.sheet_name, data_source.range_a1
+            )
 
         if pre_fetched is not None:
             records = self._apply_filters(pre_fetched, data_source)
@@ -158,6 +168,19 @@ class DashboardDataService:
                     row_count=len(records),
                 ),
                 records,
+            )
+
+        # Cache miss: this source genuinely needs the API, so obtain (and authenticate) the
+        # service now. A global auth failure only fails the sources that actually need it.
+        service = service_provider()
+        if service is None:
+            return (
+                DataSourceRefreshStatus(
+                    data_source_id=data_source.id,
+                    ok=False,
+                    message="Could not authenticate with Google Sheets API.",
+                ),
+                None,
             )
 
         range_name = f"{data_source.sheet_name}!{data_source.range_a1}"

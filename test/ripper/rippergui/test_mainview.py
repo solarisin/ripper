@@ -130,3 +130,23 @@ def test_restore_layout_invalid_state_no_crash(qtbot, monkeypatch, tmp_path):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_get_records_for_dashboard_keys_on_range() -> None:
+    """Two sources on the same tab but different ranges must resolve to their own widget (#73)."""
+    from unittest.mock import MagicMock
+
+    mock_self = MagicMock()
+    widget_a = MagicMock()
+    widget_a.get_filtered_records.return_value = [{"row": "a"}]
+    widget_b = MagicMock()
+    widget_b.get_filtered_records.return_value = [{"row": "b"}]
+    mock_self._table_widgets = {
+        ("book", "Transactions", "A1:E10"): widget_a,
+        ("book", "Transactions", "G1:K10"): widget_b,
+    }
+
+    assert MainView._get_records_for_dashboard(mock_self, "book", "Transactions", "A1:E10") == [{"row": "a"}]
+    assert MainView._get_records_for_dashboard(mock_self, "book", "Transactions", "G1:K10") == [{"row": "b"}]
+    # A range with no loaded widget falls back to the API path (None).
+    assert MainView._get_records_for_dashboard(mock_self, "book", "Transactions", "Z1:Z9") is None
