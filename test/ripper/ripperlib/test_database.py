@@ -126,6 +126,151 @@ class TestDatabaseIntegration(unittest.TestCase):
         retrieved_metadata = self.db.get_sheet_properties_of_spreadsheet("non_existent_id")
         self.assertEqual(len(retrieved_metadata), 0)
 
+    def _store_single_grid_sheet(self, spreadsheet_id: str, sheet_id: int, title: str) -> None:
+        """Store a spreadsheet with one GRID tab of the given sheetId/title."""
+        self.db.store_spreadsheet_properties(
+            spreadsheet_id,
+            SpreadsheetProperties(
+                {
+                    "id": spreadsheet_id,
+                    "name": spreadsheet_id,
+                    "modifiedTime": "2024-01-01T00:00:00Z",
+                    "createdTime": "2024-01-01T00:00:00Z",
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
+        metadata: Dict[str, Any] = {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        "index": 0,
+                        "title": title,
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 10, "columnCount": 5},
+                    }
+                }
+            ]
+        }
+        self.db.store_sheet_properties(spreadsheet_id, SheetProperties.from_api_result(metadata))
+
+    def test_sheets_with_colliding_sheetid_across_spreadsheets(self) -> None:
+        """Two spreadsheets whose tabs share a sheetId must keep independent metadata (#70)."""
+        # The default first tab of every spreadsheet is sheetId 0, so collisions are common.
+        self._store_single_grid_sheet("book-a", 0, "A tab")
+        self._store_single_grid_sheet("book-b", 0, "B tab")
+
+        a = self.db.get_sheet_properties_of_spreadsheet("book-a")
+        b = self.db.get_sheet_properties_of_spreadsheet("book-b")
+
+        self.assertEqual([s.title for s in a], ["A tab"])
+        self.assertEqual([s.title for s in b], ["B tab"])
+        # Grid dimensions stay attached to the correct spreadsheet's tab.
+        self.assertEqual(a[0].grid.row_count, 10)
+        self.assertEqual(b[0].grid.column_count, 5)
+
+    def test_deleting_one_spreadsheet_keeps_other_colliding_sheet(self) -> None:
+        """Re-storing one spreadsheet's sheets must not disturb another's identical sheetId (#70)."""
+        self._store_single_grid_sheet("book-a", 0, "A tab")
+        self._store_single_grid_sheet("book-b", 0, "B tab")
+
+        # Re-store book-a (the delete+insert path) and confirm book-b is untouched.
+        self._store_single_grid_sheet("book-a", 0, "A tab v2")
+
+        b = self.db.get_sheet_properties_of_spreadsheet("book-b")
+        self.assertEqual([s.title for s in b], ["B tab"])
+
+    def _build_legacy_sheets_schema(self) -> "sqlite3.Cursor":
+        """Recreate the pre-#70 schema (sheetId-only PK; grid_properties without spreadsheet_id)."""
+        assert self.db._conn is not None
+        c = self.db._conn.cursor()
+        c.execute("DROP TABLE IF EXISTS grid_properties")
+        c.execute("DROP TABLE IF EXISTS sheets")
+        c.execute(
+            """CREATE TABLE sheets (
+                sheetId TEXT PRIMARY KEY,
+                spreadsheet_id TEXT NOT NULL,
+                "index" INTEGER,
+                title TEXT,
+                sheetType TEXT
+            )"""
+        )
+        c.execute("CREATE TABLE grid_properties (sheetId TEXT PRIMARY KEY, rowCount INTEGER, columnCount INTEGER)")
+        return c
+
+    def test_legacy_sheetid_schema_is_migrated_to_composite_key(self) -> None:
+        """The legacy single-PK schema is rebuilt with the composite key (#70)."""
+        c = self._build_legacy_sheets_schema()
+        self.db._conn.commit()  # type: ignore[union-attr]
+
+        self.db.create_tables()
+
+        c.execute("PRAGMA table_info(grid_properties)")
+        grid_cols = {row[1] for row in c.fetchall()}
+        self.assertIn("spreadsheet_id", grid_cols)
+
+        c.execute("PRAGMA table_info(sheets)")
+        sheets_pk = [row[1] for row in c.fetchall() if row[5] > 0]
+        self.assertEqual(set(sheets_pk), {"spreadsheet_id", "sheetId"})
+
+    def test_legacy_migration_preserves_surviving_rows(self) -> None:
+        """Surviving legacy rows must migrate without loss; grid spreadsheet_id derived by join (#70).
+
+        In the legacy schema both tables key on sheetId alone, so each holds at most one row per
+        sheetId and a surviving grid row joins to exactly one sheets row — its spreadsheet_id is
+        recoverable. A data-preserving rebuild must keep titles/grid dims rather than discard them.
+        """
+        # Legacy sheets always reference an existing spreadsheet (the legacy FK enforced it), so
+        # seed the parents the rebuilt table's FK will require.
+        for book in ("book-b", "book-c"):
+            self.db.store_spreadsheet_properties(
+                book,
+                SpreadsheetProperties(
+                    {
+                        "id": book,
+                        "name": book,
+                        "modifiedTime": "2024-01-01T00:00:00Z",
+                        "createdTime": "2024-01-01T00:00:00Z",
+                        "webViewLink": "",
+                        "owners": [],
+                        "size": 0,
+                        "shared": False,
+                    }
+                ),
+            )
+
+        c = self._build_legacy_sheets_schema()
+        # Two surviving, non-colliding tabs from different spreadsheets (whatever the bug left intact).
+        c.execute(
+            'INSERT INTO sheets (sheetId, spreadsheet_id, "index", title, sheetType) VALUES (?,?,?,?,?)',
+            ("0", "book-b", 0, "B tab", "GRID"),
+        )
+        c.execute(
+            'INSERT INTO sheets (sheetId, spreadsheet_id, "index", title, sheetType) VALUES (?,?,?,?,?)',
+            ("5", "book-c", 1, "C tab", "GRID"),
+        )
+        c.execute("INSERT INTO grid_properties (sheetId, rowCount, columnCount) VALUES (?,?,?)", ("0", 10, 5))
+        c.execute("INSERT INTO grid_properties (sheetId, rowCount, columnCount) VALUES (?,?,?)", ("5", 20, 8))
+        self.db._conn.commit()  # type: ignore[union-attr]
+
+        self.db.create_tables()
+
+        # Sheet rows survive under the composite key with their original attribution.
+        c.execute('SELECT spreadsheet_id, sheetId, "index", title FROM sheets ORDER BY sheetId')
+        self.assertEqual(c.fetchall(), [("book-b", "0", 0, "B tab"), ("book-c", "5", 1, "C tab")])
+
+        # grid_properties.spreadsheet_id is derived from the legacy grid->sheets join.
+        c.execute("SELECT spreadsheet_id, sheetId, rowCount, columnCount FROM grid_properties ORDER BY sheetId")
+        self.assertEqual(c.fetchall(), [("book-b", "0", 10, 5), ("book-c", "5", 20, 8)])
+
+        # And the public read path returns the preserved metadata for each spreadsheet.
+        b = self.db.get_sheet_properties_of_spreadsheet("book-b")
+        self.assertEqual([(s.title, s.grid.row_count, s.grid.column_count) for s in b], [("B tab", 10, 5)])
+
     def test_store_sheet_properties_raises_for_missing_spreadsheet(self) -> None:
         """store_sheet_properties must reject a parent spreadsheet absent from the DB (#32)."""
         metadata: Dict[str, Any] = {

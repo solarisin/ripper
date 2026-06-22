@@ -176,24 +176,35 @@ class RipperDb:
                     thumbnail BLOB
                 );"""
             )
+            # A Google Sheets sheetId is unique only WITHIN its parent spreadsheet (the first
+            # tab of every spreadsheet is sheetId 0), so the primary key must be composite.
+            # Extract any legacy (sheetId-only PK) rows BEFORE the CREATE statements so they can
+            # be re-inserted into the rebuilt composite tables (see _restore_migrated_sheets).
+            legacy_sheets = self._extract_legacy_sheets(c)
             c.execute(
                 """CREATE TABLE IF NOT EXISTS sheets (
-                    sheetId TEXT PRIMARY KEY,
+                    sheetId TEXT NOT NULL,
                     spreadsheet_id TEXT NOT NULL,
                     "index" INTEGER,
                     title TEXT,
                     sheetType TEXT,
+                    PRIMARY KEY (spreadsheet_id, sheetId),
                     FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
                 );"""
             )
             c.execute(
                 """CREATE TABLE IF NOT EXISTS grid_properties (
-                    sheetId TEXT PRIMARY KEY,
+                    sheetId TEXT NOT NULL,
+                    spreadsheet_id TEXT NOT NULL,
                     rowCount INTEGER,
                     columnCount INTEGER,
-                    FOREIGN KEY (sheetId) REFERENCES sheets(sheetId) ON DELETE CASCADE
+                    PRIMARY KEY (spreadsheet_id, sheetId),
+                    FOREIGN KEY (spreadsheet_id, sheetId)
+                        REFERENCES sheets(spreadsheet_id, sheetId) ON DELETE CASCADE
                 );"""
             )
+            if legacy_sheets is not None:
+                self._restore_migrated_sheets(c, legacy_sheets)
             c.execute(
                 """CREATE TABLE IF NOT EXISTS sheet_data_ranges (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,6 +257,55 @@ class RipperDb:
                    ON data_sources(spreadsheet_id);"""
             )
             logger.info("Database tables created successfully")
+
+    def _extract_legacy_sheets(self, c: sqlite.Cursor) -> Optional[tuple[list[Any], list[Any]]]:
+        """Read and drop a legacy (sheetId-only PK) sheets/grid_properties schema for migration.
+
+        The fix for #70 makes ``(spreadsheet_id, sheetId)`` the primary key of both tables.
+        SQLite cannot alter a primary key in place, so we rebuild: this reads the surviving
+        legacy rows (deriving ``grid_properties.spreadsheet_id`` by joining grids to sheets on
+        ``sheetId`` — unambiguous because the legacy unique PK means each sheetId occurs at most
+        once per table), drops the legacy tables, and returns the rows for re-insertion after the
+        composite tables are recreated (see :meth:`_restore_migrated_sheets`).
+
+        Returns ``None`` when there is nothing to migrate (fresh DB or already composite).
+        """
+        c.execute("PRAGMA table_info(sheets)")
+        sheets_info = c.fetchall()
+        if not sheets_info:
+            return None  # No legacy table (fresh DB).
+
+        # row layout: (cid, name, type, notnull, dflt_value, pk). A composite PK marks more than
+        # one column with pk > 0; the legacy schema marks only 'sheetId'.
+        pk_columns = {row[1] for row in sheets_info if row[5] > 0}
+        if pk_columns == {"spreadsheet_id", "sheetId"}:
+            return None  # Already on the composite-key schema.
+
+        logger.info("Migrating sheets/grid_properties to composite (spreadsheet_id, sheetId) key (#70)")
+        sheet_rows = c.execute('SELECT spreadsheet_id, sheetId, "index", title, sheetType FROM sheets').fetchall()
+        # Derive each grid row's spreadsheet_id from its (unique) sheets row.
+        grid_rows = c.execute(
+            """SELECT s.spreadsheet_id, g.sheetId, g.rowCount, g.columnCount
+               FROM grid_properties g JOIN sheets s ON g.sheetId = s.sheetId"""
+        ).fetchall()
+        c.execute("DROP TABLE IF EXISTS grid_properties")
+        c.execute("DROP TABLE IF EXISTS sheets")
+        return sheet_rows, grid_rows
+
+    def _restore_migrated_sheets(self, c: sqlite.Cursor, legacy: tuple[list[Any], list[Any]]) -> None:
+        """Re-insert legacy sheet/grid rows into the rebuilt composite-key tables (#70)."""
+        sheet_rows, grid_rows = legacy
+        if sheet_rows:
+            c.executemany(
+                'INSERT INTO sheets (spreadsheet_id, sheetId, "index", title, sheetType) VALUES (?, ?, ?, ?, ?)',
+                sheet_rows,
+            )
+        if grid_rows:
+            c.executemany(
+                "INSERT INTO grid_properties (spreadsheet_id, sheetId, rowCount, columnCount) VALUES (?, ?, ?, ?)",
+                grid_rows,
+            )
+        logger.info(f"Migrated {len(sheet_rows)} sheet(s) and {len(grid_rows)} grid row(s) to the composite key")
 
     def _migrate_data_sources_schema(self, c: sqlite.Cursor) -> None:  # noqa: C901
         """Apply incremental migrations to the data_sources table for deployments that predate schema changes."""
@@ -339,10 +399,9 @@ class RipperDb:
                 c.execute(
                     """INSERT INTO sheets (spreadsheet_id, sheetId, "index", title, sheetType)
                        VALUES (?, ?, ?, ?, ?)
-                       ON CONFLICT(sheetId) DO UPDATE SET spreadsheet_id=excluded.spreadsheet_id,
-                                                          "index"=excluded."index",
-                                                          title=excluded.title,
-                                                          sheetType=excluded.sheetType""",
+                       ON CONFLICT(spreadsheet_id, sheetId) DO UPDATE SET "index"=excluded."index",
+                                                                          title=excluded.title,
+                                                                          sheetType=excluded.sheetType""",
                     (
                         spreadsheet_id,
                         sheet.id,
@@ -352,11 +411,11 @@ class RipperDb:
                     ),
                 )
                 c.execute(
-                    """INSERT INTO grid_properties (sheetId, rowCount, columnCount)
-                       VALUES (?, ?, ?)
-                       ON CONFLICT(sheetId) DO UPDATE SET rowCount=excluded.rowCount,
-                                                          columnCount=excluded.columnCount""",
-                    (sheet.id, grid_props.row_count, grid_props.column_count),
+                    """INSERT INTO grid_properties (spreadsheet_id, sheetId, rowCount, columnCount)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(spreadsheet_id, sheetId) DO UPDATE SET rowCount=excluded.rowCount,
+                                                                          columnCount=excluded.columnCount""",
+                    (spreadsheet_id, sheet.id, grid_props.row_count, grid_props.column_count),
                 )
 
             return True
@@ -386,7 +445,8 @@ class RipperDb:
                 """SELECT s.sheetId, s."index", s.title, s.sheetType,
                           g.rowCount, g.columnCount
                    FROM sheets s
-                   LEFT JOIN grid_properties g ON s.sheetId = g.sheetId
+                   LEFT JOIN grid_properties g
+                          ON s.spreadsheet_id = g.spreadsheet_id AND s.sheetId = g.sheetId
                    WHERE s.spreadsheet_id = ?
                    ORDER BY s."index" """,
                 (spreadsheet_id,),
