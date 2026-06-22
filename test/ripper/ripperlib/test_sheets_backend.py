@@ -7,6 +7,7 @@ from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProper
 from ripper.ripperlib.sheets_backend import (
     fetch_sheets_of_spreadsheet,
     fetch_spreadsheets,
+    retrieve_sheet_data,
     retrieve_sheets_of_spreadsheet,
     retrieve_spreadsheets,
 )
@@ -204,3 +205,40 @@ class TestSheetsBackend(unittest.TestCase):
                     mock_get_db.assert_called_once_with(spreadsheet_id)
                     mock_fetch_api.assert_called_once_with(mock_sheets_service, spreadsheet_id)
                     mock_store_db.assert_called_once_with(spreadsheet_id, mock_api_sheets)
+
+
+class TestRetrieveSheetDataParsing(unittest.TestCase):
+    """Tests for sheet-name parsing and quoting in retrieve_sheet_data (#72)."""
+
+    def test_title_containing_bang_is_parsed_on_last_separator(self) -> None:
+        """A sheet title that legitimately contains '!' must be split on the LAST '!'.
+
+        Cell ranges never contain '!', so the final '!' always separates title from range.
+        The title is then passed (unquoted) to the cache, which quotes at the API boundary.
+        """
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.return_value = ([], [])
+            retrieve_sheet_data(mock_service, "book", "Q1!Actuals!A1:B5")
+
+            mock_get.assert_called_once_with(mock_service, "book", "Q1!Actuals", "A1:B5")
+
+    def test_whole_sheet_bare_title_is_quoted_for_api(self) -> None:
+        """A bare sheet title (no cell range, e.g. a whole-sheet load) must be quoted for the API."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = []
+            retrieve_sheet_data(mock_service, "book", "Monthly Budget")
+
+            mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'")
+
+    def test_fallback_quotes_special_title(self) -> None:
+        """If the cache path raises, the direct fallback must still quote the title for the API."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.side_effect = RuntimeError("boom")
+            with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+                mock_fetch.return_value = []
+                retrieve_sheet_data(mock_service, "book", "Monthly Budget!A1:E10")
+
+                mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'!A1:E10")

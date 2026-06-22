@@ -12,6 +12,41 @@ from datetime import datetime
 from beartype.typing import Optional, Tuple
 
 
+def quote_sheet_title(sheet_name: str) -> str:
+    """Quote a sheet title for use in A1 notation.
+
+    Google Sheets requires a sheet name to be single-quoted when it contains spaces or
+    special characters, with any embedded apostrophe doubled. We always quote: it is valid
+    for every title and is *required* for titles that would otherwise be ambiguous (e.g. a
+    title that looks like a cell reference such as ``A1``, or one containing ``!``).
+
+    Args:
+        sheet_name: The raw (unquoted) sheet title.
+
+    Returns:
+        The title wrapped in single quotes with embedded apostrophes doubled.
+    """
+    return "'" + sheet_name.replace("'", "''") + "'"
+
+
+def build_a1_range(sheet_name: str, range_a1: Optional[str] = None) -> str:
+    """Build a qualified A1 range string, quoting the sheet title.
+
+    Args:
+        sheet_name: The raw (unquoted) sheet title.
+        range_a1: The cell-range portion (e.g. ``A1:E10``). If falsy, the result is the
+            whole-sheet reference (the quoted title alone).
+
+    Returns:
+        A qualified A1 range such as ``'Monthly Budget'!A1:E10``, or just ``'Monthly Budget'``
+        when no cell range is supplied.
+    """
+    quoted = quote_sheet_title(sheet_name)
+    if range_a1:
+        return f"{quoted}!{range_a1}"
+    return quoted
+
+
 @dataclass(frozen=True)
 class CellRange:
     """

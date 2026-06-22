@@ -29,6 +29,7 @@ from ripper.ripperlib.defs import (
     SheetsService,
     SpreadsheetProperties,
 )
+from ripper.ripperlib.range_manager import build_a1_range
 
 
 def fetch_sheets_of_spreadsheet(service: SheetsService, spreadsheet_id: str) -> list[SheetProperties]:
@@ -281,13 +282,20 @@ def retrieve_sheet_data(
     Raises:
         ValueError: If the range format is invalid
     """
+    # Parse sheet name and range from the range_name. We deliberately do NOT require the
+    # caller to pre-quote the title: the cache quotes it at the API boundary (build_a1_range).
+    if "!" not in range_name:
+        # No cell range, just a sheet title: this is a whole-sheet reference. Quote the title
+        # so names with spaces/special characters (e.g. 'Monthly Budget') resolve at the API.
+        whole_sheet = build_a1_range(range_name, None)
+        return fetch_data_from_spreadsheet(service, spreadsheet_id, whole_sheet), [(LoadSource.API, range_name)]
+
+    # Cell ranges never contain '!', so the FINAL '!' separates the (possibly '!'-containing)
+    # sheet title from the cell range. Splitting on the last separator keeps titles like
+    # 'Q1!Actuals' intact instead of truncating them to 'Q1'.
+    sheet_name, range_part = range_name.rsplit("!", 1)
+
     try:
-        # Parse sheet name and range from the range_name
-        if "!" not in range_name:
-            raise ValueError(f"Range must include sheet name (e.g., 'Sheet1!A1:B5'): {range_name}")
-
-        sheet_name, range_part = range_name.split("!", 1)
-
         # Use the sheet data cache
         from ripper.ripperlib.sheet_data_cache import SheetDataCache
 
@@ -297,8 +305,9 @@ def retrieve_sheet_data(
 
     except Exception as e:
         logger.error(f"Error in retrieve_sheet_data: {e}")
-        # Fallback to direct API call
-        return fetch_data_from_spreadsheet(service, spreadsheet_id, range_name), [(LoadSource.API, range_name)]
+        # Fallback to a direct API call, quoting the title so special-character names resolve.
+        fallback_range = build_a1_range(sheet_name, range_part)
+        return fetch_data_from_spreadsheet(service, spreadsheet_id, fallback_range), [(LoadSource.API, range_name)]
 
 
 def get_tiller_transactions(

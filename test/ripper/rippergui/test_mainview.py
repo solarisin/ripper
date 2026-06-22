@@ -130,3 +130,23 @@ def test_restore_layout_invalid_state_no_crash(qtbot, monkeypatch, tmp_path):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_refresh_data_source_invalidates_cache_on_instance() -> None:
+    """`_refresh_data_source` must call `invalidate_cache` on a SheetDataCache *instance*.
+
+    `invalidate_cache` is an instance method; calling it on the class (the original bug, #67)
+    binds `spreadsheet_id` to `self` and raises AttributeError at runtime. Exercised without a
+    real MainView via the unbound method + a mock `self` (no Qt needed).
+    """
+    mock_self = MagicMock()
+    record = {"spreadsheet_id": "book-1", "sheet_name": "Transactions"}
+
+    with patch("ripper.rippergui.mainview.Db") as mock_db:
+        mock_db.get_data_source.return_value = record
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache") as mock_cache_cls:
+            MainView._refresh_data_source(mock_self, 7)
+
+            # The fix calls SheetDataCache().invalidate_cache(...), i.e. on the instance.
+            mock_cache_cls.return_value.invalidate_cache.assert_called_once_with("book-1", "Transactions")
+            mock_self._load_data_source_by_id.assert_called_once_with(7, stamp_on_success=True)

@@ -489,7 +489,7 @@ class MainView(QMainWindow):
         if record is None:
             return
 
-        SheetDataCache.invalidate_cache(record["spreadsheet_id"], record["sheet_name"])
+        SheetDataCache().invalidate_cache(record["spreadsheet_id"], record["sheet_name"])
         self._load_data_source_by_id(ds_id, stamp_on_success=True)
 
     # Actions ###########################################################################
