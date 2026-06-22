@@ -460,6 +460,10 @@ class MainView(QMainWindow):
                     "spreadsheet_id": spreadsheet_id,
                     "spreadsheet_name": record.get("spreadsheet_name", ""),
                     "sheet_name": sheet_name,
+                    # Include the saved range so the dashboard provider key
+                    # (spreadsheet_id, sheet_name, range_a1) matches; otherwise loaded
+                    # sources are stored under "" and the provider always misses (#73 review).
+                    "sheet_range": range_a1,
                 },
             )
             if stamp_on_success:
