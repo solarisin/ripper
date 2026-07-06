@@ -176,22 +176,28 @@ class RipperDb:
                     thumbnail BLOB
                 );"""
             )
+            # A Google Sheets sheetId is unique only WITHIN its parent spreadsheet (the first
+            # tab of every spreadsheet is sheetId 0), so the primary key is composite.
             c.execute(
                 """CREATE TABLE IF NOT EXISTS sheets (
-                    sheetId TEXT PRIMARY KEY,
+                    sheetId TEXT NOT NULL,
                     spreadsheet_id TEXT NOT NULL,
                     "index" INTEGER,
                     title TEXT,
                     sheetType TEXT,
+                    PRIMARY KEY (spreadsheet_id, sheetId),
                     FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
                 );"""
             )
             c.execute(
                 """CREATE TABLE IF NOT EXISTS grid_properties (
-                    sheetId TEXT PRIMARY KEY,
+                    sheetId TEXT NOT NULL,
+                    spreadsheet_id TEXT NOT NULL,
                     rowCount INTEGER,
                     columnCount INTEGER,
-                    FOREIGN KEY (sheetId) REFERENCES sheets(sheetId) ON DELETE CASCADE
+                    PRIMARY KEY (spreadsheet_id, sheetId),
+                    FOREIGN KEY (spreadsheet_id, sheetId)
+                        REFERENCES sheets(spreadsheet_id, sheetId) ON DELETE CASCADE
                 );"""
             )
             c.execute(
@@ -240,56 +246,11 @@ class RipperDb:
                     FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE
                 );"""
             )
-            self._migrate_data_sources_schema(c)
             c.execute(
                 """CREATE INDEX IF NOT EXISTS idx_data_sources_spreadsheet
                    ON data_sources(spreadsheet_id);"""
             )
             logger.info("Database tables created successfully")
-
-    def _migrate_data_sources_schema(self, c: sqlite.Cursor) -> None:  # noqa: C901
-        """Apply incremental migrations to the data_sources table for deployments that predate schema changes."""
-        c.execute("PRAGMA table_info(data_sources)")
-        existing_cols = {row[1] for row in c.fetchall()}
-        logger.debug(f"data_sources schema check — existing columns: {sorted(existing_cols)}")
-        if "range_name" in existing_cols and "range_a1" not in existing_cols:
-            logger.info("Migrating data_sources: renaming column 'range_name' -> 'range_a1'")
-            try:
-                c.execute("ALTER TABLE data_sources RENAME COLUMN range_name TO range_a1")
-                existing_cols.discard("range_name")
-                existing_cols.add("range_a1")
-                logger.info("Migration complete: renamed 'range_name' to 'range_a1'")
-            except Exception as exc:
-                # RENAME COLUMN requires SQLite >= 3.25; skip silently on older builds
-                logger.warning(f"Could not rename column 'range_name': {exc}")
-        legacy_cols = {"range_name", "cell_range"}
-        cols_to_drop = legacy_cols & existing_cols
-        if cols_to_drop:
-            logger.info(f"Migrating data_sources: dropping legacy columns {sorted(cols_to_drop)}")
-            for col in cols_to_drop:
-                try:
-                    c.execute(f"ALTER TABLE data_sources DROP COLUMN {col}")
-                    existing_cols.discard(col)
-                    logger.info(f"Migration complete: dropped column '{col}'")
-                except Exception as exc:
-                    # DROP COLUMN requires SQLite >= 3.35; skip silently on older builds
-                    logger.warning(f"Could not drop legacy column '{col}': {exc}")
-        migrations = [
-            ("name", "TEXT NOT NULL DEFAULT ''"),
-            ("spreadsheet_id", "TEXT NOT NULL DEFAULT ''"),
-            ("sheet_name", "TEXT NOT NULL DEFAULT ''"),
-            ("range_a1", "TEXT NOT NULL DEFAULT ''"),
-            ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
-            ("last_fetched_at", "TIMESTAMP"),
-        ]
-        cols_to_add = [(n, d) for n, d in migrations if n not in existing_cols]
-        if cols_to_add:
-            logger.info(f"Migrating data_sources: adding missing columns {[n for n, _ in cols_to_add]}")
-            for col_name, col_def in cols_to_add:
-                c.execute(f"ALTER TABLE data_sources ADD COLUMN {col_name} {col_def}")
-                logger.info(f"Migration complete: added column '{col_name}'")
-        if not cols_to_drop and not cols_to_add and "range_name" not in existing_cols:
-            logger.debug("data_sources schema is up to date, no migration needed")
 
     def store_sheet_properties(self, spreadsheet_id: str, sheet_properties: list[SheetProperties]) -> bool:
         """
@@ -339,10 +300,9 @@ class RipperDb:
                 c.execute(
                     """INSERT INTO sheets (spreadsheet_id, sheetId, "index", title, sheetType)
                        VALUES (?, ?, ?, ?, ?)
-                       ON CONFLICT(sheetId) DO UPDATE SET spreadsheet_id=excluded.spreadsheet_id,
-                                                          "index"=excluded."index",
-                                                          title=excluded.title,
-                                                          sheetType=excluded.sheetType""",
+                       ON CONFLICT(spreadsheet_id, sheetId) DO UPDATE SET "index"=excluded."index",
+                                                                          title=excluded.title,
+                                                                          sheetType=excluded.sheetType""",
                     (
                         spreadsheet_id,
                         sheet.id,
@@ -352,11 +312,11 @@ class RipperDb:
                     ),
                 )
                 c.execute(
-                    """INSERT INTO grid_properties (sheetId, rowCount, columnCount)
-                       VALUES (?, ?, ?)
-                       ON CONFLICT(sheetId) DO UPDATE SET rowCount=excluded.rowCount,
-                                                          columnCount=excluded.columnCount""",
-                    (sheet.id, grid_props.row_count, grid_props.column_count),
+                    """INSERT INTO grid_properties (spreadsheet_id, sheetId, rowCount, columnCount)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(spreadsheet_id, sheetId) DO UPDATE SET rowCount=excluded.rowCount,
+                                                                          columnCount=excluded.columnCount""",
+                    (spreadsheet_id, sheet.id, grid_props.row_count, grid_props.column_count),
                 )
 
             return True
@@ -386,7 +346,8 @@ class RipperDb:
                 """SELECT s.sheetId, s."index", s.title, s.sheetType,
                           g.rowCount, g.columnCount
                    FROM sheets s
-                   LEFT JOIN grid_properties g ON s.sheetId = g.sheetId
+                   LEFT JOIN grid_properties g
+                          ON s.spreadsheet_id = g.spreadsheet_id AND s.sheetId = g.sheetId
                    WHERE s.spreadsheet_id = ?
                    ORDER BY s."index" """,
                 (spreadsheet_id,),
