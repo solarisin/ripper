@@ -258,69 +258,8 @@ class AuthManager(QObject):
         self._sheets_service: Optional[SheetsService] = None
         self._drive_service: Optional[DriveService] = None
         self._oauth2_service: Optional[UserInfoService] = None
-        self._user_email: str = ""
-        self._load_credentials()
-
-    def _load_credentials(self) -> None:
-        """
-        Load credentials from the token file if it exists.
-
-        Side effects:
-            Updates self._credentials and user info if credentials are valid.
-        """
-        token_path = self._get_token_path()
-        if os.path.exists(token_path):
-            try:
-                creds = cast(Credentials, Credentials.from_authorized_user_file(token_path, SCOPES))
-                if creds and not creds.expired:
-                    self._credentials = creds
-                    self._update_user_info()
-            except Exception as e:
-                logger.error(f"Error loading credentials: {e}")
-                self._credentials = None
-
-    def _save_credentials(self) -> None:
-        """
-        Save credentials to the token file.
-
-        Side effects:
-            Writes credentials to disk at the token path.
-        """
-        if self._credentials:
-            token_path = self._get_token_path()
-            token_dir = os.path.dirname(token_path)
-            if not os.path.exists(token_dir):
-                os.makedirs(token_dir)
-            cred_data = json.loads(self._credentials.to_json())
-            with open(token_path, "w") as token:
-                json.dump(cred_data, token)
-
-    def _update_user_info(self) -> None:
-        """
-        Update user information using the OAuth2 API.
-
-        Side effects:
-            Updates self._user_email and emits authStateChanged signal.
-        """
-        if not self._credentials:
-            return
-
-        try:
-            service = cast(UserInfoService, build("oauth2", "v2", credentials=self._credentials))
-            user_info = cast(Dict[str, Any], service.userinfo().get().execute())
-            self._user_email = user_info.get("email", "")
-            self.authStateChanged.emit(self.auth_info())
-        except Exception as e:
-            logger.error(f"Error getting user info: {e}")
-
-    def _get_token_path(self) -> str:
-        """
-        Get the path to the token file.
-
-        Returns:
-            str: Path to the token file.
-        """
-        return os.path.join(os.environ.get("APPDATA", ""), "ripper", "token.json")
+        # Credentials are persisted only in the system keyring (see TokenStore); load them at
+        # startup via check_stored_credentials(). No plaintext token file is written or read (#31).
 
     def _get_client_secret_path(self) -> str:
         """
