@@ -29,7 +29,7 @@ from ripper.ripperlib.defs import (
     SheetsService,
     SpreadsheetProperties,
 )
-from ripper.ripperlib.range_manager import build_a1_range
+from ripper.ripperlib.range_manager import build_a1_range, split_sheet_and_range
 
 
 def fetch_sheets_of_spreadsheet(service: SheetsService, spreadsheet_id: str) -> list[SheetProperties]:
@@ -308,11 +308,13 @@ def retrieve_sheet_data(
     """
     Retrieve sheet data from a combined ``Sheet!Range`` string.
 
-    Convenience wrapper around :func:`retrieve_sheet_data_for` for callers that already hold
-    a combined range string AND always supply a cell range (e.g. dashboard/Tiller fetches),
-    where the split is unambiguous. Callers that may omit the range — notably whole-sheet
-    loads whose title can contain ``!`` — should call :func:`retrieve_sheet_data_for` with the
-    title and range separately.
+    Convenience wrapper around :func:`retrieve_sheet_data_for` for callers that already hold a
+    combined range string (e.g. dashboard/Tiller fetches). The string is parsed by
+    :func:`ripper.ripperlib.range_manager.split_sheet_and_range`, which handles single-quoted
+    titles (including titles that contain ``!``) and dequotes the title so it is quoted exactly
+    once at the API boundary. The one still-ambiguous case is an *unquoted, whole-sheet* title
+    that contains ``!`` (no range to anchor the split); such callers should use
+    :func:`retrieve_sheet_data_for` with the title and range separately.
 
     Args:
         service: Authenticated Google Sheets API service
@@ -322,13 +324,10 @@ def retrieve_sheet_data(
     Returns:
         Tuple of (sheet_data, range_sources).
     """
-    if "!" not in range_name:
-        # No separator: treat the whole string as a (whole-sheet) title.
-        return retrieve_sheet_data_for(service, spreadsheet_id, range_name, None)
-
-    # A cell range never contains '!', so the FINAL '!' separates the (possibly '!'-containing)
-    # title from the range. This is unambiguous only because a range is present.
-    sheet_name, range_part = range_name.rsplit("!", 1)
+    # Parse into an unquoted title + optional range. Handles single-quoted titles (which may
+    # already appear in valid A1, e.g. "'Monthly Budget'!A1:B2") so the title is not double-quoted
+    # when retrieve_sheet_data_for re-quotes it at the API boundary.
+    sheet_name, range_part = split_sheet_and_range(range_name)
     return retrieve_sheet_data_for(service, spreadsheet_id, sheet_name, range_part)
 
 

@@ -271,3 +271,28 @@ class TestRetrieveSheetDataParsing(unittest.TestCase):
                 retrieve_sheet_data(mock_service, "book", "Monthly Budget!A1:E10")
 
                 mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'!A1:E10")
+
+    def test_already_quoted_combined_title_is_not_double_quoted(self) -> None:
+        """A combined string whose title is ALREADY quoted must not be quoted again (#75 review).
+
+        Valid A1 may quote the title, e.g. "'Monthly Budget'!A1:B2". The wrapper must dequote it
+        so the cache is keyed under the bare title and the API boundary quotes it exactly once —
+        not "'''Monthly Budget'''!A1:B2".
+        """
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.return_value = ([], [])
+            retrieve_sheet_data(mock_service, "book", "'Monthly Budget'!A1:B2")
+
+            mock_get.assert_called_once_with(mock_service, "book", "Monthly Budget", "A1:B2")
+
+    def test_already_quoted_combined_title_fallback_quotes_once(self) -> None:
+        """On the cache-miss fallback, an already-quoted combined title resolves to a single quoting."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.side_effect = RuntimeError("boom")
+            with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+                mock_fetch.return_value = []
+                retrieve_sheet_data(mock_service, "book", "'Monthly Budget'!A1:B2")
+
+                mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'!A1:B2")

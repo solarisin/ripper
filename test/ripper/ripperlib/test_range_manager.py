@@ -22,6 +22,7 @@ from ripper.ripperlib.range_manager import (
     _parse_cell_reference,
     build_a1_range,
     quote_sheet_title,
+    split_sheet_and_range,
 )
 
 # Test timestamp for consistent testing
@@ -842,3 +843,48 @@ class TestQualifiedA1RangeBuilding:
         # When no cell range is supplied, the whole-sheet reference is the quoted title.
         assert build_a1_range("Monthly Budget", None) == "'Monthly Budget'"
         assert build_a1_range("Monthly Budget", "") == "'Monthly Budget'"
+
+
+class TestSplitSheetAndRange:
+    """Tests for split_sheet_and_range: parsing a combined A1 string back to (title, range) (#75)."""
+
+    def test_unquoted_title_and_range(self) -> None:
+        assert split_sheet_and_range("Sheet1!A1:B2") == ("Sheet1", "A1:B2")
+
+    def test_unquoted_whole_sheet(self) -> None:
+        assert split_sheet_and_range("Sheet1") == ("Sheet1", None)
+
+    def test_unquoted_title_with_bang_splits_on_last_separator(self) -> None:
+        # A cell range never contains '!', so the final '!' separates title from range.
+        assert split_sheet_and_range("Q1!Actuals!A1:B5") == ("Q1!Actuals", "A1:B5")
+
+    def test_quoted_title_is_dequoted(self) -> None:
+        # The reported #75 bug: an already-quoted title must come back bare, not re-quoted.
+        assert split_sheet_and_range("'Monthly Budget'!A1:B2") == ("Monthly Budget", "A1:B2")
+
+    def test_quoted_whole_sheet_is_dequoted(self) -> None:
+        assert split_sheet_and_range("'Monthly Budget'") == ("Monthly Budget", None)
+
+    def test_quoted_title_containing_bang_is_one_unit(self) -> None:
+        # The internal '!' is inside the quotes and must not be treated as a separator.
+        assert split_sheet_and_range("'Q1!Actuals'!A1:B5") == ("Q1!Actuals", "A1:B5")
+        assert split_sheet_and_range("'Q1!Actuals'") == ("Q1!Actuals", None)
+
+    def test_quoted_title_with_embedded_apostrophe(self) -> None:
+        # Doubled '' inside the quotes decodes back to a single apostrophe.
+        assert split_sheet_and_range("'Jon''s Data'!A1:B2") == ("Jon's Data", "A1:B2")
+
+    @pytest.mark.parametrize(
+        "title,range_a1",
+        [
+            ("Monthly Budget", "A1:E10"),
+            ("Jon's Data", "A1:B2"),
+            ("Q1!Actuals", "A1"),
+            ("Sheet1", None),
+            ("Monthly Budget", None),
+            ("Q1!Actuals", None),
+        ],
+    )
+    def test_round_trip_with_build_a1_range(self, title: str, range_a1: Optional[str]) -> None:
+        # split_sheet_and_range must invert build_a1_range for any title/range.
+        assert split_sheet_and_range(build_a1_range(title, range_a1)) == (title, range_a1)
