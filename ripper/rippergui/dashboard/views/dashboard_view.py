@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from loguru import logger
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -25,6 +25,37 @@ from ripper.rippergui.dashboard.models import DashboardManager
 from ripper.rippergui.dashboard.models.dashboard import Dashboard
 from ripper.rippergui.dashboard.models.registry import get_widget_class
 from ripper.rippergui.dashboard.services import DashboardDataService, DashboardRefreshResult
+
+
+class _DashboardRefreshWorker(QThread):
+    """Background worker that refreshes a dashboard's data off the GUI thread.
+
+    ``DashboardDataService.refresh_dashboard`` authenticates with Google and fetches sheet
+    ranges over the network; running it on the UI thread freezes the app (and can block on
+    OAuth). This worker runs it in the background and hands the plain-dataclass result back to
+    the GUI thread via :attr:`finished`.
+
+    Signals:
+        finished (object): Emitted with the ``DashboardRefreshResult`` on success.
+        error (str): Emitted with a human-readable message on failure.
+    """
+
+    finished: Signal = Signal(object)  # type: ignore[misc]
+    error: Signal = Signal(str)
+
+    def __init__(self, data_service: DashboardDataService, dashboard: Dashboard, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._data_service = data_service
+        self._dashboard = dashboard
+
+    def run(self) -> None:
+        """Refresh the dashboard's data sources in the background."""
+        try:
+            result = self._data_service.refresh_dashboard(self._dashboard)
+            self.finished.emit(result)
+        except Exception as exc:
+            logger.error(f"Dashboard refresh failed: {exc}")
+            self.error.emit(str(exc))
 
 
 class DashboardView(QWidget):
@@ -249,11 +280,42 @@ class DashboardView(QWidget):
         layout.addWidget(scroll, 1)
 
     def refresh(self) -> None:
-        """Refresh the dashboard view."""
+        """Refresh the dashboard's data in the background, then re-render.
+
+        Authentication and network I/O run on a :class:`_DashboardRefreshWorker` thread so the
+        UI never freezes; the result is applied in :meth:`_on_refresh_finished` on the GUI thread.
+        """
+        if not self.current_dashboard:
+            return
+
+        self.refresh_dashboard_btn.setEnabled(False)
+        self.status_label.setStyleSheet("")
+        self.status_label.setText("Refreshing…")
+
+        # parent=self keeps the QThread alive (Qt ownership) until it finishes; deleteLater then
+        # reaps it. The Refresh button is disabled for the duration, so there is no re-entry.
+        worker = _DashboardRefreshWorker(self.data_service, self.current_dashboard, self)
+        worker.finished.connect(self._on_refresh_finished)
+        worker.error.connect(self._on_refresh_error)
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
+        worker.start()
+
+    @Slot(object)
+    def _on_refresh_finished(self, result: DashboardRefreshResult) -> None:
+        """Apply a completed refresh on the GUI thread."""
+        self.refresh_result = result
+        self.refresh_dashboard_btn.setEnabled(True)
+        self._show_refresh_summary()
         if self.current_dashboard:
-            self.refresh_result = self.data_service.refresh_dashboard(self.current_dashboard)
-            self._show_refresh_summary()
             self._set_current_dashboard(self.current_dashboard)
+
+    @Slot(str)
+    def _on_refresh_error(self, message: str) -> None:
+        """Report a failed refresh on the GUI thread."""
+        self.refresh_dashboard_btn.setEnabled(True)
+        self.status_label.setStyleSheet("color: #b00020;")
+        self.status_label.setText(f"Refresh failed: {message}")
 
     def _show_refresh_summary(self) -> None:
         """Show a concise refresh summary."""
