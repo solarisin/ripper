@@ -310,6 +310,19 @@ class TestAuthManager(unittest.TestCase):
         self.assertEqual(creds["client_id"], "test_id")
         self.assertEqual(creds["client_secret"], "test_secret")
 
+    def test_no_plaintext_token_file_persistence(self):
+        """Tokens must persist only via the keyring TokenStore, never a plaintext file (#31).
+
+        Guards against reintroducing the removed file-based path (%APPDATA%/token.json), which
+        wrote credentials to disk in the clear and resolved to a bogus location on non-Windows
+        platforms where APPDATA is unset.
+        """
+        for attr in ("_save_credentials", "_load_credentials", "_get_token_path"):
+            self.assertFalse(
+                hasattr(AuthManager, attr),
+                f"{attr} reintroduces plaintext token storage (#31); persist via keyring TokenStore instead",
+            )
+
     def test_update_state(self):
         """Test that update_state updates the auth state and emits a signal."""
         # Mock the signal
