@@ -132,6 +132,75 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def test_refresh_data_source_invalidates_cache_on_instance() -> None:
+    """`_refresh_data_source` must call `invalidate_cache` on a SheetDataCache *instance*.
+
+    `invalidate_cache` is an instance method; calling it on the class (the original bug, #67)
+    binds `spreadsheet_id` to `self` and raises AttributeError at runtime. Exercised without a
+    real MainView via the unbound method + a mock `self` (no Qt needed).
+    """
+    mock_self = MagicMock()
+    record = {"spreadsheet_id": "book-1", "sheet_name": "Transactions"}
+
+    with patch("ripper.rippergui.mainview.Db") as mock_db:
+        mock_db.get_data_source.return_value = record
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache") as mock_cache_cls:
+            MainView._refresh_data_source(mock_self, 7)
+
+            # The fix calls SheetDataCache().invalidate_cache(...), i.e. on the instance.
+            mock_cache_cls.return_value.invalidate_cache.assert_called_once_with("book-1", "Transactions")
+            mock_self._load_data_source_by_id.assert_called_once_with(7, stamp_on_success=True)
+
+
+def test_refresh_data_source_aborts_when_cache_invalidation_fails() -> None:
+    """A failed cache invalidation must abort refresh, not serve stale data stamped as fresh (#67 review).
+
+    `invalidate_cache` returns False on failure (DB locked/error) without raising. Refresh must then
+    warn and skip the reload/stamp rather than reloading the still-cached rows and marking them
+    freshly refreshed. Exercised via the unbound method with a mock `self` (no Qt needed).
+    """
+    mock_self = MagicMock()
+    record = {"spreadsheet_id": "book-1", "sheet_name": "Transactions"}
+
+    with patch("ripper.rippergui.mainview.Db") as mock_db:
+        mock_db.get_data_source.return_value = record
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache") as mock_cache_cls:
+            mock_cache_cls.return_value.invalidate_cache.return_value = False
+            with patch("ripper.rippergui.mainview.QMessageBox") as mock_msgbox:
+                MainView._refresh_data_source(mock_self, 7)
+
+            mock_cache_cls.return_value.invalidate_cache.assert_called_once_with("book-1", "Transactions")
+            # User is warned, and the stale data is NOT reloaded/stamped as fresh.
+            mock_msgbox.warning.assert_called_once()
+            mock_self._load_data_source_by_id.assert_not_called()
+
+
+def test_data_fetch_worker_passes_sheet_and_range_separately() -> None:
+    """The worker must call retrieve_sheet_data_for with separate sheet_name/range_a1 (#72 review).
+
+    A whole-sheet load of a '!'-containing title must not be collapsed into a combined
+    'Sheet!Range' string (which would misparse 'Q1!Actuals' as sheet 'Q1'). Exercised via the
+    unbound run() with a mock self, so no QThread/QApplication is needed.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from ripper.rippergui.mainview import _DataFetchWorker
+
+    mock_self = MagicMock()
+    mock_self._spreadsheet_id = "book"
+    mock_self._sheet_name = "Q1!Actuals"
+    mock_self._range_a1 = ""  # whole-sheet load
+
+    with patch("ripper.rippergui.mainview.AuthManager") as mock_auth_cls:
+        mock_auth_cls.return_value.create_sheets_service.return_value = MagicMock()
+        with patch("ripper.ripperlib.sheets_backend.retrieve_sheet_data_for") as mock_retrieve:
+            mock_retrieve.return_value = ([], [])
+            _DataFetchWorker.run(mock_self)
+
+            service = mock_auth_cls.return_value.create_sheets_service.return_value
+            mock_retrieve.assert_called_once_with(service, "book", "Q1!Actuals", "")
+
+
 def test_get_records_for_dashboard_keys_on_range() -> None:
     """Two sources on the same tab but different ranges must resolve to their own widget (#73)."""
     from unittest.mock import MagicMock

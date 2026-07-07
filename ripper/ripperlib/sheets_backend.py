@@ -29,6 +29,7 @@ from ripper.ripperlib.defs import (
     SheetsService,
     SpreadsheetProperties,
 )
+from ripper.ripperlib.range_manager import build_a1_range, split_sheet_and_range
 
 
 def fetch_sheets_of_spreadsheet(service: SheetsService, spreadsheet_id: str) -> list[SheetProperties]:
@@ -258,47 +259,76 @@ def fetch_data_from_spreadsheet(service: SheetsService, spreadsheet_id: str, ran
         return []
 
 
-def retrieve_sheet_data(
-    service: SheetsService, spreadsheet_id: str, range_name: str
+def retrieve_sheet_data_for(
+    service: SheetsService, spreadsheet_id: str, sheet_name: str, range_a1: str | None = None
 ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
     """
-    Retrieve sheet data from cache or API with intelligent caching.
+    Retrieve sheet data for a sheet name and optional cell range supplied SEPARATELY.
 
-    This function implements smart caching logic:
-    1. Check if the exact range or a super-range is cached
-    2. For sub-ranges, return subset from cache
-    3. For overlapping ranges, combine cached data with API calls for missing parts
-    4. For completely new ranges, fetch from API and cache the result
+    This is the preferred entry point. Passing the title and range separately preserves
+    whether a range was supplied, so a whole-sheet load of a title that itself contains
+    ``!`` (e.g. ``Q1!Actuals``) is treated as the whole-sheet reference ``'Q1!Actuals'``
+    rather than being misparsed as sheet ``Q1`` + range ``Actuals``. The title is quoted at
+    the API boundary (see :func:`ripper.ripperlib.range_manager.build_a1_range`).
 
     Args:
         service: Authenticated Google Sheets API service
         spreadsheet_id: The ID of the spreadsheet to read from
-        range_name: The A1 notation of the range to read (includes sheet name and cell range)    Returns:
-        Tuple of (sheet_data, range_sources) where sheet_data is a list of lists containing
-        the values and range_sources is a list of (LoadSource, range_str) pairs indicating
-        which ranges came from which sources
+        sheet_name: The (unquoted) sheet title
+        range_a1: The cell-range portion (e.g. ``A1:E10``); falsy means the whole sheet
 
-    Raises:
-        ValueError: If the range format is invalid
+    Returns:
+        Tuple of (sheet_data, range_sources); see the caching logic in
+        :class:`ripper.ripperlib.sheet_data_cache.SheetDataCache`.
     """
+    if not range_a1:
+        # Whole-sheet reference: quote the title as a single identifier (cannot be confused
+        # with a 'sheet!range' string even when the title contains '!').
+        whole_sheet = build_a1_range(sheet_name, None)
+        return fetch_data_from_spreadsheet(service, spreadsheet_id, whole_sheet), [(LoadSource.API, whole_sheet)]
+
     try:
-        # Parse sheet name and range from the range_name
-        if "!" not in range_name:
-            raise ValueError(f"Range must include sheet name (e.g., 'Sheet1!A1:B5'): {range_name}")
-
-        sheet_name, range_part = range_name.split("!", 1)
-
-        # Use the sheet data cache
+        # Use the sheet data cache (it quotes the title at the API boundary).
         from ripper.ripperlib.sheet_data_cache import SheetDataCache
 
         cache = SheetDataCache()
 
-        return cache.get_sheet_data(service, spreadsheet_id, sheet_name, range_part)
+        return cache.get_sheet_data(service, spreadsheet_id, sheet_name, range_a1)
 
     except Exception as e:
-        logger.error(f"Error in retrieve_sheet_data: {e}")
-        # Fallback to direct API call
-        return fetch_data_from_spreadsheet(service, spreadsheet_id, range_name), [(LoadSource.API, range_name)]
+        logger.error(f"Error in retrieve_sheet_data for {sheet_name!r}!{range_a1!r}: {e}")
+        # Fallback to a direct API call, quoting the title so special-character names resolve.
+        fallback_range = build_a1_range(sheet_name, range_a1)
+        return fetch_data_from_spreadsheet(service, spreadsheet_id, fallback_range), [(LoadSource.API, fallback_range)]
+
+
+def retrieve_sheet_data(
+    service: SheetsService, spreadsheet_id: str, range_name: str
+) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
+    """
+    Retrieve sheet data from a combined ``Sheet!Range`` string.
+
+    Convenience wrapper around :func:`retrieve_sheet_data_for` for callers that already hold a
+    combined range string (e.g. dashboard/Tiller fetches). The string is parsed by
+    :func:`ripper.ripperlib.range_manager.split_sheet_and_range`, which handles single-quoted
+    titles (including titles that contain ``!``) and dequotes the title so it is quoted exactly
+    once at the API boundary. The one still-ambiguous case is an *unquoted, whole-sheet* title
+    that contains ``!`` (no range to anchor the split); such callers should use
+    :func:`retrieve_sheet_data_for` with the title and range separately.
+
+    Args:
+        service: Authenticated Google Sheets API service
+        spreadsheet_id: The ID of the spreadsheet to read from
+        range_name: The A1 notation of the range to read (includes sheet name and cell range)
+
+    Returns:
+        Tuple of (sheet_data, range_sources).
+    """
+    # Parse into an unquoted title + optional range. Handles single-quoted titles (which may
+    # already appear in valid A1, e.g. "'Monthly Budget'!A1:B2") so the title is not double-quoted
+    # when retrieve_sheet_data_for re-quotes it at the API boundary.
+    sheet_name, range_part = split_sheet_and_range(range_name)
+    return retrieve_sheet_data_for(service, spreadsheet_id, sheet_name, range_part)
 
 
 def get_tiller_transactions(

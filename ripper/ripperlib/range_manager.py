@@ -12,6 +12,80 @@ from datetime import datetime
 from beartype.typing import Optional, Tuple
 
 
+def quote_sheet_title(sheet_name: str) -> str:
+    """Quote a sheet title for use in A1 notation.
+
+    Google Sheets requires a sheet name to be single-quoted when it contains spaces or
+    special characters, with any embedded apostrophe doubled. We always quote: it is valid
+    for every title and is *required* for titles that would otherwise be ambiguous (e.g. a
+    title that looks like a cell reference such as ``A1``, or one containing ``!``).
+
+    Args:
+        sheet_name: The raw (unquoted) sheet title.
+
+    Returns:
+        The title wrapped in single quotes with embedded apostrophes doubled.
+    """
+    return "'" + sheet_name.replace("'", "''") + "'"
+
+
+def build_a1_range(sheet_name: str, range_a1: Optional[str] = None) -> str:
+    """Build a qualified A1 range string, quoting the sheet title.
+
+    Args:
+        sheet_name: The raw (unquoted) sheet title.
+        range_a1: The cell-range portion (e.g. ``A1:E10``). If falsy, the result is the
+            whole-sheet reference (the quoted title alone).
+
+    Returns:
+        A qualified A1 range such as ``'Monthly Budget'!A1:E10``, or just ``'Monthly Budget'``
+        when no cell range is supplied.
+    """
+    quoted = quote_sheet_title(sheet_name)
+    if range_a1:
+        return f"{quoted}!{range_a1}"
+    return quoted
+
+
+def split_sheet_and_range(range_name: str) -> tuple[str, Optional[str]]:
+    """Split a combined A1 string into an *unquoted* sheet title and optional cell range.
+
+    Inverse of :func:`build_a1_range`. A sheet title in valid A1 notation may be single-quoted
+    (required for titles with spaces/specials; embedded apostrophes are doubled). This parses a
+    quoted title as one unit — so a title that itself contains ``!`` (e.g. ``'Q1!Actuals'``) is
+    not split on the internal ``!`` — and returns the raw, unquoted title so callers can re-quote
+    it exactly once at the API boundary. Passing an already-quoted title straight through would
+    double-quote it (e.g. ``'''Monthly Budget'''``) and desync cache keys.
+
+    Args:
+        range_name: A combined reference such as ``'Monthly Budget'!A1:B2``, ``Sheet1!A1:B2``,
+            or a whole-sheet title like ``'Monthly Budget'``.
+
+    Returns:
+        ``(title, range_a1)`` where ``range_a1`` is ``None`` for a whole-sheet reference.
+    """
+    if range_name.startswith("'"):
+        # Quoted title: scan to the closing quote, treating a doubled '' as an escaped apostrophe.
+        i = 1
+        while i < len(range_name):
+            if range_name[i] == "'":
+                if i + 1 < len(range_name) and range_name[i + 1] == "'":
+                    i += 2  # escaped apostrophe inside the title
+                    continue
+                break  # closing quote
+            i += 1
+        title = range_name[1:i].replace("''", "'")
+        rest = range_name[i + 1 :]
+        return (title, rest[1:]) if rest.startswith("!") else (title, None)
+
+    # Unquoted: a cell range never contains '!', so the FINAL '!' (if any) separates the
+    # (possibly '!'-containing) title from the range.
+    if "!" not in range_name:
+        return range_name, None
+    sheet_name, range_part = range_name.rsplit("!", 1)
+    return sheet_name, range_part
+
+
 @dataclass(frozen=True)
 class CellRange:
     """

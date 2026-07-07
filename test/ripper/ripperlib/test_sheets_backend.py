@@ -7,6 +7,8 @@ from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProper
 from ripper.ripperlib.sheets_backend import (
     fetch_sheets_of_spreadsheet,
     fetch_spreadsheets,
+    retrieve_sheet_data,
+    retrieve_sheet_data_for,
     retrieve_sheets_of_spreadsheet,
     retrieve_spreadsheets,
 )
@@ -204,3 +206,93 @@ class TestSheetsBackend(unittest.TestCase):
                     mock_get_db.assert_called_once_with(spreadsheet_id)
                     mock_fetch_api.assert_called_once_with(mock_sheets_service, spreadsheet_id)
                     mock_store_db.assert_called_once_with(spreadsheet_id, mock_api_sheets)
+
+
+class TestRetrieveSheetDataParsing(unittest.TestCase):
+    """Tests for sheet-name parsing and quoting in retrieve_sheet_data (#72)."""
+
+    def test_whole_sheet_title_with_bang_via_separate_args(self) -> None:
+        """A whole-sheet load of a '!'-containing title stays a whole-sheet reference (#72 review).
+
+        Passing sheet_name and range separately avoids the combined-string ambiguity where
+        'Q1!Actuals' (no range) would be misparsed as sheet 'Q1' + range 'Actuals'.
+        """
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = []
+            retrieve_sheet_data_for(mock_service, "book", "Q1!Actuals", None)
+            mock_fetch.assert_called_once_with(mock_service, "book", "'Q1!Actuals'")
+
+    def test_empty_range_is_treated_as_whole_sheet(self) -> None:
+        """An empty range_a1 (whole-sheet load) quotes the title rather than appending '!'."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = []
+            retrieve_sheet_data_for(mock_service, "book", "Monthly Budget", "")
+            mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'")
+
+    def test_ranged_separate_args_go_through_cache(self) -> None:
+        """With a range supplied, the bare title + range are handed to the cache verbatim."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.return_value = ([], [])
+            retrieve_sheet_data_for(mock_service, "book", "Q1!Actuals", "A1:B5")
+            mock_get.assert_called_once_with(mock_service, "book", "Q1!Actuals", "A1:B5")
+
+    def test_title_containing_bang_is_parsed_on_last_separator(self) -> None:
+        """A sheet title that legitimately contains '!' must be split on the LAST '!'.
+
+        Cell ranges never contain '!', so the final '!' always separates title from range.
+        The title is then passed (unquoted) to the cache, which quotes at the API boundary.
+        """
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.return_value = ([], [])
+            retrieve_sheet_data(mock_service, "book", "Q1!Actuals!A1:B5")
+
+            mock_get.assert_called_once_with(mock_service, "book", "Q1!Actuals", "A1:B5")
+
+    def test_whole_sheet_bare_title_is_quoted_for_api(self) -> None:
+        """A bare sheet title (no cell range, e.g. a whole-sheet load) must be quoted for the API."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = []
+            retrieve_sheet_data(mock_service, "book", "Monthly Budget")
+
+            mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'")
+
+    def test_fallback_quotes_special_title(self) -> None:
+        """If the cache path raises, the direct fallback must still quote the title for the API."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.side_effect = RuntimeError("boom")
+            with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+                mock_fetch.return_value = []
+                retrieve_sheet_data(mock_service, "book", "Monthly Budget!A1:E10")
+
+                mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'!A1:E10")
+
+    def test_already_quoted_combined_title_is_not_double_quoted(self) -> None:
+        """A combined string whose title is ALREADY quoted must not be quoted again (#75 review).
+
+        Valid A1 may quote the title, e.g. "'Monthly Budget'!A1:B2". The wrapper must dequote it
+        so the cache is keyed under the bare title and the API boundary quotes it exactly once —
+        not "'''Monthly Budget'''!A1:B2".
+        """
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.return_value = ([], [])
+            retrieve_sheet_data(mock_service, "book", "'Monthly Budget'!A1:B2")
+
+            mock_get.assert_called_once_with(mock_service, "book", "Monthly Budget", "A1:B2")
+
+    def test_already_quoted_combined_title_fallback_quotes_once(self) -> None:
+        """On the cache-miss fallback, an already-quoted combined title resolves to a single quoting."""
+        mock_service = MagicMock()
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache.get_sheet_data") as mock_get:
+            mock_get.side_effect = RuntimeError("boom")
+            with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+                mock_fetch.return_value = []
+                retrieve_sheet_data(mock_service, "book", "'Monthly Budget'!A1:B2")
+
+                mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'!A1:B2")

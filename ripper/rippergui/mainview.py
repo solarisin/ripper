@@ -54,11 +54,19 @@ class _DataFetchWorker(QThread):
     finished: Signal = Signal(list, list)  # type: ignore[misc]
     error: Signal = Signal(str)
 
-    def __init__(self, spreadsheet_id: str, range_name: str, parent: QWidget | None = None) -> None:
-        """Initialise with the target spreadsheet ID and range name."""
+    def __init__(
+        self, spreadsheet_id: str, sheet_name: str, range_a1: str | None, parent: QWidget | None = None
+    ) -> None:
+        """Initialise with the target spreadsheet ID, sheet title, and optional cell range.
+
+        ``sheet_name`` and ``range_a1`` are kept separate (rather than a combined
+        ``Sheet!Range`` string) so a whole-sheet load of a title containing ``!`` is not
+        misparsed.
+        """
         super().__init__(parent)
         self._spreadsheet_id = spreadsheet_id
-        self._range_name = range_name
+        self._sheet_name = sheet_name
+        self._range_a1 = range_a1
 
     def run(self) -> None:
         """Authenticate and fetch sheet data in the background."""
@@ -67,8 +75,8 @@ class _DataFetchWorker(QThread):
             if not service:
                 self.error.emit("Could not authenticate with Google Sheets API.")
                 return
-            sheet_data, range_sources = sheets_backend.retrieve_sheet_data(
-                service, self._spreadsheet_id, self._range_name
+            sheet_data, range_sources = sheets_backend.retrieve_sheet_data_for(
+                service, self._spreadsheet_id, self._sheet_name, self._range_a1
             )
             self.finished.emit(sheet_data, range_sources)
         except Exception as exc:
@@ -435,14 +443,13 @@ class MainView(QMainWindow):
         sheet_name = record["sheet_name"]
         range_a1 = record["range_a1"]
         name = record["name"]
-        range_name = f"{sheet_name}!{range_a1}" if range_a1 else sheet_name
 
         progress = QProgressDialog("Loading data\u2026", "", 0, 0, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(300)
         progress.setValue(0)
 
-        worker = _DataFetchWorker(spreadsheet_id, range_name, self)
+        worker = _DataFetchWorker(spreadsheet_id, sheet_name, range_a1, self)
         self._active_workers.add(worker)
 
         def on_finished(sheet_data: list, range_sources: list) -> None:
@@ -497,7 +504,21 @@ class MainView(QMainWindow):
         if record is None:
             return
 
-        SheetDataCache.invalidate_cache(record["spreadsheet_id"], record["sheet_name"])
+        # invalidate_cache returns False on failure (DB locked/error) without raising. If we
+        # ignored it and reloaded, the still-cached stale rows would be served from the DB and
+        # then stamped as freshly refreshed — a silent wrong result. Abort and tell the user.
+        if not SheetDataCache().invalidate_cache(record["spreadsheet_id"], record["sheet_name"]):
+            logger.warning(
+                f"Refresh aborted: could not invalidate cache for data source {ds_id} "
+                f"({record['spreadsheet_id']}!{record['sheet_name']})"
+            )
+            QMessageBox.warning(
+                self,
+                "Refresh Failed",
+                "Could not clear the cached data for this source, so it was not refreshed.\n\nPlease try again.",
+            )
+            return
+
         self._load_data_source_by_id(ds_id, stamp_on_success=True)
 
     # Actions ###########################################################################
@@ -710,14 +731,13 @@ class MainView(QMainWindow):
         sheet_name = source_info["sheet_name"]
         sheet_range = source_info["sheet_range"]
         data_source_name = source_info.get("data_source_name") or f"{source_info['spreadsheet_name']} – {sheet_name}"
-        range_name = f"{sheet_name}!{sheet_range}" if sheet_range else sheet_name
 
         progress = QProgressDialog("Loading data…", "", 0, 0, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(300)
         progress.setValue(0)
 
-        worker = _DataFetchWorker(spreadsheet_id, range_name, self)
+        worker = _DataFetchWorker(spreadsheet_id, sheet_name, sheet_range, self)
         self._active_workers.add(worker)
 
         def on_finished(sheet_data: list, range_sources: list) -> None:
