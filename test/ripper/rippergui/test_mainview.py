@@ -176,3 +176,56 @@ def test_data_fetch_worker_passes_sheet_and_range_separately() -> None:
 
             service = mock_auth_cls.return_value.create_sheets_service.return_value
             mock_retrieve.assert_called_once_with(service, "book", "Q1!Actuals", "")
+
+
+def test_get_records_for_dashboard_keys_on_range() -> None:
+    """Two sources on the same tab but different ranges must resolve to their own widget (#73)."""
+    from unittest.mock import MagicMock
+
+    mock_self = MagicMock()
+    widget_a = MagicMock()
+    widget_a.get_filtered_records.return_value = [{"row": "a"}]
+    widget_b = MagicMock()
+    widget_b.get_filtered_records.return_value = [{"row": "b"}]
+    mock_self._table_widgets = {
+        ("book", "Transactions", "A1:E10"): widget_a,
+        ("book", "Transactions", "G1:K10"): widget_b,
+    }
+
+    assert MainView._get_records_for_dashboard(mock_self, "book", "Transactions", "A1:E10") == [{"row": "a"}]
+    assert MainView._get_records_for_dashboard(mock_self, "book", "Transactions", "G1:K10") == [{"row": "b"}]
+    # A range with no loaded widget falls back to the API path (None).
+    assert MainView._get_records_for_dashboard(mock_self, "book", "Transactions", "Z1:Z9") is None
+
+
+def test_load_data_source_passes_range_to_dock_for_dashboard_keying() -> None:
+    """A loaded existing source must carry its range so the dashboard provider key matches (#73 review).
+
+    Without it, `_show_data_source_in_dock` stores the widget under (spreadsheet_id, sheet_name, "")
+    while the dashboard queries with the real range_a1, so the provider always misses. Exercised
+    via the unbound method with Qt (QProgressDialog/worker) patched out.
+    """
+    from unittest.mock import MagicMock, patch
+
+    mock_self = MagicMock()
+    record = {
+        "spreadsheet_id": "book",
+        "sheet_name": "Transactions",
+        "range_a1": "G1:K10",
+        "name": "My Source",
+        "spreadsheet_name": "Book",
+    }
+
+    with patch("ripper.rippergui.mainview.Db") as mock_db:
+        mock_db.get_data_source.return_value = record
+        with patch("ripper.rippergui.mainview.QProgressDialog"):
+            with patch("ripper.rippergui.mainview._DataFetchWorker") as mock_worker_cls:
+                worker = mock_worker_cls.return_value
+                MainView._load_data_source_by_id(mock_self, 5)
+
+                # Capture the on_finished slot and drive it with sample data.
+                on_finished = worker.finished.connect.call_args_list[0].args[0]
+                on_finished([["Date", "Amount"], ["2024-01-01", "5"]], [("api", "'Transactions'!G1:K10")])
+
+    source_info = mock_self._show_data_source_in_dock.call_args.args[3]
+    assert source_info["sheet_range"] == "G1:K10"

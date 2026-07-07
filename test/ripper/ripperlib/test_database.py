@@ -126,6 +126,64 @@ class TestDatabaseIntegration(unittest.TestCase):
         retrieved_metadata = self.db.get_sheet_properties_of_spreadsheet("non_existent_id")
         self.assertEqual(len(retrieved_metadata), 0)
 
+    def _store_single_grid_sheet(self, spreadsheet_id: str, sheet_id: int, title: str) -> None:
+        """Store a spreadsheet with one GRID tab of the given sheetId/title."""
+        self.db.store_spreadsheet_properties(
+            spreadsheet_id,
+            SpreadsheetProperties(
+                {
+                    "id": spreadsheet_id,
+                    "name": spreadsheet_id,
+                    "modifiedTime": "2024-01-01T00:00:00Z",
+                    "createdTime": "2024-01-01T00:00:00Z",
+                    "webViewLink": "",
+                    "owners": [],
+                    "size": 0,
+                    "shared": False,
+                }
+            ),
+        )
+        metadata: Dict[str, Any] = {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        "index": 0,
+                        "title": title,
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": 10, "columnCount": 5},
+                    }
+                }
+            ]
+        }
+        self.db.store_sheet_properties(spreadsheet_id, SheetProperties.from_api_result(metadata))
+
+    def test_sheets_with_colliding_sheetid_across_spreadsheets(self) -> None:
+        """Two spreadsheets whose tabs share a sheetId must keep independent metadata (#70)."""
+        # The default first tab of every spreadsheet is sheetId 0, so collisions are common.
+        self._store_single_grid_sheet("book-a", 0, "A tab")
+        self._store_single_grid_sheet("book-b", 0, "B tab")
+
+        a = self.db.get_sheet_properties_of_spreadsheet("book-a")
+        b = self.db.get_sheet_properties_of_spreadsheet("book-b")
+
+        self.assertEqual([s.title for s in a], ["A tab"])
+        self.assertEqual([s.title for s in b], ["B tab"])
+        # Grid dimensions stay attached to the correct spreadsheet's tab.
+        self.assertEqual(a[0].grid.row_count, 10)
+        self.assertEqual(b[0].grid.column_count, 5)
+
+    def test_deleting_one_spreadsheet_keeps_other_colliding_sheet(self) -> None:
+        """Re-storing one spreadsheet's sheets must not disturb another's identical sheetId (#70)."""
+        self._store_single_grid_sheet("book-a", 0, "A tab")
+        self._store_single_grid_sheet("book-b", 0, "B tab")
+
+        # Re-store book-a (the delete+insert path) and confirm book-b is untouched.
+        self._store_single_grid_sheet("book-a", 0, "A tab v2")
+
+        b = self.db.get_sheet_properties_of_spreadsheet("book-b")
+        self.assertEqual([s.title for s in b], ["B tab"])
+
     def test_store_sheet_properties_raises_for_missing_spreadsheet(self) -> None:
         """store_sheet_properties must reject a parent spreadsheet absent from the DB (#32)."""
         metadata: Dict[str, Any] = {
