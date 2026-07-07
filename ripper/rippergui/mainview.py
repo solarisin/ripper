@@ -504,7 +504,21 @@ class MainView(QMainWindow):
         if record is None:
             return
 
-        SheetDataCache().invalidate_cache(record["spreadsheet_id"], record["sheet_name"])
+        # invalidate_cache returns False on failure (DB locked/error) without raising. If we
+        # ignored it and reloaded, the still-cached stale rows would be served from the DB and
+        # then stamped as freshly refreshed — a silent wrong result. Abort and tell the user.
+        if not SheetDataCache().invalidate_cache(record["spreadsheet_id"], record["sheet_name"]):
+            logger.warning(
+                f"Refresh aborted: could not invalidate cache for data source {ds_id} "
+                f"({record['spreadsheet_id']}!{record['sheet_name']})"
+            )
+            QMessageBox.warning(
+                self,
+                "Refresh Failed",
+                "Could not clear the cached data for this source, so it was not refreshed.\n\nPlease try again.",
+            )
+            return
+
         self._load_data_source_by_id(ds_id, stamp_on_success=True)
 
     # Actions ###########################################################################

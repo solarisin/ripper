@@ -152,6 +152,29 @@ def test_refresh_data_source_invalidates_cache_on_instance() -> None:
             mock_self._load_data_source_by_id.assert_called_once_with(7, stamp_on_success=True)
 
 
+def test_refresh_data_source_aborts_when_cache_invalidation_fails() -> None:
+    """A failed cache invalidation must abort refresh, not serve stale data stamped as fresh (#67 review).
+
+    `invalidate_cache` returns False on failure (DB locked/error) without raising. Refresh must then
+    warn and skip the reload/stamp rather than reloading the still-cached rows and marking them
+    freshly refreshed. Exercised via the unbound method with a mock `self` (no Qt needed).
+    """
+    mock_self = MagicMock()
+    record = {"spreadsheet_id": "book-1", "sheet_name": "Transactions"}
+
+    with patch("ripper.rippergui.mainview.Db") as mock_db:
+        mock_db.get_data_source.return_value = record
+        with patch("ripper.ripperlib.sheet_data_cache.SheetDataCache") as mock_cache_cls:
+            mock_cache_cls.return_value.invalidate_cache.return_value = False
+            with patch("ripper.rippergui.mainview.QMessageBox") as mock_msgbox:
+                MainView._refresh_data_source(mock_self, 7)
+
+            mock_cache_cls.return_value.invalidate_cache.assert_called_once_with("book-1", "Transactions")
+            # User is warned, and the stale data is NOT reloaded/stamped as fresh.
+            mock_msgbox.warning.assert_called_once()
+            mock_self._load_data_source_by_id.assert_not_called()
+
+
 def test_data_fetch_worker_passes_sheet_and_range_separately() -> None:
     """The worker must call retrieve_sheet_data_for with separate sheet_name/range_a1 (#72 review).
 
