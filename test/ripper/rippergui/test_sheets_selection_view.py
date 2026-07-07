@@ -3,7 +3,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtWidgets import QWidget
 
-from ripper.rippergui.sheets_selection_view import SheetsSelectionDialog
+from ripper.rippergui.sheets_selection_view import (
+    SheetsSelectionDialog,
+    _SheetMetadataLoader,
+    _SpreadsheetLoader,
+)
 from ripper.rippergui.spreadsheet_thumbnail_widget import SpreadsheetThumbnailWidget
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProperties
@@ -443,3 +447,63 @@ class TestSheetsSelectionDialog:
         # Check that the sheet range was cleared
         assert dialog.sheet_range_input.text() == ""
         assert not dialog.select_button.isEnabled()
+
+
+class TestLoaderReferenceTracking:
+    """Identity-safe background-loader tracking guards the #74 out-of-order completion race.
+
+    These exercise the real _track_loader/_retire_loader/_stop_loaders logic against a mock
+    dialog + mock workers, so no Qt event loop or network is needed.
+    """
+
+    @staticmethod
+    def _mock_dialog():
+        dialog = MagicMock()
+        dialog._active_loaders = set()
+        dialog._loader = None
+        return dialog
+
+    def test_late_completion_of_superseded_loader_keeps_replacement(self):
+        """A superseded worker finishing late must not clear its replacement's reference (#74)."""
+        dialog = self._mock_dialog()
+        worker_a = MagicMock(spec=_SpreadsheetLoader)
+        worker_b = MagicMock(spec=_SpreadsheetLoader)
+
+        SheetsSelectionDialog._track_loader(dialog, "_loader", worker_a)
+        assert dialog._loader is worker_a
+
+        SheetsSelectionDialog._track_loader(dialog, "_loader", worker_b)  # B supersedes A; both running
+        assert dialog._loader is worker_b
+        assert {worker_a, worker_b} <= dialog._active_loaders
+
+        # A finishes AFTER B started; its retire must leave B intact and still tracked.
+        SheetsSelectionDialog._retire_loader(dialog, "_loader", worker_a)
+        assert dialog._loader is worker_b
+        assert worker_a not in dialog._active_loaders
+        assert worker_b in dialog._active_loaders
+
+    def test_current_loader_completion_clears_and_untracks(self):
+        """When the CURRENT loader finishes, it clears the attribute and drops from tracking."""
+        dialog = self._mock_dialog()
+        worker = MagicMock(spec=_SpreadsheetLoader)
+
+        SheetsSelectionDialog._track_loader(dialog, "_loader", worker)
+        SheetsSelectionDialog._retire_loader(dialog, "_loader", worker)
+
+        assert dialog._loader is None
+        assert worker not in dialog._active_loaders
+
+    def test_stop_loaders_waits_for_every_tracked_worker(self):
+        """_stop_loaders must wait for all in-flight loaders, not just the current attribute (#74)."""
+        dialog = self._mock_dialog()
+        running = MagicMock(spec=_SheetMetadataLoader)
+        running.isRunning.return_value = True
+        already_done = MagicMock(spec=_SpreadsheetLoader)
+        already_done.isRunning.return_value = False
+        dialog._active_loaders = {running, already_done}
+
+        SheetsSelectionDialog._stop_loaders(dialog)
+
+        running.wait.assert_called_once_with(1000)
+        already_done.wait.assert_not_called()
+        assert dialog._active_loaders == set()

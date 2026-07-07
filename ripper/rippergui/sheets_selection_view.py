@@ -8,7 +8,7 @@ selected. Network calls are performed on background threads to keep the UI respo
 
 import traceback
 
-from beartype.typing import Optional
+from beartype.typing import Optional, Union
 from loguru import logger
 from PySide6.QtCore import QSize, Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -92,6 +92,10 @@ class _SheetMetadataLoader(QThread):
             self.error.emit(str(e))
 
 
+# Either background loader — both expose ``finished``/``error`` signals over QThread.
+_Loader = Union[_SpreadsheetLoader, _SheetMetadataLoader]
+
+
 class SheetsSelectionDialog(QDialog):
     """
     Dialog for creating a named data source from a Google Sheet range.
@@ -127,6 +131,9 @@ class SheetsSelectionDialog(QDialog):
         self.sheet_properties_list: list[SheetProperties] = []
         self._loader: Optional[_SpreadsheetLoader] = None
         self._sheet_loader: Optional[_SheetMetadataLoader] = None
+        # Every in-flight loader stays tracked here until it completes, even after it has been
+        # superseded, so _stop_loaders can wait for ALL running threads on dialog close (#74).
+        self._active_loaders: set[_Loader] = set()
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -219,10 +226,9 @@ class SheetsSelectionDialog(QDialog):
         self.load_spreadsheets()
 
     def _stop_loaders(self) -> None:
-        """Disconnect and wait briefly for any running background loaders."""
-        for attr in ("_loader", "_sheet_loader"):
-            loader = getattr(self, attr, None)
-            if loader is not None and loader.isRunning():
+        """Disconnect and wait briefly for every in-flight background loader."""
+        for loader in list(self._active_loaders):
+            if loader.isRunning():
                 try:
                     loader.finished.disconnect()
                     loader.error.disconnect()
@@ -230,6 +236,45 @@ class SheetsSelectionDialog(QDialog):
                     pass
                 loader.setParent(None)  # detach so dialog destruction won't force-destroy a running thread
                 loader.wait(1000)
+        self._active_loaders.clear()
+
+    def _track_loader(self, attr: str, worker: _Loader) -> None:
+        """Register *worker* as the current loader for *attr* with identity-safe cleanup (#74).
+
+        The worker is added to the active-loader set and, on completion, removes itself and clears
+        the attribute ONLY if it is still the current loader — so a superseded worker finishing
+        late can never null out the reference to its replacement.
+        """
+        setattr(self, attr, worker)
+        self._active_loaders.add(worker)
+        worker.finished.connect(lambda *_, w=worker: self._retire_loader(attr, w))
+        worker.error.connect(lambda *_, w=worker: self._retire_loader(attr, w))
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
+
+    def _retire_loader(self, attr: str, worker: _Loader) -> None:
+        """Drop a finished worker from tracking; clear the attribute only if it is still current."""
+        self._active_loaders.discard(worker)
+        if getattr(self, attr, None) is worker:
+            setattr(self, attr, None)
+
+    def _supersede_loader(self, attr: str) -> None:
+        """Detach the current loader (if running) so its stale result is discarded.
+
+        The worker stays in the active set and keeps identity-safe self-cleanup, so it is never
+        destroyed while still running and cannot clear its replacement's reference.
+        """
+        old = getattr(self, attr, None)
+        if old is not None and old.isRunning():
+            try:
+                old.finished.disconnect()
+                old.error.disconnect()
+            except RuntimeError:
+                pass
+            old.finished.connect(lambda *_, w=old: self._retire_loader(attr, w))
+            old.error.connect(lambda *_, w=old: self._retire_loader(attr, w))
+            old.finished.connect(old.deleteLater)
+            old.error.connect(old.deleteLater)
 
     def done(self, result: int) -> None:
         """Stop any running loaders before the dialog closes."""
@@ -244,27 +289,22 @@ class SheetsSelectionDialog(QDialog):
         indeterminate progress dialog is shown while the fetch is in flight.
         Any previously-running loader is stopped before starting a new one.
         """
-        # Disconnect any in-flight loader so its results are silently discarded;
-        # don't quit()/wait() — that would block the UI while the network call runs.
-        if self._loader is not None and self._loader.isRunning():
-            self._loader.finished.disconnect()
-            self._loader.error.disconnect()
+        # Supersede any in-flight loader so its stale result is discarded; don't quit()/wait() —
+        # that would block the UI while the network call runs. It stays tracked until it finishes.
+        self._supersede_loader("_loader")
 
         self._progress = QProgressDialog("Loading spreadsheets…", "", 0, 0, self)
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress.setMinimumDuration(300)
         self._progress.setValue(0)
 
-        self._loader = _SpreadsheetLoader(self)
-        self._loader.finished.connect(self._on_spreadsheets_loaded)
-        self._loader.error.connect(self._on_load_error)
-        self._loader.finished.connect(self._progress.reset)
-        self._loader.error.connect(self._progress.reset)
-        self._loader.finished.connect(self._loader.deleteLater)
-        self._loader.finished.connect(lambda *_: setattr(self, "_loader", None))
-        self._loader.error.connect(self._loader.deleteLater)
-        self._loader.error.connect(lambda *_: setattr(self, "_loader", None))
-        self._loader.start()
+        loader = _SpreadsheetLoader(self)
+        loader.finished.connect(self._on_spreadsheets_loaded)
+        loader.error.connect(self._on_load_error)
+        loader.finished.connect(self._progress.reset)
+        loader.error.connect(self._progress.reset)
+        self._track_loader("_loader", loader)
+        loader.start()
 
     def _on_spreadsheets_loaded(self, spreadsheets: list) -> None:
         """
@@ -362,12 +402,10 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = details
         self.details_content.setText(self.details_text)
 
-        # Disconnect any in-flight metadata loader so its stale results are silently
-        # discarded.  Don't quit()/wait() — that would block the UI during a slow
-        # network call.  Stale results are also guarded by the loaded_for_id check.
-        if self._sheet_loader is not None and self._sheet_loader.isRunning():
-            self._sheet_loader.finished.disconnect()
-            self._sheet_loader.error.disconnect()
+        # Supersede any in-flight metadata loader so its stale result is discarded.  Don't
+        # quit()/wait() — that would block the UI during a slow network call.  Stale results are
+        # also guarded by the loaded_for_id check.  It stays tracked until it finishes.
+        self._supersede_loader("_sheet_loader")
 
         # Fetch sheet metadata on a background thread
         self._sheet_progress = QProgressDialog("Loading sheet details…", "", 0, 0, self)
@@ -377,18 +415,13 @@ class SheetsSelectionDialog(QDialog):
 
         # Capture the ID so stale results can be discarded in the callback
         loading_for_id = spreadsheet_properties.id
-        self._sheet_loader = _SheetMetadataLoader(loading_for_id, self)
-        self._sheet_loader.finished.connect(
-            lambda props, _id=loading_for_id: self._on_sheet_metadata_loaded(props, _id)
-        )
-        self._sheet_loader.error.connect(self._on_sheet_metadata_error)
-        self._sheet_loader.finished.connect(self._sheet_progress.reset)
-        self._sheet_loader.error.connect(self._sheet_progress.reset)
-        self._sheet_loader.finished.connect(self._sheet_loader.deleteLater)
-        self._sheet_loader.finished.connect(lambda *_: setattr(self, "_sheet_loader", None))
-        self._sheet_loader.error.connect(self._sheet_loader.deleteLater)
-        self._sheet_loader.error.connect(lambda *_: setattr(self, "_sheet_loader", None))
-        self._sheet_loader.start()
+        sheet_loader = _SheetMetadataLoader(loading_for_id, self)
+        sheet_loader.finished.connect(lambda props, _id=loading_for_id: self._on_sheet_metadata_loaded(props, _id))
+        sheet_loader.error.connect(self._on_sheet_metadata_error)
+        sheet_loader.finished.connect(self._sheet_progress.reset)
+        sheet_loader.error.connect(self._sheet_progress.reset)
+        self._track_loader("_sheet_loader", sheet_loader)
+        sheet_loader.start()
 
     def _on_sheet_metadata_loaded(self, sheet_props: list, loaded_for_id: str) -> None:
         """
