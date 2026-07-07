@@ -48,7 +48,7 @@ Run `uv run ruff format .` to apply formatting and `uv run ruff check --fix .` t
 - `widgets/` — Reusable Qt widgets (e.g., `accordion_widget.py`).
 - `dashboard/` — Prototype dashboard subsystem:
   - `models/` — `Dashboard`, widget, data source, and Tiller data models; `registry.py` for widget type registration.
-  - `views/` — Dashboard editor/viewer and data source dialog.
+  - `views/` — Dashboard editor and viewer.
   - `services.py` — Synchronous data refresh service (`DashboardDataService`).
 
 **Test layout:** `test/ripper/ripperlib/` and `test/ripper/rippergui/` mirror the source tree. The `qt` pytest marker is declared for Qt-specific tests; these may need skipping in headless CI.
