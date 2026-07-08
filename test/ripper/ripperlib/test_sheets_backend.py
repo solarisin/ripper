@@ -7,10 +7,12 @@ from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProper
 from ripper.ripperlib.sheets_backend import (
     fetch_sheets_of_spreadsheet,
     fetch_spreadsheets,
+    fetch_thumbnail,
     retrieve_sheet_data,
     retrieve_sheet_data_for,
     retrieve_sheets_of_spreadsheet,
     retrieve_spreadsheets,
+    retrieve_thumbnail,
 )
 
 
@@ -296,3 +298,67 @@ class TestRetrieveSheetDataParsing(unittest.TestCase):
                 retrieve_sheet_data(mock_service, "book", "'Monthly Budget'!A1:B2")
 
                 mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'!A1:B2")
+
+
+class TestThumbnail(unittest.TestCase):
+    """Thumbnail download hardening and non-empty-only caching (#40)."""
+
+    @patch("ripper.ripperlib.sheets_backend.urllib.request.urlopen")
+    def test_fetch_thumbnail_refuses_non_https(self, mock_urlopen):
+        """Non-HTTPS URLs are refused without any network call."""
+        for url in ("http://example.com/t.png", "file:///etc/passwd", "ftp://x/y"):
+            self.assertEqual(fetch_thumbnail(url), b"")
+        mock_urlopen.assert_not_called()
+
+    @patch("ripper.ripperlib.sheets_backend.urllib.request.urlopen")
+    def test_fetch_thumbnail_success_uses_timeout(self, mock_urlopen):
+        """A successful HTTPS download returns the bytes and passes a timeout."""
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b"image-bytes"
+        result = fetch_thumbnail("https://example.com/t.png")
+        self.assertEqual(result, b"image-bytes")
+        _, kwargs = mock_urlopen.call_args
+        self.assertIn("timeout", kwargs)
+        self.assertGreater(kwargs["timeout"], 0)
+
+    @patch("ripper.ripperlib.sheets_backend.urllib.request.urlopen")
+    def test_fetch_thumbnail_timeout_returns_empty(self, mock_urlopen):
+        """A read/connect timeout is caught and returns empty bytes, never raised."""
+        mock_urlopen.side_effect = TimeoutError("timed out")
+        self.assertEqual(fetch_thumbnail("https://example.com/t.png"), b"")
+
+    @patch("ripper.ripperlib.sheets_backend.urllib.request.urlopen")
+    def test_fetch_thumbnail_urlerror_returns_empty(self, mock_urlopen):
+        """A URL/HTTP error is caught and returns empty bytes."""
+        from urllib.error import URLError
+
+        mock_urlopen.side_effect = URLError("boom")
+        self.assertEqual(fetch_thumbnail("https://example.com/t.png"), b"")
+
+    @patch("ripper.ripperlib.sheets_backend.Db")
+    def test_retrieve_thumbnail_cache_hit(self, mock_db):
+        """A cached thumbnail is returned from the DB without downloading."""
+        mock_db.get_spreadsheet_thumbnail.return_value = b"cached"
+        with patch("ripper.ripperlib.sheets_backend.fetch_thumbnail") as mock_fetch:
+            data, source = retrieve_thumbnail("book", "https://example.com/t.png")
+        self.assertEqual((data, source), (b"cached", LoadSource.DATABASE))
+        mock_fetch.assert_not_called()
+        mock_db.store_spreadsheet_thumbnail.assert_not_called()
+
+    @patch("ripper.ripperlib.sheets_backend.Db")
+    def test_retrieve_thumbnail_miss_stores_nonempty(self, mock_db):
+        """On a cache miss, a non-empty download is cached and returned."""
+        mock_db.get_spreadsheet_thumbnail.return_value = None
+        with patch("ripper.ripperlib.sheets_backend.fetch_thumbnail", return_value=b"img") as mock_fetch:
+            data, source = retrieve_thumbnail("book", "https://example.com/t.png")
+        self.assertEqual((data, source), (b"img", LoadSource.API))
+        mock_fetch.assert_called_once_with("https://example.com/t.png")
+        mock_db.store_spreadsheet_thumbnail.assert_called_once_with("book", b"img")
+
+    @patch("ripper.ripperlib.sheets_backend.Db")
+    def test_retrieve_thumbnail_failure_is_not_cached(self, mock_db):
+        """A failed (empty) download must NOT be stored, so it isn't permanently cached (#40)."""
+        mock_db.get_spreadsheet_thumbnail.return_value = None
+        with patch("ripper.ripperlib.sheets_backend.fetch_thumbnail", return_value=b""):
+            data, source = retrieve_thumbnail("book", "https://example.com/t.png")
+        self.assertEqual((data, source), (b"", LoadSource.API))
+        mock_db.store_spreadsheet_thumbnail.assert_not_called()

@@ -85,23 +85,34 @@ def retrieve_sheets_of_spreadsheet(service: SheetsService, spreadsheet_id: str) 
         return sheets
 
 
+# Google Drive thumbnail downloads are best-effort; cap how long a hung server can block.
+THUMBNAIL_TIMEOUT_SECONDS = 10
+
+
 def fetch_thumbnail(url: str) -> bytes:
     """
-    Download thumbnail image data from a URL.
+    Download thumbnail image data from an HTTPS URL.
+
+    The Drive ``thumbnailLink`` is always HTTPS; other schemes (``file://``, ``http://``) are
+    refused. Any failure — non-HTTPS URL, connection/read timeout, HTTP or network error — is
+    logged and returns empty ``bytes`` rather than raising, so callers can fall back to a
+    default thumbnail.
 
     Args:
-        url (str): URL to download the thumbnail from.
+        url (str): HTTPS URL to download the thumbnail from.
 
     Returns:
-        bytes: The thumbnail image data, or an empty bytes object if download failed.
-
-    Raises:
-        Any exception raised by urllib.request.urlopen if not caught (e.g., invalid URL, network issues).
+        bytes: The thumbnail image data, or an empty bytes object if the download failed.
     """
+    if not url.startswith("https://"):
+        logger.warning(f"Refusing to fetch thumbnail from non-HTTPS URL '{url}'")
+        return b""
     try:
-        with urllib.request.urlopen(url) as response:
+        with urllib.request.urlopen(url, timeout=THUMBNAIL_TIMEOUT_SECONDS) as response:
             return cast(bytes, response.read())
-    except URLError as e:
+    except (URLError, TimeoutError, ValueError) as e:
+        # URLError covers HTTPError and most socket errors; TimeoutError covers a read timeout;
+        # ValueError covers an unsupported/malformed URL.
         logger.error(f"Error downloading thumbnail from url '{url}': {e}")
         return b""
 
@@ -111,6 +122,10 @@ def retrieve_thumbnail(spreadsheet_id: str, thumbnail_link: str) -> tuple[bytes,
     Retrieves the thumbnail of a spreadsheet from the database if available,
     otherwise downloads it and caches the result.
 
+    A failed download (empty result) is NOT cached: storing ``b""`` would both pollute the DB and,
+    because it reads back as falsy, force a re-download on every call anyway. Non-empty results are
+    cached as before.
+
     Args:
         spreadsheet_id (str): The ID of the spreadsheet.
         thumbnail_link (str): The URL to download the thumbnail from if not cached.
@@ -119,17 +134,20 @@ def retrieve_thumbnail(spreadsheet_id: str, thumbnail_link: str) -> tuple[bytes,
         tuple[bytes, LoadSource]: The thumbnail data and the source (DATABASE or API).
 
     Raises:
-        Any exception raised by the database or fetch_thumbnail if not caught.
+        Any exception raised by the database if not caught.
     """
     thumbnail = Db.get_spreadsheet_thumbnail(spreadsheet_id)
     if thumbnail:
         logger.debug(f"Thumbnail for spreadsheet {spreadsheet_id} found in database. Returning cached thumbnail data.")
         return thumbnail, LoadSource.DATABASE
-    else:
-        logger.debug(f"Thumbnail for spreadsheet {spreadsheet_id} not found in database. Downloading from url.")
-        thumbnail = fetch_thumbnail(thumbnail_link)
+
+    logger.debug(f"Thumbnail for spreadsheet {spreadsheet_id} not found in database. Downloading from url.")
+    thumbnail = fetch_thumbnail(thumbnail_link)
+    if thumbnail:
         Db.store_spreadsheet_thumbnail(spreadsheet_id, thumbnail)
-        return thumbnail, LoadSource.API
+    else:
+        logger.debug(f"No thumbnail data for spreadsheet {spreadsheet_id}; not caching an empty result.")
+    return thumbnail, LoadSource.API
 
 
 def fetch_spreadsheets(service: DriveService) -> list[SpreadsheetProperties]:
