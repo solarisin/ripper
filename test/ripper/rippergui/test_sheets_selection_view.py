@@ -498,6 +498,7 @@ class TestLoaderReferenceTracking:
         dialog = self._mock_dialog()
         running = MagicMock(spec=_SheetMetadataLoader)
         running.isRunning.return_value = True
+        running.wait.return_value = True  # finishes within the grace period
         already_done = MagicMock(spec=_SpreadsheetLoader)
         already_done.isRunning.return_value = False
         dialog._active_loaders = {running, already_done}
@@ -507,3 +508,29 @@ class TestLoaderReferenceTracking:
         running.wait.assert_called_once_with(1000)
         already_done.wait.assert_not_called()
         assert dialog._active_loaders == set()
+
+    def test_stop_loaders_retains_loader_that_outlives_wait(self):
+        """A loader still running after wait() times out must be retained, not dropped (#74 review).
+
+        Clearing _active_loaders unconditionally would drop the last reference to a running QThread
+        (no parent, no cleanup signal), recreating the destroy/leak-while-running failure. Such a
+        loader must instead be kept alive with self-cleanup wired.
+        """
+        from ripper.rippergui import sheets_selection_view as ssv
+
+        ssv._orphaned_loaders.clear()
+        dialog = self._mock_dialog()
+        slow = MagicMock(spec=_SpreadsheetLoader)
+        slow.isRunning.return_value = True
+        slow.wait.return_value = False  # outlives the 1s grace period
+        dialog._active_loaders = {slow}
+
+        try:
+            SheetsSelectionDialog._stop_loaders(dialog)
+
+            slow.wait.assert_called_once_with(1000)
+            assert slow in ssv._orphaned_loaders  # retained, not lost
+            slow.finished.connect.assert_called()  # self-cleanup wired
+            assert dialog._active_loaders == set()
+        finally:
+            ssv._orphaned_loaders.discard(slow)  # don't leak state into other tests

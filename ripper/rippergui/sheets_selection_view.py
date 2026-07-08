@@ -96,6 +96,21 @@ class _SheetMetadataLoader(QThread):
 _Loader = Union[_SpreadsheetLoader, _SheetMetadataLoader]
 
 
+# Loaders still running when their dialog closed are retained here — past the dialog's lifetime —
+# so their QThread wrappers aren't garbage-collected while the underlying thread runs. Each removes
+# itself once it finally finishes (see _retain_orphaned_loader / _stop_loaders, #74).
+_orphaned_loaders: set[_Loader] = set()
+
+
+def _retain_orphaned_loader(loader: _Loader) -> None:
+    """Keep a detached, still-running loader alive until it finishes, then let it self-delete."""
+    _orphaned_loaders.add(loader)
+    loader.finished.connect(lambda *_: _orphaned_loaders.discard(loader))
+    loader.error.connect(lambda *_: _orphaned_loaders.discard(loader))
+    loader.finished.connect(loader.deleteLater)
+    loader.error.connect(loader.deleteLater)
+
+
 class SheetsSelectionDialog(QDialog):
     """
     Dialog for creating a named data source from a Google Sheet range.
@@ -226,7 +241,11 @@ class SheetsSelectionDialog(QDialog):
         self.load_spreadsheets()
 
     def _stop_loaders(self) -> None:
-        """Disconnect and wait briefly for every in-flight background loader."""
+        """Disconnect and wait briefly for every in-flight background loader.
+
+        A loader that outlives the grace period is detached and retained (with self-cleanup wired)
+        rather than dropped, so its still-running QThread is never destroyed or leaked mid-run (#74).
+        """
         for loader in list(self._active_loaders):
             if loader.isRunning():
                 try:
@@ -235,7 +254,10 @@ class SheetsSelectionDialog(QDialog):
                 except RuntimeError:
                     pass
                 loader.setParent(None)  # detach so dialog destruction won't force-destroy a running thread
-                loader.wait(1000)
+                if not loader.wait(1000):
+                    # Still running after the grace period: keep a live reference (and cleanup) so
+                    # the wrapper isn't GC'd while the thread runs; it self-reaps once it finishes.
+                    _retain_orphaned_loader(loader)
         self._active_loaders.clear()
 
     def _track_loader(self, attr: str, worker: _Loader) -> None:
