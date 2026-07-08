@@ -481,6 +481,32 @@ class TestAuthManager(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NO_CLIENT)
 
+    @patch.object(AuthManager, "load_oauth_client_credentials", return_value=("test_id", "test_secret"))
+    @patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_config")
+    def test_acquire_new_credentials_bounds_the_local_server_wait(self, mock_flow, mock_load_creds):
+        """run_local_server must be given a timeout so a stalled sign-in can't hang forever (#37)."""
+        from ripper.ripperlib.auth import OAUTH_FLOW_TIMEOUT_SECONDS
+
+        mock_flow.return_value.run_local_server.return_value = DUMMY_CREDS
+
+        result = self.auth_manager.acquire_new_credentials()
+
+        self.assertEqual(result, DUMMY_CREDS)
+        _, kwargs = mock_flow.return_value.run_local_server.call_args
+        self.assertEqual(kwargs.get("timeout_seconds"), OAUTH_FLOW_TIMEOUT_SECONDS)
+
+    @patch.object(AuthManager, "load_oauth_client_credentials", return_value=("test_id", "test_secret"))
+    @patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_config")
+    def test_acquire_new_credentials_flow_failure_is_handled(self, mock_flow, mock_load_creds):
+        """A failure/hang in run_local_server must be caught, not propagate into the UI path (#37)."""
+        mock_flow.return_value.run_local_server.side_effect = RuntimeError("browser closed / timed out")
+
+        result = self.auth_manager.acquire_new_credentials()
+
+        self.assertIsNone(result)
+        # Client is configured, so a login failure leaves us NOT_LOGGED_IN (not NO_CLIENT).
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NOT_LOGGED_IN)
+
     def test_check_stored_credentials_no_client(self):
         """Test that check_stored_credentials handles the case when no client is configured."""
         # Set up the auth manager with NO_CLIENT state
