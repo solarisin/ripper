@@ -57,213 +57,85 @@ class TestSpreadsheetThumbnailWidget:
         assert widget.name_label.text() == "Test Spreadsheet"
 
     @patch("ripper.rippergui.spreadsheet_thumbnail_widget.retrieve_thumbnail")
-    @patch("ripper.rippergui.spreadsheet_thumbnail_widget.QPixmap")
-    @patch.object(SpreadsheetThumbnailWidget, "__init__", return_value=None)
-    def test_load_thumbnail_from_cache(self, mock_init, mock_qpixmap_class, mock_retrieve_thumbnail, qtbot):
-        """Test loading a thumbnail from cache."""
-        # Create a mock spreadsheet properties
-        spreadsheet_properties = MagicMock(spec=SpreadsheetProperties)
-        spreadsheet_properties.id = "test_id"
-        spreadsheet_properties.name = "Test Spreadsheet"
-        spreadsheet_properties.thumbnail_link = "https://example.com/thumbnail.png"
-        spreadsheet_properties.modified_time = "2024-01-01T00:00:00Z"
-        spreadsheet_properties.created_time = "2023-12-01T00:00:00Z"
+    @patch("ripper.rippergui.spreadsheet_thumbnail_widget._ThumbnailLoader")
+    def test_thumbnail_is_loaded_off_the_gui_thread(self, mock_loader_cls, mock_retrieve, qtbot):
+        """The constructor must not fetch synchronously; it starts a worker and shows a placeholder (#35)."""
+        from ripper.rippergui import spreadsheet_thumbnail_widget as stw
 
-        # Set up the mock for retrieve_thumbnail to return a cached thumbnail
-        mock_thumbnail_data = b"mock_image_data"
-        mock_retrieve_thumbnail.return_value = (mock_thumbnail_data, LoadSource.DATABASE)
-
-        # Create a parent widget
+        props = MagicMock(spec=SpreadsheetProperties)
+        props.id = "test_id"
+        props.name = "Test"
+        props.thumbnail_link = "https://example.com/thumbnail.png"
+        props.modified_time = "2024-01-01T00:00:00Z"
+        props.created_time = "2023-12-01T00:00:00Z"
         parent = QWidget()
         qtbot.addWidget(parent)
 
-        # Create a mock instance of SpreadsheetThumbnailWidget and configure its mocks
-        mock_widget = MagicMock(spec=SpreadsheetThumbnailWidget)
-        mock_widget.thumbnail_label = MagicMock()
-        mock_widget.thumbnail_loaded = MagicMock()
-        mock_widget.set_default_thumbnail = MagicMock()
-        mock_widget.spreadsheet_properties = spreadsheet_properties
+        try:
+            widget = SpreadsheetThumbnailWidget(props, parent)  # owned by parent; teardown closes both
 
-        # Call the real __init__ method on the mock instance
-        SpreadsheetThumbnailWidget.__init__(mock_widget, spreadsheet_properties, parent)
-
-        # Set up the mock QPixmap
-        mock_qpixmap_instance = MagicMock()
-        mock_qpixmap_class.return_value = mock_qpixmap_instance
-        mock_qpixmap_instance.loadFromData.return_value = True
-
-        # No need to add mock_widget to qtbot
-        # No need to wait for signals, as the emission happens synchronously in __init__
-
-        # Manually trigger the thumbnail loading logic within __init__ for testing
-        # This part of the logic is typically called within the real __init__
-        # We replicate the conditions that would lead to the thumbnail being loaded
-        if len(spreadsheet_properties.thumbnail_link) > 0:
-            thumb_bytes, source = mock_retrieve_thumbnail(
-                spreadsheet_properties.id, spreadsheet_properties.thumbnail_link
-            )
-            if thumb_bytes:
-                # Use the mocked QPixmap class to create a mock pixmap instance
-                pixmap = mock_qpixmap_class()
-                pixmap.loadFromData(thumb_bytes)
-                mock_widget.thumbnail_label.setPixmap(pixmap)
-            mock_widget.thumbnail_loaded.emit(source)
-        else:
-            mock_widget.set_default_thumbnail()
-            mock_widget.thumbnail_loaded.emit(LoadSource.NONE)
-
-        # Verify that retrieve_thumbnail was called with the correct parameters
-        mock_retrieve_thumbnail.assert_called_once_with(
-            spreadsheet_properties.id, spreadsheet_properties.thumbnail_link
-        )
-
-        # Verify that QPixmap was instantiated and loadFromData was called on the instance
-        mock_qpixmap_class.assert_called_once()
-        mock_qpixmap_instance.loadFromData.assert_called_once_with(mock_thumbnail_data)
-
-        # Verify that setPixmap was called on the mock thumbnail_label with the mock QPixmap instance
-        mock_widget.thumbnail_label.setPixmap.assert_called_once_with(mock_qpixmap_instance)
-
-        # Verify that set_default_thumbnail was NOT called
-        mock_widget.set_default_thumbnail.assert_not_called()
-
-        # Verify the signal was emitted with LoadSource.DATABASE
-        mock_widget.thumbnail_loaded.emit.assert_called_once_with(LoadSource.DATABASE)
+            mock_retrieve.assert_not_called()  # no network on the GUI thread
+            mock_loader_cls.assert_called_once_with("test_id", "https://example.com/thumbnail.png")
+            mock_loader_cls.return_value.start.assert_called_once()
+            # A placeholder is shown immediately, before the worker finishes.
+            assert not widget.thumbnail_label.pixmap().isNull()
+        finally:
+            stw._active_thumbnail_loaders.clear()
 
     @patch("ripper.rippergui.spreadsheet_thumbnail_widget.retrieve_thumbnail")
-    @patch("ripper.rippergui.spreadsheet_thumbnail_widget.QPixmap")
-    @patch.object(SpreadsheetThumbnailWidget, "__init__", return_value=None)
-    def test_load_thumbnail_from_api(self, mock_init, mock_qpixmap_class, mock_retrieve_thumbnail, qtbot):
-        """Test loading a thumbnail from the API."""
-        # Create a mock spreadsheet properties
-        spreadsheet_properties = MagicMock(spec=SpreadsheetProperties)
-        spreadsheet_properties.id = "test_id"
-        spreadsheet_properties.name = "Test Spreadsheet"
-        spreadsheet_properties.thumbnail_link = "https://example.com/thumbnail.png"
-        spreadsheet_properties.modified_time = "2024-01-01T00:00:00Z"
-        spreadsheet_properties.created_time = "2023-12-01T00:00:00Z"
-
-        # Set up the mock for retrieve_thumbnail to return API data
-        mock_thumbnail_data = b"mock_api_image_data"
-        mock_retrieve_thumbnail.return_value = (mock_thumbnail_data, LoadSource.API)
-
-        # Create a parent widget
+    @patch("ripper.rippergui.spreadsheet_thumbnail_widget._ThumbnailLoader")
+    def test_no_thumbnail_link_does_not_start_worker(self, mock_loader_cls, mock_retrieve, qtbot):
+        """With no thumbnailLink, no worker is started and the placeholder remains (#35)."""
+        props = MagicMock(spec=SpreadsheetProperties)
+        props.id = "test_id"
+        props.name = "Test"
+        props.thumbnail_link = ""
+        props.modified_time = "2024-01-01T00:00:00Z"
+        props.created_time = "2023-12-01T00:00:00Z"
         parent = QWidget()
         qtbot.addWidget(parent)
 
-        # Create a mock instance of SpreadsheetThumbnailWidget and configure its mocks
-        mock_widget = MagicMock(spec=SpreadsheetThumbnailWidget)
-        mock_widget.thumbnail_label = MagicMock()
-        mock_widget.thumbnail_loaded = MagicMock()
-        mock_widget.set_default_thumbnail = MagicMock()
-        mock_widget.spreadsheet_properties = spreadsheet_properties
+        widget = SpreadsheetThumbnailWidget(props, parent)  # owned by parent; teardown closes both
 
-        # Call the real __init__ method on the mock instance
-        SpreadsheetThumbnailWidget.__init__(mock_widget, spreadsheet_properties, parent)
+        mock_loader_cls.assert_not_called()
+        mock_retrieve.assert_not_called()
+        assert not widget.thumbnail_label.pixmap().isNull()
 
-        # Set up the mock QPixmap
-        mock_qpixmap_instance = MagicMock()
-        mock_qpixmap_class.return_value = mock_qpixmap_instance
-        mock_qpixmap_instance.loadFromData.return_value = True
-
-        # Manually trigger the thumbnail loading logic within __init__ for testing
-        if len(spreadsheet_properties.thumbnail_link) > 0:
-            thumb_bytes, source = mock_retrieve_thumbnail(
-                spreadsheet_properties.id, spreadsheet_properties.thumbnail_link
-            )
-            if thumb_bytes:
-                # Use the mocked QPixmap class to create a mock pixmap instance
-                pixmap = mock_qpixmap_class()
-                pixmap.loadFromData(thumb_bytes)
-                mock_widget.thumbnail_label.setPixmap(pixmap)
-            mock_widget.thumbnail_loaded.emit(source)
-        else:
-            mock_widget.set_default_thumbnail()
-            mock_widget.thumbnail_loaded.emit(LoadSource.NONE)
-
-        # Verify that retrieve_thumbnail was called with the correct parameters
-        mock_retrieve_thumbnail.assert_called_once_with(
-            spreadsheet_properties.id, spreadsheet_properties.thumbnail_link
-        )
-
-        # Verify that QPixmap was instantiated and loadFromData was called on the instance
-        mock_qpixmap_class.assert_called_once()
-        mock_qpixmap_instance.loadFromData.assert_called_once_with(mock_thumbnail_data)
-
-        # Verify that setPixmap was called on the mock thumbnail_label with the mock QPixmap instance
-        mock_widget.thumbnail_label.setPixmap.assert_called_once_with(mock_qpixmap_instance)
-
-        # Verify that set_default_thumbnail was NOT called
-        mock_widget.set_default_thumbnail.assert_not_called()
-
-        # Verify the signal was emitted with LoadSource.API
-        mock_widget.thumbnail_loaded.emit.assert_called_once_with(LoadSource.API)
-
-    @patch("ripper.rippergui.spreadsheet_thumbnail_widget.retrieve_thumbnail")
     @patch("ripper.rippergui.spreadsheet_thumbnail_widget.QPixmap")
-    @patch.object(SpreadsheetThumbnailWidget, "__init__", return_value=None)
-    def test_load_thumbnail_not_found(self, mock_init, mock_qpixmap_class, mock_retrieve_thumbnail, qtbot):
-        """Test loading a thumbnail when not found."""
-        # Create a mock spreadsheet properties with no thumbnail link
-        spreadsheet_properties = MagicMock(spec=SpreadsheetProperties)
-        spreadsheet_properties.id = "test_id"
-        spreadsheet_properties.name = "Test Spreadsheet"
-        spreadsheet_properties.thumbnail_link = ""
-        spreadsheet_properties.modified_time = "2024-01-01T00:00:00Z"
-        spreadsheet_properties.created_time = "2023-12-01T00:00:00Z"
+    def test_on_thumbnail_loaded_sets_pixmap_for_valid_data(self, mock_qpixmap_cls):
+        """A valid image is applied to the label and the load source is re-emitted."""
+        widget = MagicMock()
+        pixmap = mock_qpixmap_cls.return_value
+        pixmap.isNull.return_value = False
 
-        # Set up the mock for retrieve_thumbnail to return None data and NONE source
-        mock_retrieve_thumbnail.return_value = (None, LoadSource.NONE)
+        SpreadsheetThumbnailWidget._on_thumbnail_loaded(widget, b"image-bytes", LoadSource.API)
 
-        # Create a parent widget
-        parent = QWidget()
-        qtbot.addWidget(parent)
+        pixmap.loadFromData.assert_called_once_with(b"image-bytes")
+        widget.thumbnail_label.setPixmap.assert_called_once_with(pixmap)
+        widget.set_default_thumbnail.assert_not_called()
+        widget.thumbnail_loaded.emit.assert_called_once_with(LoadSource.API)
 
-        # Create a mock instance of SpreadsheetThumbnailWidget and configure its mocks
-        mock_widget = MagicMock(spec=SpreadsheetThumbnailWidget)
-        mock_widget.thumbnail_label = MagicMock()
-        mock_widget.thumbnail_loaded = MagicMock()
-        mock_widget.set_default_thumbnail = MagicMock()
-        mock_widget.spreadsheet_properties = spreadsheet_properties
+    def test_on_thumbnail_loaded_falls_back_on_empty(self):
+        """Empty bytes (a failed fetch) keep the default placeholder."""
+        widget = MagicMock()
 
-        # Call the real __init__ method on the mock instance
-        SpreadsheetThumbnailWidget.__init__(mock_widget, spreadsheet_properties, parent)
+        SpreadsheetThumbnailWidget._on_thumbnail_loaded(widget, b"", LoadSource.NONE)
 
-        # Set up the mock QPixmap
-        mock_qpixmap_instance = MagicMock()
-        mock_qpixmap_class.return_value = mock_qpixmap_instance
-        mock_qpixmap_instance.loadFromData.return_value = True
+        widget.set_default_thumbnail.assert_called_once()
+        widget.thumbnail_label.setPixmap.assert_not_called()
+        widget.thumbnail_loaded.emit.assert_called_once_with(LoadSource.NONE)
 
-        # Manually trigger the thumbnail loading logic within __init__ for testing
-        if len(spreadsheet_properties.thumbnail_link) > 0:
-            thumb_bytes, source = mock_retrieve_thumbnail(
-                spreadsheet_properties.id, spreadsheet_properties.thumbnail_link
-            )
-            if thumb_bytes:
-                # Use the mocked QPixmap class to create a mock pixmap instance
-                pixmap = mock_qpixmap_class()
-                pixmap.loadFromData(thumb_bytes)
-                mock_widget.thumbnail_label.setPixmap(pixmap)
-            mock_widget.thumbnail_loaded.emit(source)
-        else:
-            mock_widget.set_default_thumbnail()
-            mock_widget.thumbnail_loaded.emit(LoadSource.NONE)
+    @patch("ripper.rippergui.spreadsheet_thumbnail_widget.QPixmap")
+    def test_on_thumbnail_loaded_falls_back_on_invalid_image(self, mock_qpixmap_cls):
+        """Non-empty bytes that don't decode to a valid image fall back to the placeholder."""
+        widget = MagicMock()
+        mock_qpixmap_cls.return_value.isNull.return_value = True
 
-        # Verify that retrieve_thumbnail was NOT called (because thumbnail_link is empty)
-        mock_retrieve_thumbnail.assert_not_called()
+        SpreadsheetThumbnailWidget._on_thumbnail_loaded(widget, b"not-an-image", LoadSource.API)
 
-        # Verify that QPixmap was NOT instantiated and loadFromData was NOT called
-        mock_qpixmap_class.assert_not_called()
-        # mock_qpixmap_instance.loadFromData.assert_not_called() # This assertion is not needed if QPixmap is not called
-
-        # Verify that setPixmap was NOT called on the thumbnail_label
-        mock_widget.thumbnail_label.setPixmap.assert_not_called()
-
-        # Verify that set_default_thumbnail was called
-        mock_widget.set_default_thumbnail.assert_called_once()
-
-        # Verify the signal was emitted with LoadSource.NONE
-        mock_widget.thumbnail_loaded.emit.assert_called_once_with(LoadSource.NONE)
+        widget.set_default_thumbnail.assert_called_once()
+        widget.thumbnail_label.setPixmap.assert_not_called()
+        widget.thumbnail_loaded.emit.assert_called_once_with(LoadSource.API)
 
 
 @pytest.mark.qt
