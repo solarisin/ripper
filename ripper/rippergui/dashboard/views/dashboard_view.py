@@ -33,18 +33,22 @@ class _DashboardRefreshWorker(QThread):
     ``DashboardDataService.refresh_dashboard`` authenticates with Google and fetches sheet
     ranges over the network; running it on the UI thread freezes the app (and can block on
     OAuth). This worker runs it in the background and hands the plain-dataclass result back to
-    the GUI thread via :attr:`finished`.
+    the GUI thread via :attr:`finished`, tagged with the dashboard it was started for so a stale
+    result (the user switched dashboards mid-refresh) can be ignored.
 
     Signals:
-        finished (object): Emitted with the ``DashboardRefreshResult`` on success.
-        error (str): Emitted with a human-readable message on failure.
+        finished (object, object): Emitted with ``(DashboardRefreshResult, Dashboard)`` on success.
+        error (str, object): Emitted with ``(message, Dashboard)`` on failure.
     """
 
-    finished: Signal = Signal(object)  # type: ignore[misc]
-    error: Signal = Signal(str)
+    finished: Signal = Signal(object, object)  # type: ignore[misc]
+    error: Signal = Signal(str, object)
 
-    def __init__(self, data_service: DashboardDataService, dashboard: Dashboard, parent: Optional[QWidget] = None):
-        super().__init__(parent)
+    def __init__(self, data_service: DashboardDataService, dashboard: Dashboard):
+        # Intentionally NOT parented to the view: an embedded QWidget has no reliable closeEvent,
+        # so parent ownership could force-destroy this QThread mid-run when the view is torn down.
+        # Lifetime is managed via _active_refresh_workers instead (see start_refresh).
+        super().__init__()
         self._data_service = data_service
         self._dashboard = dashboard
 
@@ -52,10 +56,16 @@ class _DashboardRefreshWorker(QThread):
         """Refresh the dashboard's data sources in the background."""
         try:
             result = self._data_service.refresh_dashboard(self._dashboard)
-            self.finished.emit(result)
+            self.finished.emit(result, self._dashboard)
         except Exception as exc:
             logger.error(f"Dashboard refresh failed: {exc}")
-            self.error.emit(str(exc))
+            self.error.emit(str(exc), self._dashboard)
+
+
+# Refresh workers that may still be running are kept alive here (a strong reference that outlives
+# the view) so their QThread wrappers aren't garbage-collected — or force-destroyed with a parent
+# view — while the thread is still running. Each removes itself when it finishes.
+_active_refresh_workers: set[_DashboardRefreshWorker] = set()
 
 
 class DashboardView(QWidget):
@@ -292,27 +302,35 @@ class DashboardView(QWidget):
         self.status_label.setStyleSheet("")
         self.status_label.setText("Refreshing…")
 
-        # parent=self keeps the QThread alive (Qt ownership) until it finishes; deleteLater then
-        # reaps it. The Refresh button is disabled for the duration, so there is no re-entry.
-        worker = _DashboardRefreshWorker(self.data_service, self.current_dashboard, self)
+        # The worker is unparented and retained in _active_refresh_workers so it is neither GC'd
+        # nor force-destroyed with the view while running. Slots are bound methods, so Qt auto-
+        # disconnects them if the view is destroyed before the worker finishes.
+        worker = _DashboardRefreshWorker(self.data_service, self.current_dashboard)
+        _active_refresh_workers.add(worker)
         worker.finished.connect(self._on_refresh_finished)
         worker.error.connect(self._on_refresh_error)
+        worker.finished.connect(lambda *_, w=worker: _active_refresh_workers.discard(w))
+        worker.error.connect(lambda *_, w=worker: _active_refresh_workers.discard(w))
         worker.finished.connect(worker.deleteLater)
         worker.error.connect(worker.deleteLater)
         worker.start()
 
-    @Slot(object)
-    def _on_refresh_finished(self, result: DashboardRefreshResult) -> None:
-        """Apply a completed refresh on the GUI thread."""
+    @Slot(object, object)
+    def _on_refresh_finished(self, result: DashboardRefreshResult, dashboard: Dashboard) -> None:
+        """Apply a completed refresh on the GUI thread, unless the user has switched dashboards."""
+        if dashboard is not self.current_dashboard:
+            # Stale: the refresh was for a dashboard the user has since navigated away from.
+            return
         self.refresh_result = result
         self.refresh_dashboard_btn.setEnabled(True)
         self._show_refresh_summary()
-        if self.current_dashboard:
-            self._set_current_dashboard(self.current_dashboard)
+        self._set_current_dashboard(self.current_dashboard)
 
-    @Slot(str)
-    def _on_refresh_error(self, message: str) -> None:
-        """Report a failed refresh on the GUI thread."""
+    @Slot(str, object)
+    def _on_refresh_error(self, message: str, dashboard: Dashboard) -> None:
+        """Report a failed refresh on the GUI thread, unless the user has switched dashboards."""
+        if dashboard is not self.current_dashboard:
+            return
         self.refresh_dashboard_btn.setEnabled(True)
         self.status_label.setStyleSheet("color: #b00020;")
         self.status_label.setText(f"Refresh failed: {message}")

@@ -108,3 +108,23 @@ def test_refresh_reports_error_without_crashing(tmp_path, qtbot):
     qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
 
     assert "boom" in view.status_label.text()
+
+
+def test_refresh_result_for_switched_away_dashboard_is_ignored():
+    """A result for a dashboard the user has navigated away from must not be applied (#36 review).
+
+    Exercises the slot with a mock self so no Qt/thread is needed: if the current dashboard changed
+    while the refresh was in flight, the stale result must be dropped rather than rendered onto the
+    now-current dashboard.
+    """
+    view = MagicMock()
+    dash_a = MagicMock(spec=Dashboard)
+    dash_b = MagicMock(spec=Dashboard)
+    view.current_dashboard = dash_b  # user switched to B while A's refresh was running
+
+    result = DashboardRefreshResult()
+    DashboardView._on_refresh_finished(view, result, dash_a)  # A's result arrives late
+
+    assert view.refresh_result is not result  # not applied
+    view._show_refresh_summary.assert_not_called()
+    view._set_current_dashboard.assert_not_called()
