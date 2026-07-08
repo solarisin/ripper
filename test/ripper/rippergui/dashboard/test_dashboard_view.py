@@ -64,3 +64,67 @@ def test_dashboard_editor_keeps_canvas_scrollable_and_properties_visible(qtbot):
     assert splitter.widget(2) is editor.properties_panel
     assert not splitter.childrenCollapsible()
     assert editor.properties_panel.minimumWidth() >= 300
+
+
+def test_refresh_runs_off_gui_thread_and_applies_result(tmp_path, qtbot):
+    """refresh() must run the service on a worker thread and apply the result in a slot (#36).
+
+    The data service authenticates + fetches over the network; doing that on the GUI thread
+    freezes the UI. Here we assert refresh() drives the (real) worker and the returned result
+    lands back on the view.
+    """
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    result = DashboardRefreshResult()
+    service = MagicMock(spec=DashboardDataService)
+    service.refresh_dashboard.return_value = result
+
+    view = DashboardView(tmp_path, data_service=service)
+    qtbot.addWidget(view)
+    view.current_dashboard = dashboard
+
+    view.refresh()
+    # The button is disabled while the background worker runs, then re-enabled by the slot.
+    qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
+
+    service.refresh_dashboard.assert_called_once_with(dashboard)
+    assert view.refresh_result is result
+
+
+def test_refresh_reports_error_without_crashing(tmp_path, qtbot):
+    """A failure in the worker is surfaced via the error slot, not raised on the GUI thread (#36)."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    service = MagicMock(spec=DashboardDataService)
+    service.refresh_dashboard.side_effect = RuntimeError("boom")
+
+    view = DashboardView(tmp_path, data_service=service)
+    qtbot.addWidget(view)
+    view.current_dashboard = dashboard
+
+    view.refresh()
+    qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
+
+    assert "boom" in view.status_label.text()
+
+
+def test_refresh_result_for_switched_away_dashboard_is_ignored():
+    """A result for a dashboard the user has navigated away from must not be applied (#36 review).
+
+    Exercises the slot with a mock self so no Qt/thread is needed: if the current dashboard changed
+    while the refresh was in flight, the stale result must be dropped rather than rendered onto the
+    now-current dashboard.
+    """
+    view = MagicMock()
+    dash_a = MagicMock(spec=Dashboard)
+    dash_b = MagicMock(spec=Dashboard)
+    view.current_dashboard = dash_b  # user switched to B while A's refresh was running
+
+    result = DashboardRefreshResult()
+    DashboardView._on_refresh_finished(view, result, dash_a)  # A's result arrives late
+
+    assert view.refresh_result is not result  # not applied
+    view._show_refresh_summary.assert_not_called()
+    view._set_current_dashboard.assert_not_called()
