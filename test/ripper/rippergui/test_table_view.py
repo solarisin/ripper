@@ -10,7 +10,49 @@ from ripper.rippergui.table_view import (
     TransactionModel,
     TransactionSortFilterProxyModel,
     TransactionTableViewWidget,
+    is_number,
+    parse_decimal,
+    parse_number,
 )
+
+
+class TestParseNumericHelpers(unittest.TestCase):
+    """Tests for the shared strict numeric parser (no Qt app required)."""
+
+    def test_rejects_malformed_input(self):
+        """Malformed input is rejected (None), not silently coerced."""
+        for bad in ["12-34", "a1b2", "1.2.3", "1-2-3", "12a", "abc", "", "   ", "$", "-", "(1"]:
+            self.assertIsNone(parse_decimal(bad), f"expected None for {bad!r}")
+            self.assertIsNone(parse_number(bad), f"expected None for {bad!r}")
+            self.assertFalse(is_number(bad), f"expected non-number for {bad!r}")
+
+    def test_accepts_valid_currency_and_numbers(self):
+        """Well-formed currency/number strings parse to the expected value."""
+        cases = {
+            "$1,200.50": Decimal("1200.50"),
+            "1200.50": Decimal("1200.50"),
+            "100.50": Decimal("100.50"),
+            "-50.25": Decimal("-50.25"),
+            "$-5.75": Decimal("-5.75"),
+            "(50.25)": Decimal("-50.25"),
+            "($1,200.50)": Decimal("-1200.50"),
+            "2500": Decimal("2500"),
+            ".5": Decimal("0.5"),
+            "+3": Decimal("3"),
+        }
+        for text, expected in cases.items():
+            self.assertEqual(parse_decimal(text), expected, f"parse_decimal({text!r})")
+            self.assertTrue(is_number(text), f"is_number({text!r})")
+
+    def test_accepts_native_numeric_types(self):
+        """int/float/Decimal pass through; bool does not."""
+        self.assertEqual(parse_decimal(100.5), Decimal("100.5"))
+        self.assertEqual(parse_decimal(-7), Decimal("-7"))
+        self.assertEqual(parse_decimal(Decimal("3.14")), Decimal("3.14"))
+        self.assertEqual(parse_number(-50.25), -50.25)
+        self.assertIsNone(parse_decimal(None))
+        self.assertIsNone(parse_decimal(True))
+        self.assertIsNone(parse_decimal(False))
 
 
 @pytest.mark.qt
@@ -104,41 +146,69 @@ class TestTransactionModel(unittest.TestCase):
         self.assertEqual(self.model.headerData(4, Qt.Orientation.Horizontal), "Amount")
         self.assertEqual(self.model.headerData(5, Qt.Orientation.Horizontal), "Account")
 
-    def test_sort_by_amount(self):
-        """Test sorting by amount column."""
-        # Sort by amount ascending
-        self.model.sort(4, Qt.SortOrder.AscendingOrder)
-        self.assertEqual(self.model._data[0]["ID"], "t1")  # -50.25 comes before 100.50
-        self.assertEqual(self.model._data[1]["ID"], "t2")
+    def _sorted_ids(self, column: int, order: Qt.SortOrder) -> list[str]:
+        """Sort through the proxy (the real, single sort path) and return the ID order."""
+        proxy = TransactionSortFilterProxyModel()
+        proxy.setSourceModel(self.model)
+        proxy.sort(column, order)
+        return [proxy.data(proxy.index(row, 0), Qt.ItemDataRole.EditRole) for row in range(proxy.rowCount())]
 
-        # Sort by amount descending
-        self.model.sort(4, Qt.SortOrder.DescendingOrder)
-        self.assertEqual(self.model._data[0]["ID"], "t2")  # 100.50 comes before -50.25
-        self.assertEqual(self.model._data[1]["ID"], "t1")
+    def test_sort_by_amount(self):
+        """Test sorting by amount column through the proxy sort path."""
+        # -50.25 comes before 100.50
+        self.assertEqual(self._sorted_ids(4, Qt.SortOrder.AscendingOrder), ["t1", "t2"])
+        self.assertEqual(self._sorted_ids(4, Qt.SortOrder.DescendingOrder), ["t2", "t1"])
 
     def test_sort_by_date(self):
-        """Test sorting by date column."""
-        # Sort by date ascending
-        self.model.sort(1, Qt.SortOrder.AscendingOrder)
-        self.assertEqual(self.model._data[0]["ID"], "t1")  # 2025-05-01 comes before 2025-05-02
-        self.assertEqual(self.model._data[1]["ID"], "t2")
-
-        # Sort by date descending
-        self.model.sort(1, Qt.SortOrder.DescendingOrder)
-        self.assertEqual(self.model._data[0]["ID"], "t2")  # 2025-05-02 comes before 2025-05-01
-        self.assertEqual(self.model._data[1]["ID"], "t1")
+        """Test sorting by date column through the proxy sort path."""
+        # 2025-05-01 comes before 2025-05-02
+        self.assertEqual(self._sorted_ids(1, Qt.SortOrder.AscendingOrder), ["t1", "t2"])
+        self.assertEqual(self._sorted_ids(1, Qt.SortOrder.DescendingOrder), ["t2", "t1"])
 
     def test_sort_by_text(self):
-        """Test sorting by text column."""
-        # Sort by description ascending
-        self.model.sort(2, Qt.SortOrder.AscendingOrder)
-        self.assertEqual(self.model._data[0]["ID"], "t1")  # "Test Transaction 1" comes before "Test Transaction 2"
-        self.assertEqual(self.model._data[1]["ID"], "t2")
+        """Test sorting by text column through the proxy sort path."""
+        # "Test Transaction 1" comes before "Test Transaction 2"
+        self.assertEqual(self._sorted_ids(2, Qt.SortOrder.AscendingOrder), ["t1", "t2"])
+        self.assertEqual(self._sorted_ids(2, Qt.SortOrder.DescendingOrder), ["t2", "t1"])
 
-        # Sort by description descending
-        self.model.sort(2, Qt.SortOrder.DescendingOrder)
-        self.assertEqual(self.model._data[0]["ID"], "t2")  # "Test Transaction 2" comes before "Test Transaction 1"
-        self.assertEqual(self.model._data[1]["ID"], "t1")
+    def test_infer_column_type_not_confused_by_digit_strings(self):
+        """A string column containing digits must not be mis-typed as numeric."""
+        data = [
+            {"ID": "t1", "Description": "12-34"},
+            {"ID": "t2", "Description": "a1b2"},
+            {"ID": "t3", "Description": "invoice 7"},
+        ]
+        model = TransactionModel(data)
+        desc_col = model._headers.index("Description")
+        self.assertEqual(model.infer_column_type(desc_col), "string")
+
+    def test_infer_column_type_numeric_column(self):
+        """A genuinely numeric column is still typed as a number."""
+        data = [{"Amount": "$1,200.50"}, {"Amount": "-50.25"}, {"Amount": "(75.00)"}]
+        model = TransactionModel(data)
+        model._headers = ["Amount"]
+        self.assertEqual(model.infer_column_type(0), "number")
+
+    def test_display_data_blank_for_missing_value(self):
+        """Missing/absent keys render as an empty string, not the literal 'None'."""
+        data = [{"Description": "Only description"}]  # no Account/Category/etc.
+        model = TransactionModel(data)
+        account_col = model._headers.index("Account")
+        category_col = model._headers.index("Category")
+        self.assertEqual(model.data(model.index(0, account_col), Qt.ItemDataRole.DisplayRole), "")
+        self.assertEqual(model.data(model.index(0, category_col), Qt.ItemDataRole.DisplayRole), "")
+
+    def test_filter_amount_uses_shared_strict_parser(self):
+        """The amount filter path parses via the shared strict parser."""
+        proxy = TransactionSortFilterProxyModel()
+        proxy.setSourceModel(self.model)
+        # "$1,200.50" style string values must be parsed, malformed ones rejected.
+        self.assertTrue(
+            proxy._check_record_against_filter({"Amount": "$1,200.50"}, (Decimal("1000"), Decimal("2000")), "Amount")
+        )
+        self.assertFalse(
+            proxy._check_record_against_filter({"Amount": "12-34"}, (Decimal("0"), Decimal("9999")), "Amount")
+        )
 
     def test_set_data_list(self):
         """Test setting a new data list by directly updating the model's data."""
