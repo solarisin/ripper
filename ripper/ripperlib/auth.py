@@ -27,6 +27,9 @@ from ripper.ripperlib.defs import DriveService, SheetsService, UserInfoService
 
 OAUTH_CLIENT_KEY = "ripper-oauth-client"
 OAUTH_CLIENT_USER = "default-user"
+# Cap how long the local OAuth redirect server waits so a stalled sign-in (browser closed, no
+# redirect) can't block the flow indefinitely.
+OAUTH_FLOW_TIMEOUT_SECONDS = 300
 SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
@@ -404,32 +407,34 @@ class AuthManager(QObject):
             Credentials object if successful, None otherwise
         """
         logger.debug("Starting OAuth flow to acquire new token")
-        try:
-            client_config = None
-            client_id, client_secret = self.load_oauth_client_credentials()
-            if client_id and client_secret:
-                client_config = {
-                    "installed": {
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                        "redirect_uris": ["http://localhost"],
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                    }
-                }
-            if not client_config:
-                raise ValueError("OAuth client configuration is invalid.")
-
-            # Start the user oauth flow using the client config and configured scopes
-            # TODO: application locks up if client credentials are invalid
-            flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-            creds = cast(Credentials, flow.run_local_server(port=0))
-            return creds
-
-        except ValueError as e:
-            logger.error(f"OAuth flow failed with error: {e}")
-            # Update auth state to NO_CLIENT
+        client_id, client_secret = self.load_oauth_client_credentials()
+        if not (client_id and client_secret):
+            logger.error("OAuth client configuration is invalid.")
             self.update_state(AuthState.NO_CLIENT)
+            return None
+
+        client_config = {
+            "installed": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uris": ["http://localhost"],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        }
+        try:
+            flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+            # timeout_seconds bounds the local redirect server's wait, so an abandoned sign-in
+            # (browser closed, no redirect) fails instead of hanging forever.
+            creds = flow.run_local_server(port=0, timeout_seconds=OAUTH_FLOW_TIMEOUT_SECONDS)
+            return cast(Credentials, creds)
+        except Exception as e:
+            # run_local_server can raise a wide range of failures — a redirect timeout, socket/OS
+            # errors, RefreshError, or the user closing the browser. None must propagate uncaught
+            # into the create_*_service / UI path, where it would freeze or crash the app. The
+            # client is configured (checked above), so this is a login failure, not a missing client.
+            logger.error(f"OAuth flow failed: {e}")
+            self.update_state(AuthState.NOT_LOGGED_IN)
             return None
 
     def check_stored_credentials(self) -> None:
