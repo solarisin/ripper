@@ -6,12 +6,49 @@ emits signals when the thumbnail is loaded or the widget is selected, and handle
 """
 
 from loguru import logger
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThread, Signal, Slot
 from PySide6.QtGui import QMouseEvent, QPixmap
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from ripper.ripperlib.defs import LoadSource, SpreadsheetProperties
 from ripper.ripperlib.sheets_backend import retrieve_thumbnail
+
+
+class _ThumbnailLoader(QThread):
+    """Background worker that fetches a single spreadsheet's thumbnail (cache or network).
+
+    ``retrieve_thumbnail`` reads the DB and, on a miss, performs a network download; doing that
+    in the widget constructor blocked the GUI thread once per spreadsheet. This runs it off-thread
+    and emits the bytes back to the widget.
+
+    Signals:
+        loaded (object, object): Emitted with ``(image_bytes, LoadSource)`` when the fetch finishes
+            (``image_bytes`` is empty on failure).
+    """
+
+    loaded: Signal = Signal(object, object)  # type: ignore[misc]
+
+    def __init__(self, spreadsheet_id: str, thumbnail_link: str) -> None:
+        # Not parented to the widget: the widget can be destroyed (dialog closed) while this runs,
+        # so lifetime is managed via _active_thumbnail_loaders instead of Qt parent ownership.
+        super().__init__()
+        self._spreadsheet_id = spreadsheet_id
+        self._thumbnail_link = thumbnail_link
+
+    def run(self) -> None:
+        """Fetch the thumbnail in the background."""
+        try:
+            data, source = retrieve_thumbnail(self._spreadsheet_id, self._thumbnail_link)
+        except Exception as exc:  # retrieve_thumbnail already guards downloads; belt-and-suspenders
+            logger.error(f"Error loading thumbnail for spreadsheet {self._spreadsheet_id}: {exc}")
+            data, source = b"", LoadSource.NONE
+        self.loaded.emit(data, source)
+
+
+# Thumbnail loaders are kept alive here (a reference that outlives the widget) so their QThread
+# wrappers aren't GC'd — or force-destroyed with a closing dialog — while still running. Each
+# removes itself when it finishes.
+_active_thumbnail_loaders: set[_ThumbnailLoader] = set()
 
 
 class SpreadsheetThumbnailWidget(QFrame):
@@ -98,19 +135,23 @@ class SpreadsheetThumbnailWidget(QFrame):
         layout.addWidget(self.thumbnail_label)
         layout.addWidget(self.name_label)
 
-        thumb_bytes: bytes | None = None
+        # Show a placeholder immediately, then load the real thumbnail off the GUI thread so the
+        # selection dialog never blocks on N sequential downloads while it is being built (#35).
+        self.set_default_thumbnail()
+
         if len(spreadsheet_properties.thumbnail_link) > 0:
             logger.debug(
                 "Loading thumbnail for spreadsheet {id}: thumbnailLink: {link}".format(
                     id=self.spreadsheet_properties.id, link=self.spreadsheet_properties.thumbnail_link
                 )
             )
-            thumb_bytes, source = retrieve_thumbnail(
-                self.spreadsheet_properties.id, self.spreadsheet_properties.thumbnail_link
-            )
-            self.thumbnail_loaded.emit(source)
+            loader = _ThumbnailLoader(self.spreadsheet_properties.id, self.spreadsheet_properties.thumbnail_link)
+            _active_thumbnail_loaders.add(loader)
+            loader.loaded.connect(self._on_thumbnail_loaded)  # bound method: auto-disconnected if widget dies
+            loader.loaded.connect(lambda *_, w=loader: _active_thumbnail_loaders.discard(w))
+            loader.finished.connect(loader.deleteLater)
+            loader.start()
         else:
-            thumb_bytes = None
             logger.debug(
                 "No thumbnailLink provided for spreadsheet {name} : {id}".format(
                     name=self.spreadsheet_properties.name, id=self.spreadsheet_properties.id
@@ -118,12 +159,20 @@ class SpreadsheetThumbnailWidget(QFrame):
             )
             self.thumbnail_loaded.emit(LoadSource.NONE)
 
+    @Slot(object, object)
+    def _on_thumbnail_loaded(self, thumb_bytes: bytes, source: LoadSource) -> None:
+        """Apply a fetched thumbnail on the GUI thread, falling back to the placeholder on failure."""
         if thumb_bytes:
             pixmap = QPixmap()
             pixmap.loadFromData(thumb_bytes)
-            self.thumbnail_label.setPixmap(pixmap)
+            if not pixmap.isNull():
+                self.thumbnail_label.setPixmap(pixmap)
+            else:
+                logger.debug(f"Thumbnail data for spreadsheet {self.spreadsheet_properties.id} was not a valid image")
+                self.set_default_thumbnail()
         else:
             self.set_default_thumbnail()
+        self.thumbnail_loaded.emit(source)
 
     def set_default_thumbnail(self) -> None:
         """
