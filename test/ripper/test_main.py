@@ -1,8 +1,12 @@
 import importlib.metadata
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from ripper.main import get_version
+import pytest
+from click.testing import CliRunner
+
+from ripper.main import cli, get_version
 
 
 class TestMain(unittest.TestCase):
@@ -48,3 +52,36 @@ class TestMain(unittest.TestCase):
 
         # Check that toml.load was called
         mock_toml_load.assert_called_once()
+
+
+class TestDbCreateFilePath:
+    """Regression tests for `db --file-path ... create` (issue #71)."""
+
+    def test_create_applies_custom_path_to_ripperdb(self, tmp_path: Path) -> None:
+        """`db --file-path X create` must construct a RipperDb targeting X, not the default."""
+        custom_path = tmp_path / "custom.db"
+        runner = CliRunner()
+
+        with patch("ripper.ripperlib.database.RipperDb") as mock_ripper_db:
+            result = runner.invoke(cli, ["db", "--file-path", str(custom_path), "create"], obj={})
+
+        assert result.exit_code == 0, result.output
+        # The path must actually be applied to the DB that gets opened.
+        mock_ripper_db.assert_called_once_with(str(custom_path))
+        # The scoped connection is closed after creation.
+        mock_ripper_db.return_value.close.assert_called_once_with()
+
+    def test_create_initializes_requested_file_and_leaves_default_untouched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end: exactly the requested file is created; the default DB is never touched."""
+        default_path = tmp_path / "default.db"
+        custom_path = tmp_path / "subdir" / "custom.db"
+        monkeypatch.setattr("ripper.ripperlib.database.default_db_path", lambda: default_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["db", "--file-path", str(custom_path), "create"], obj={})
+
+        assert result.exit_code == 0, result.output
+        assert custom_path.exists(), "requested database file was not created"
+        assert not default_path.exists(), "default database must not be created for a custom path"
