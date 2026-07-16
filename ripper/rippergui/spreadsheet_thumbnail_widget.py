@@ -116,15 +116,15 @@ class SpreadsheetThumbnailWidget(QFrame):
         # Get available width (slightly less than thumbnail width)
         available_width = 170
 
-        # Check if the text needs to be elided
-        if font_metrics.horizontalAdvance(self.spreadsheet_properties.name) > available_width:
-            # Elide the text (add ... at the end)
-            elided_text = font_metrics.elidedText(
-                self.spreadsheet_properties.name, Qt.TextElideMode.ElideMiddle, available_width
-            )
-            self.spreadsheet_properties.name = elided_text
+        # Compute a display-only string: elide a too-wide name for the label only. The elided text
+        # must never be written back to spreadsheet_properties.name — that instance is shared (it is
+        # emitted via spreadsheet_selected and consumed downstream for the details panel and the
+        # auto-generated data-source name), so mutating it would corrupt the real model data (#47).
+        display_name = self.spreadsheet_properties.name
+        if font_metrics.horizontalAdvance(display_name) > available_width:
+            display_name = font_metrics.elidedText(display_name, Qt.TextElideMode.ElideMiddle, available_width)
 
-        self.name_label = QLabel(self.spreadsheet_properties.name)
+        self.name_label = QLabel(display_name)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setWordWrap(False)
         self.name_label.setFixedWidth(180)
