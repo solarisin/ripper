@@ -37,23 +37,82 @@ Helper functions for parsing numbers and dates for TransactionModel and sorting.
 """
 
 
-def parse_number(val: object) -> Optional[float]:
+# An unsigned magnitude: either a thousands-grouped integer (`1,200`), a plain
+# ungrouped integer (`2500`), each with an optional fractional part, or a bare
+# fractional part (`.5`). Thousands grouping must be exact groups of three, so
+# "1,2,3" and "12,34" are rejected.
+_MAGNITUDE = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+"
+
+# Matches the *complete decorated* number so decoration is validated in place —
+# never by stripping first. Two mutually exclusive forms:
+#   1. accounting parentheses for a negative: `(` [`$`] magnitude `)` — no inner
+#      sign allowed, so "(-50)" is rejected rather than double-negated.
+#   2. an optional leading sign, then an optional single leading `$`, then the
+#      magnitude. The `$` is allowed only in this one leading slot, so "1$2" and
+#      "$$1" are rejected.
+_DECORATED_NUMBER_RE = re.compile(
+    rf"^(?:\((?P<paren_body>\$?(?:{_MAGNITUDE}))\)|(?P<sign>[+-])?\$?(?P<body>{_MAGNITUDE}))$"
+)
+
+
+def parse_decimal(val: object) -> Optional[Decimal]:
+    """Strictly parse a currency/number-like value into a ``Decimal``.
+
+    This is the single shared numeric parser used for column-type inference,
+    sorting, and amount-range filtering, so all three paths agree on what
+    counts as a number.
+
+    Accepts ``int``/``float``/``Decimal`` directly and strings that form a single
+    well-structured number, optionally decorated with a leading currency symbol,
+    valid thousands separators, a leading sign, or accounting-style parentheses
+    for negatives (e.g. ``"$1,200.50"``, ``"-50.25"``, ``"(50.25)"``,
+    ``"-$5.75"``). The complete decorated form is validated in place, so
+    malformed input is rejected (returns ``None``) rather than silently coerced:
+    e.g. ``"12-34"``, ``"a1b2"``, ``"1.2.3"``, mid-number/repeated currency
+    (``"1$2"``, ``"$$1"``), bad thousands grouping (``"1,2,3"``, ``"12,34"``),
+    and a signed value inside accounting parens (``"(-50)"``).
+    """
+    if isinstance(val, bool):
+        # bool is a subclass of int; treat it as non-numeric for this domain.
+        return None
+    if isinstance(val, Decimal):
+        return val
     if isinstance(val, (int, float)):
-        return float(val)
+        try:
+            return Decimal(str(val))
+        except InvalidOperation:
+            return None
     if val is None:
         return None
-    s = str(val).replace(",", "").replace("(", "-").replace(")", "")
-    s = s.strip()
-    s = re.sub(r"[^0-9.\-]", "", s)
-    s = re.sub(r"(?<!^)-", "", s)
-    try:
-        return float(s)
-    except Exception:
+    s = str(val).strip()
+    if not s:
         return None
+    match = _DECORATED_NUMBER_RE.match(s)
+    if match is None:
+        return None
+    paren_body = match.group("paren_body")
+    if paren_body is not None:
+        negative = True
+        body = paren_body
+    else:
+        negative = match.group("sign") == "-"
+        body = match.group("body")
+    # Decoration is already validated; stripping it now is safe.
+    digits = body.replace("$", "").replace(",", "")
+    try:
+        result = Decimal(digits)
+    except InvalidOperation:
+        return None
+    return -result if negative else result
+
+
+def parse_number(val: object) -> Optional[float]:
+    result = parse_decimal(val)
+    return float(result) if result is not None else None
 
 
 def is_number(val: object) -> bool:
-    return parse_number(val) is not None
+    return parse_decimal(val) is not None
 
 
 def parse_date(val: object) -> Optional[QDate]:
@@ -213,6 +272,9 @@ class TransactionModel(QAbstractTableModel):
         if 0 <= row < len(self._data) and 0 <= col < len(self._headers):
             header = self._headers[col]
             value = self._data[row].get(header)
+            if value is None:
+                # Missing/absent keys render as an empty cell, not the literal "None".
+                return ""
             if isinstance(value, QDate):
                 return value.toString("yyyy-MM-dd")
             if isinstance(value, (float, Decimal)):
@@ -251,32 +313,6 @@ class TransactionModel(QAbstractTableModel):
             if 0 <= section < len(self._headers):
                 return self._headers[section]
         return None
-
-    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
-        """
-        Sort the model by the given column and order.
-        This method is called by Qt when the user clicks a column header to sort the table.
-
-        Args:
-            column: Column index to sort by
-            order: Sort order (ascending or descending)
-        """
-        self.layoutAboutToBeChanged.emit()
-        col_name = self._headers[column]
-        try:
-            if col_name == "Amount":
-                self._data.sort(
-                    key=lambda x: Decimal(str(x.get(col_name, 0))), reverse=(order == Qt.SortOrder.DescendingOrder)
-                )
-            elif col_name == "Date":
-                self._data.sort(key=lambda x: x.get(col_name, QDate()), reverse=(order == Qt.SortOrder.DescendingOrder))
-            else:
-                self._data.sort(
-                    key=lambda x: str(x.get(col_name, "")).lower(), reverse=(order == Qt.SortOrder.DescendingOrder)
-                )
-        except Exception as e:
-            log.error(f"Error sorting by {col_name}: {e}")
-        self.layoutChanged.emit()
 
 
 class TransactionSortFilterProxyModel(QSortFilterProxyModel):
@@ -391,15 +427,13 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
             return str(filter_value) == str(raw_value) if raw_value is not None else False
         elif header_name == "Amount":
             min_val, max_val = filter_value
-            try:
-                # Strip currency symbols, commas, and whitespace before parsing
-                cleaned = str(raw_value).replace("$", "").replace(",", "").strip()
-                amount = Decimal(cleaned)
-                passes_min = min_val is None or amount >= min_val
-                passes_max = max_val is None or amount <= max_val
-                return passes_min and passes_max
-            except (InvalidOperation, ValueError):
+            # Use the shared strict parser so filtering agrees with sorting/type inference.
+            amount = parse_decimal(raw_value)
+            if amount is None:
                 return False
+            passes_min = min_val is None or amount >= min_val
+            passes_max = max_val is None or amount <= max_val
+            return passes_min and passes_max
         return True
 
     def lessThan(self, left: QModelIndex | QPersistentModelIndex, right: QModelIndex | QPersistentModelIndex) -> bool:
