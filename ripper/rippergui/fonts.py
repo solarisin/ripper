@@ -8,6 +8,7 @@ for global font storage and retrieval throughout the application.
 from enum import Enum, auto
 
 from beartype.typing import Dict, Optional
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 # Define fonts to be used throughout the app
@@ -45,19 +46,22 @@ class FontManager:
             }
         return cls._instance
 
-    def get(self, font_id: FontId) -> str:
+    def get(self, font_id: FontId) -> QFont:
         """
-        Get the font family name for the given font role.
+        Get the QFont for the given font role.
+
+        Callers pass the result directly to ``setFont(...)``, which requires a ``QFont`` (PySide6
+        does not coerce a family-name string), so this builds one from the configured family.
 
         Args:
             font_id (FontId): The font role identifier.
 
         Returns:
-            str: The font family name. Falls back to the application's default font if not set.
+            QFont: A font for this role, built from its configured family. Falls back to the
+            application's default font family when the role is unset.
         """
-        if font_id in self._fonts:
-            return self._fonts[font_id]
-        return QApplication.font().family()
+        family = self._fonts.get(font_id) or QApplication.font().family()
+        return QFont(family)
 
     def set(self, font_id: FontId, font: str) -> None:
         """
