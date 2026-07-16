@@ -37,11 +37,22 @@ Helper functions for parsing numbers and dates for TransactionModel and sorting.
 """
 
 
-# Matches a single, well-formed decimal number: an optional sign followed by
-# either digits with an optional fractional part or a bare fractional part.
-# Malformed input like "12-34" or "a1b2" does NOT match, so it is rejected
-# rather than silently coerced.
-_STRICT_NUMBER_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
+# An unsigned magnitude: either a thousands-grouped integer (`1,200`), a plain
+# ungrouped integer (`2500`), each with an optional fractional part, or a bare
+# fractional part (`.5`). Thousands grouping must be exact groups of three, so
+# "1,2,3" and "12,34" are rejected.
+_MAGNITUDE = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+"
+
+# Matches the *complete decorated* number so decoration is validated in place —
+# never by stripping first. Two mutually exclusive forms:
+#   1. accounting parentheses for a negative: `(` [`$`] magnitude `)` — no inner
+#      sign allowed, so "(-50)" is rejected rather than double-negated.
+#   2. an optional leading sign, then an optional single leading `$`, then the
+#      magnitude. The `$` is allowed only in this one leading slot, so "1$2" and
+#      "$$1" are rejected.
+_DECORATED_NUMBER_RE = re.compile(
+    rf"^(?:\((?P<paren_body>\$?(?:{_MAGNITUDE}))\)|(?P<sign>[+-])?\$?(?P<body>{_MAGNITUDE}))$"
+)
 
 
 def parse_decimal(val: object) -> Optional[Decimal]:
@@ -51,12 +62,15 @@ def parse_decimal(val: object) -> Optional[Decimal]:
     sorting, and amount-range filtering, so all three paths agree on what
     counts as a number.
 
-    Accepts ``int``/``float``/``Decimal`` directly and strings that are a single
-    well-formed number, optionally decorated with a leading currency symbol,
-    thousands separators (``,``), a sign, or accounting-style parentheses for
-    negatives (e.g. ``"$1,200.50"``, ``"-50.25"``, ``"(50.25)"``). Malformed
-    input such as ``"12-34"``, ``"a1b2"`` or ``"1.2.3"`` returns ``None`` instead
-    of being silently coerced.
+    Accepts ``int``/``float``/``Decimal`` directly and strings that form a single
+    well-structured number, optionally decorated with a leading currency symbol,
+    valid thousands separators, a leading sign, or accounting-style parentheses
+    for negatives (e.g. ``"$1,200.50"``, ``"-50.25"``, ``"(50.25)"``,
+    ``"-$5.75"``). The complete decorated form is validated in place, so
+    malformed input is rejected (returns ``None``) rather than silently coerced:
+    e.g. ``"12-34"``, ``"a1b2"``, ``"1.2.3"``, mid-number/repeated currency
+    (``"1$2"``, ``"$$1"``), bad thousands grouping (``"1,2,3"``, ``"12,34"``),
+    and a signed value inside accounting parens (``"(-50)"``).
     """
     if isinstance(val, bool):
         # bool is a subclass of int; treat it as non-numeric for this domain.
@@ -73,15 +87,20 @@ def parse_decimal(val: object) -> Optional[Decimal]:
     s = str(val).strip()
     if not s:
         return None
-    negative = False
-    if s.startswith("(") and s.endswith(")"):
-        s = s[1:-1].strip()
-        negative = True
-    s = s.replace("$", "").replace(",", "").strip()
-    if not _STRICT_NUMBER_RE.match(s):
+    match = _DECORATED_NUMBER_RE.match(s)
+    if match is None:
         return None
+    paren_body = match.group("paren_body")
+    if paren_body is not None:
+        negative = True
+        body = paren_body
+    else:
+        negative = match.group("sign") == "-"
+        body = match.group("body")
+    # Decoration is already validated; stripping it now is safe.
+    digits = body.replace("$", "").replace(",", "")
     try:
-        result = Decimal(s)
+        result = Decimal(digits)
     except InvalidOperation:
         return None
     return -result if negative else result

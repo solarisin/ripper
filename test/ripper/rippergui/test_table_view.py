@@ -21,7 +21,38 @@ class TestParseNumericHelpers(unittest.TestCase):
 
     def test_rejects_malformed_input(self):
         """Malformed input is rejected (None), not silently coerced."""
-        for bad in ["12-34", "a1b2", "1.2.3", "1-2-3", "12a", "abc", "", "   ", "$", "-", "(1"]:
+        bad_inputs = [
+            # Original malformed cases.
+            "12-34",
+            "a1b2",
+            "1.2.3",
+            "1-2-3",
+            "12a",
+            "abc",
+            "",
+            "   ",
+            "$",
+            "-",
+            "(1",
+            # Reviewer's reproduced regressions: currency stripped before validating.
+            "1$2",  # currency mid-number
+            "$$1",  # repeated currency
+            "$-5.75",  # currency before sign (sign not in leading slot)
+            # Reviewer's reproduced regressions: bad thousands grouping.
+            "1,2,3",
+            "12,34",
+            # Extra thousands-grouping edge cases.
+            "1,23",  # group too short
+            "1,2345",  # group too long
+            ",100",  # leading comma
+            "100,",  # trailing comma
+            "1,200,",  # trailing comma after a valid group
+            "1,200,00",  # final group too short
+            # Reviewer's reproduced regressions: signed value inside accounting parens.
+            "(-50)",
+            "($-50)",
+        ]
+        for bad in bad_inputs:
             self.assertIsNone(parse_decimal(bad), f"expected None for {bad!r}")
             self.assertIsNone(parse_number(bad), f"expected None for {bad!r}")
             self.assertFalse(is_number(bad), f"expected non-number for {bad!r}")
@@ -33,10 +64,13 @@ class TestParseNumericHelpers(unittest.TestCase):
             "1200.50": Decimal("1200.50"),
             "100.50": Decimal("100.50"),
             "-50.25": Decimal("-50.25"),
-            "$-5.75": Decimal("-5.75"),
+            "-$5.75": Decimal("-5.75"),  # sign in the leading slot, then currency
             "(50.25)": Decimal("-50.25"),
             "($1,200.50)": Decimal("-1200.50"),
+            "($50)": Decimal("-50"),
             "2500": Decimal("2500"),
+            "1,200": Decimal("1200"),
+            "1,200,000.00": Decimal("1200000.00"),
             ".5": Decimal("0.5"),
             "+3": Decimal("3"),
         }
