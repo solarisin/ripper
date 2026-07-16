@@ -1,8 +1,11 @@
 """Tests for financial dashboard models."""
 
+import warnings
 from datetime import datetime
 
 import pytest
+from PySide6.QtCharts import QBarCategoryAxis
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from ripper.rippergui.dashboard.models.dashboard import Dashboard
@@ -16,6 +19,17 @@ from ripper.rippergui.dashboard.models.financial_widgets import (
 from ripper.rippergui.dashboard.models.tiller_data import TillerDataProcessor
 from ripper.rippergui.dashboard.models.widget_types import WidgetType
 from ripper.rippergui.dashboard.models.widgets import WidgetConfig
+
+
+def _assert_no_deprecated_axis_api(recorded_warnings) -> None:
+    """Fail if any deprecated Qt5-era QChart axis call was made."""
+    offenders = [
+        str(warning.message)
+        for warning in recorded_warnings
+        if issubclass(warning.category, DeprecationWarning)
+        and any(token in str(warning.message) for token in ("QChart.axisX", "QChart.axisY", "QChart.setAxisX"))
+    ]
+    assert not offenders, f"deprecated QChart axis API used: {offenders}"
 
 
 @pytest.fixture
@@ -83,6 +97,38 @@ class TestSpendingTrendWidget:
         # Should not raise an exception
         widget.update_data()
 
+    def test_update_chart_attaches_titled_axes(self, sample_widget_config, sample_dashboard, qtbot):
+        """_update_chart should attach axes via the Qt6 API with the expected titles."""
+        widget = SpendingTrendWidget(sample_widget_config, sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            widget._update_chart(
+                [
+                    {"month": "2026-01", "amount": -100.0},
+                    {"month": "2026-02", "amount": -250.0},
+                ]
+            )
+        _assert_no_deprecated_axis_api(recorded)
+
+        assert widget.chart_view is not None
+        chart = widget.chart_view.chart()
+
+        horizontal_axes = chart.axes(Qt.Orientation.Horizontal)
+        vertical_axes = chart.axes(Qt.Orientation.Vertical)
+        assert horizontal_axes, "expected a horizontal axis to be attached"
+        assert vertical_axes, "expected a vertical axis to be attached"
+        assert horizontal_axes[0].titleText() == "Month"
+        assert vertical_axes[0].titleText() == "Amount ($)"
+
+        # Axes must be attached to the series (Qt6 addAxis/attachAxis semantics).
+        series = chart.series()[0]
+        assert horizontal_axes[0] in series.attachedAxes()
+        assert vertical_axes[0] in series.attachedAxes()
+
 
 @pytest.mark.qt
 class TestCategoryBreakdownWidget:
@@ -134,6 +180,39 @@ class TestBudgetVsActualWidget:
         assert created_widget is not None
         assert created_widget.parent() == parent
         assert widget.chart_view is not None
+
+    def test_update_chart_attaches_category_and_value_axes(self, sample_widget_config, sample_dashboard, qtbot):
+        """_update_chart should attach a category X axis and titled value Y axis (Qt6 API)."""
+        widget = BudgetVsActualWidget(sample_widget_config, sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            widget._update_chart(
+                [
+                    {"category": "Food", "budgeted": 400.0, "amount": -350.0},
+                    {"category": "Housing", "budgeted": 1500.0, "amount": -1500.0},
+                ]
+            )
+        _assert_no_deprecated_axis_api(recorded)
+
+        assert widget.chart_view is not None
+        chart = widget.chart_view.chart()
+
+        horizontal_axes = chart.axes(Qt.Orientation.Horizontal)
+        vertical_axes = chart.axes(Qt.Orientation.Vertical)
+        assert horizontal_axes, "expected a horizontal axis to be attached"
+        assert vertical_axes, "expected a vertical axis to be attached"
+        assert isinstance(horizontal_axes[0], QBarCategoryAxis)
+        assert list(horizontal_axes[0].categories()) == ["Food", "Housing"]
+        assert horizontal_axes[0].titleText() == "Category"
+        assert vertical_axes[0].titleText() == "Amount ($)"
+
+        series = chart.series()[0]
+        assert horizontal_axes[0] in series.attachedAxes()
+        assert vertical_axes[0] in series.attachedAxes()
 
 
 @pytest.mark.qt

@@ -120,12 +120,17 @@ class SpendingTrendWidget(BaseWidget):
         # Add series to chart
         chart.addSeries(series)
 
-        # Configure axes
+        # Configure axes. createDefaultAxes() attaches auto-ranged value axes to
+        # the series; access them via the Qt6 axes() API to title them.
         chart.createDefaultAxes()
 
         # Customize appearance
-        chart.axisX().setTitleText("Month")
-        chart.axisY().setTitleText("Amount ($)")
+        horizontal_axes = chart.axes(Qt.Orientation.Horizontal)
+        vertical_axes = chart.axes(Qt.Orientation.Vertical)
+        if horizontal_axes:
+            horizontal_axes[0].setTitleText("Month")
+        if vertical_axes:
+            vertical_axes[0].setTitleText("Amount ($)")
 
         # Update chart view
         self.chart_view.update()
@@ -405,19 +410,29 @@ class BudgetVsActualWidget(BaseWidget):
         series.append(actual_set)
         chart.addSeries(series)
 
-        # Configure axes
+        # Configure axes (Qt6 addAxis/attachAxis API). createDefaultAxes() gives
+        # an auto-ranged value axis on each orientation; replace the horizontal one
+        # with a category axis so the bars are labelled by category.
+        chart.createDefaultAxes()
+        for axis in chart.axes(Qt.Orientation.Horizontal):
+            series.detachAxis(axis)
+            chart.removeAxis(axis)
+
         axis_x = QBarCategoryAxis()
         axis_x.append(categories)
-        chart.createDefaultAxes()
-        chart.setAxisX(axis_x, series)
+        axis_x.setTitleText("Category")
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
+
+        vertical_axes = chart.axes(Qt.Orientation.Vertical)
+        if vertical_axes:
+            vertical_axes[0].setTitleText("Amount ($)")
 
         # Style the bars
         budget_set.setColor(QColor("#2ecc71"))  # Green for budgeted
         actual_set.setColor(QColor("#e74c3c"))  # Red for actual (overspending)
 
         # Update chart view
-        chart.axisY().setTitleText("Amount ($)")
-        chart.axisX().setTitleText("Category")
         self.chart_view.update()
 
     def update_data(self, service: Any = None) -> None:
