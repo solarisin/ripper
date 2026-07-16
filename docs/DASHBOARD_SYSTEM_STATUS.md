@@ -19,8 +19,7 @@ The dashboard system provides an embedded financial dashboard experience inside 
 ## Still Not Implemented
 
 - Tiller categories and budget data-source refresh.
-- Net worth, savings goal, and income-vs-expense widget implementations.
-- Real renderers for the basic placeholder widgets: line chart, bar chart, pie chart, table, KPI, and gauge.
+- The non-functional placeholder and unimplemented widget types (line chart, bar chart, pie chart, table, KPI, gauge, net worth, savings goal, income-vs-expense) were removed in #41 rather than left pending. Only the four functional financial widgets (spending trend, category breakdown, budget vs actual, top expenses) remain. Re-adding any of these would require a real implementation plus registry entry.
 - Full widget-specific properties such as colors, limits, category options, and chart style.
 - Moving/resizing existing widgets after they are dropped.
 - Dashboard rename, duplicate, import/export, and multi-dashboard selector UI.
