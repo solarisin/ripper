@@ -206,11 +206,16 @@ def create(ctx: click.Context) -> None:
     logger.debug(f"db absolute path: {db_path.absolute()}")
 
     if not db_path.exists():
-        try:
-            logger.debug(f"Creating database at {db_path}")
-            Db.open()
-        finally:
-            Db.close()
+        logger.debug(f"Creating database at {db_path}")
+        # Construct a scoped RipperDb bound to the requested path rather than routing through
+        # the global lazy `Db` singleton, which would resolve to the default application
+        # database and ignore --file-path (issue #71). Construction opens the connection and
+        # creates the schema; any failure propagates and yields a non-zero exit code.
+        # Resolve to an absolute path so a bare relative filename (e.g. "local.db") does not
+        # produce an empty dirname, which would make RipperDb.open()'s os.makedirs("") raise
+        # FileNotFoundError.
+        scoped_db = ripper.ripperlib.database.RipperDb(str(db_path.resolve()))
+        scoped_db.close()
     else:
         logger.debug(f"Database at {db_path} already exists, skipping create")
 
@@ -224,7 +229,9 @@ def clean(ctx: click.Context) -> None:
     Args:
         ctx (click.Context): The Click context object.
     """
-    Db.close()
+    # Do not call `Db.close()` here: `Db` is the lazy global singleton, and touching it would
+    # construct/open the *default* application database purely as a side effect while cleaning a
+    # (possibly different) --file-path target. Delete the requested path directly instead.
     log_context(ctx)
     db_path: Path = ctx.obj["DB_PATH"]
     if db_path.exists():
