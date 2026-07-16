@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import SIGNAL, Qt
 from PySide6.QtWidgets import QApplication, QLabel
 
 from ripper.rippergui.widgets.accordion_widget import (
@@ -150,6 +150,29 @@ class TestAccordionPanel(unittest.TestCase):
         # Set expanded to false
         self.panel.set_expanded(False)
         self.assertFalse(self.panel.is_expanded)
+
+    def test_finished_slots_do_not_accumulate(self) -> None:
+        """Repeated toggling must not accumulate slots on animation.finished.
+
+        Regression test for #53: expand()/collapse() previously connected a new
+        lambda to ``animation.finished`` on every call without disconnecting, so
+        the slot count grew unbounded across toggles.
+        """
+        animation = self.panel.animation
+        finished = SIGNAL("finished()")
+        baseline = animation.receivers(finished)
+
+        for _ in range(10):
+            self.panel.collapse()
+            self.panel.expand()
+
+        # A correct implementation keeps a constant number of receivers; the
+        # buggy one grows one (or two) per toggle.
+        self.assertLessEqual(
+            animation.receivers(finished),
+            baseline + 1,
+            "animation.finished slot count grew across toggles (signal accumulation)",
+        )
 
 
 class TestAccordionWidget(unittest.TestCase):
