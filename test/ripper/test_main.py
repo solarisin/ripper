@@ -85,3 +85,33 @@ class TestDbCreateFilePath:
         assert result.exit_code == 0, result.output
         assert custom_path.exists(), "requested database file was not created"
         assert not default_path.exists(), "default database must not be created for a custom path"
+
+    def test_create_with_bare_relative_filename(self) -> None:
+        """A bare relative filename (empty dirname) must not raise; the DB is created in cwd."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, ["db", "--file-path", "local.db", "create"], obj={})
+
+            assert result.exit_code == 0, result.output
+            assert Path("local.db").exists(), "relative-path database file was not created"
+
+    def test_create_with_nested_relative_path(self) -> None:
+        """A nested relative path is created relative to cwd."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, ["db", "--file-path", "nested/dir/local.db", "create"], obj={})
+
+            assert result.exit_code == 0, result.output
+            assert Path("nested/dir/local.db").exists(), "nested relative-path database file was not created"
+
+    def test_clean_with_relative_filename(self) -> None:
+        """`db clean` must remove a relative-path database file."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            create_result = runner.invoke(cli, ["db", "--file-path", "local.db", "create"], obj={})
+            assert create_result.exit_code == 0, create_result.output
+            assert Path("local.db").exists()
+
+            clean_result = runner.invoke(cli, ["db", "--file-path", "local.db", "clean"], obj={})
+            assert clean_result.exit_code == 0, clean_result.output
+            assert not Path("local.db").exists(), "relative-path database file was not cleaned"

@@ -211,7 +211,10 @@ def create(ctx: click.Context) -> None:
         # the global lazy `Db` singleton, which would resolve to the default application
         # database and ignore --file-path (issue #71). Construction opens the connection and
         # creates the schema; any failure propagates and yields a non-zero exit code.
-        scoped_db = ripper.ripperlib.database.RipperDb(str(db_path))
+        # Resolve to an absolute path so a bare relative filename (e.g. "local.db") does not
+        # produce an empty dirname, which would make RipperDb.open()'s os.makedirs("") raise
+        # FileNotFoundError.
+        scoped_db = ripper.ripperlib.database.RipperDb(str(db_path.resolve()))
         scoped_db.close()
     else:
         logger.debug(f"Database at {db_path} already exists, skipping create")
