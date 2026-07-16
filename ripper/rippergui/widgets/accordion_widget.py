@@ -112,6 +112,19 @@ class AccordionPanel(QFrame):
         self.animation = QPropertyAnimation(self.content_container, QByteArray(b"maximumHeight"))
         self.animation.setDuration(self.animation_duration)
         self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        # Connect a single persistent handler once. expand()/collapse() must not
+        # reconnect on every toggle, otherwise slots accumulate on the finished
+        # signal (see issue #53). The handler reads the current state so the last
+        # requested state always wins.
+        self.animation.finished.connect(self._on_animation_finished)
+
+    def _on_animation_finished(self) -> None:
+        """Apply the final maximum height once an expand/collapse animation ends."""
+        if self.is_expanded:
+            # Remove the height limit so expanded content can grow freely.
+            self.content_container.setMaximumHeight(16777215)
+        else:
+            self.content_container.setMaximumHeight(0)
 
     def toggle_panel(self, event: Optional[QMouseEvent] = None) -> None:
         """Toggle the panel expansion state."""
@@ -137,7 +150,6 @@ class AccordionPanel(QFrame):
             # Animate expansion
             self.animation.setStartValue(0)
             self.animation.setEndValue(content_height)
-            self.animation.finished.connect(lambda: self.content_container.setMaximumHeight(16777215))
             self.animation.start()
 
             self.toggled.emit(True)
@@ -152,7 +164,6 @@ class AccordionPanel(QFrame):
             current_height = self.content_container.height()
             self.animation.setStartValue(current_height)
             self.animation.setEndValue(0)
-            self.animation.finished.connect(lambda: self.content_container.setMaximumHeight(0))
             self.animation.start()
 
             self.toggled.emit(False)
