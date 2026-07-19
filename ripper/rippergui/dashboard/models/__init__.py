@@ -7,13 +7,7 @@ from .data_source import DataSource, DataSourceType, DateRange, DateRangePreset
 from .registry import WIDGET_REGISTRY, register_widget
 from .widget_types import WidgetType
 from .widgets import (
-    BarChartWidget,
     BaseWidget,
-    DataTableWidget,
-    GaugeWidget,
-    KPIWidget,
-    LineChartWidget,
-    PieChartWidget,
     WidgetConfig,
 )
 
@@ -32,11 +26,4 @@ __all__ = [
     "register_widget",
     "WIDGET_REGISTRY",
     "financial_widgets",
-    # Widget implementations
-    "LineChartWidget",
-    "BarChartWidget",
-    "PieChartWidget",
-    "DataTableWidget",
-    "KPIWidget",
-    "GaugeWidget",
 ]

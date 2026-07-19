@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from PySide6.QtCharts import QChartView
 from PySide6.QtWidgets import QLabel, QScrollArea, QSplitter
 
 from ripper.rippergui.dashboard.models import Dashboard, WidgetConfig, WidgetType
@@ -26,8 +27,8 @@ def test_dashboard_view_renders_widget_config(tmp_path, qtbot):
     dashboard.add_widget(
         WidgetConfig(
             id="widget-1",
-            type=WidgetType.LINE_CHART,
-            title="Line",
+            type=WidgetType.SPENDING_TREND,
+            title="Spending",
             position=(0, 0),
             size=(2, 2),
         )
@@ -37,8 +38,14 @@ def test_dashboard_view_renders_widget_config(tmp_path, qtbot):
     view = DashboardView(tmp_path, data_service=_fake_data_service())
     qtbot.addWidget(view)
 
-    labels = view.findChildren(QLabel)
-    assert any(label.text() == "Line Chart: Line" for label in labels)
+    # SpendingTrendWidget.create_widget builds a real chart, not a placeholder label.
+    chart_views = view.findChildren(QChartView)
+    assert chart_views, "expected the functional widget to render a QChartView"
+    assert chart_views[0].chart().title() == "Monthly Spending Trend"
+
+    # The widget rendered successfully, so no error-label fallback should be present.
+    error_labels = [label for label in view.findChildren(QLabel) if label.text().startswith("Error loading widget")]
+    assert not error_labels
 
 
 def test_dashboard_editor_uses_injected_data_source_provider(qtbot):

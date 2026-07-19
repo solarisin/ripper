@@ -101,31 +101,8 @@ class WidgetPalette(QFrame):
         self.widget_list.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.widget_list.setSpacing(5)
 
-        # Add widget items
-        # Basic widgets
-        self._add_widget_item("Line Chart", WidgetType.LINE_CHART, "chart-line")
-        self._add_widget_item("Bar Chart", WidgetType.BAR_CHART, "chart-bar")
-        self._add_widget_item("Pie Chart", WidgetType.PIE_CHART, "chart-pie")
-        self._add_widget_item("Data Table", WidgetType.DATA_TABLE, "table")
-        self._add_widget_item("KPI", WidgetType.KPI, "chart-gantt")
-        self._add_widget_item("Gauge", WidgetType.GAUGE, "tachometer-alt")
-
-        # Add a separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        widget_layout = self.layout()
-        if widget_layout is not None:
-            widget_layout.addWidget(separator)
-
-        # Financial widgets section
-        finance_label = QLabel("Financial")
-        finance_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        widget_layout = self.layout()
-        if widget_layout is not None:
-            widget_layout.addWidget(finance_label)
-
-        # Financial widgets
+        # Add widget items. Only the functional financial widgets are offered; the
+        # non-functional placeholder types were removed in #41.
         self._add_widget_item("Spending Trend", WidgetType.SPENDING_TREND, "chart-line")
         self._add_widget_item("Category Breakdown", WidgetType.CATEGORY_BREAKDOWN, "chart-pie")
         self._add_widget_item("Budget vs Actual", WidgetType.BUDGET_VS_ACTUAL, "balance-scale")
@@ -146,19 +123,10 @@ class WidgetPalette(QFrame):
 
         # Map widget types to appropriate Qt standard icons
         icon_mapping = {
-            WidgetType.LINE_CHART: QStyle.StandardPixmap.SP_FileDialogDetailedView,
-            WidgetType.BAR_CHART: QStyle.StandardPixmap.SP_FileDialogListView,
-            WidgetType.PIE_CHART: QStyle.StandardPixmap.SP_DialogYesButton,
-            WidgetType.DATA_TABLE: QStyle.StandardPixmap.SP_FileDialogInfoView,
-            WidgetType.KPI: QStyle.StandardPixmap.SP_DesktopIcon,
-            WidgetType.GAUGE: QStyle.StandardPixmap.SP_ComputerIcon,
             WidgetType.SPENDING_TREND: QStyle.StandardPixmap.SP_FileDialogDetailedView,
             WidgetType.CATEGORY_BREAKDOWN: QStyle.StandardPixmap.SP_DialogYesButton,
             WidgetType.BUDGET_VS_ACTUAL: QStyle.StandardPixmap.SP_DialogApplyButton,
             WidgetType.TOP_EXPENSES: QStyle.StandardPixmap.SP_FileDialogListView,
-            WidgetType.NET_WORTH: QStyle.StandardPixmap.SP_DriveHDIcon,
-            WidgetType.SAVINGS_GOAL: QStyle.StandardPixmap.SP_DialogSaveButton,
-            WidgetType.INCOME_VS_EXPENSE: QStyle.StandardPixmap.SP_MediaPlay,
         }
 
         # Get the appropriate icon

@@ -236,24 +236,14 @@ Dashboard concepts:
 - `DashboardManager`: Loads, saves, creates, and deletes dashboard JSON files.
 - Widget registry: Maps widget types to widget classes for dynamic loading.
 
-Available basic widget types:
-
-- Line chart
-- Bar chart
-- Pie chart
-- Data table
-- KPI
-- Gauge
-
-Available financial widget types:
+Available widget types (the four functional financial widgets; non-functional placeholder and unimplemented types were removed in #41):
 
 - Spending trend
 - Category breakdown
 - Budget vs actual
 - Top expenses
-- Additional enum values exist for net worth, savings goal, and income vs expense, but those implementations are not present in the current code.
 
-The dashboard editor has a widget palette, drag-and-drop canvas, save button, delete-widget action, a transaction data-source picker, and minimal widget title/data-source properties. Basic widgets currently render placeholder labels. Financial widgets can render Qt Charts or tables when backed by refreshed Tiller transaction data.
+The dashboard editor has a widget palette, drag-and-drop canvas, save button, delete-widget action, a transaction data-source picker, and minimal widget title/data-source properties. Financial widgets can render Qt Charts or tables when backed by refreshed Tiller transaction data.
 
 ## Tiller Data Support
 
