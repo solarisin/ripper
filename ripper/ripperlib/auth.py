@@ -362,10 +362,12 @@ class AuthManager(QObject):
             expired_cred: Expired credentials to refresh
 
         Returns:
-            Refreshed credentials if successful, None otherwise. Transient transport failures
-            (offline, DNS, timeout) return None but leave the stored token/user info in the
-            keyring so the next launch can refresh silently once connectivity returns; only
-            credential failures (e.g. an invalid/revoked refresh token) invalidate the store.
+            Refreshed credentials if successful, None otherwise. Transient failures - transport
+            errors (offline, DNS, timeout) and retryable server errors (500/503 from the token
+            endpoint, RefreshError with retryable=True) - return None but leave the stored
+            token/user info in the keyring so the next launch can refresh silently; only
+            non-retryable credential failures (e.g. an invalid/revoked refresh token)
+            invalidate the store.
         """
         if expired_cred.refresh_token:
             try:
@@ -388,6 +390,16 @@ class AuthManager(QObject):
                 )
                 return None
             except GoogleAuthError as ex:
+                if ex.retryable:
+                    # google-auth marks retryable HTTP failures from the token endpoint
+                    # (500/503, server_error, temporarily_unavailable) with retryable=True
+                    # after its internal retries are exhausted. Environmental, not a rejected
+                    # token - keep the stored credentials for the next launch (#102).
+                    logger.warning(
+                        f"Could not refresh credentials due to a retryable server error; keeping "
+                        f"stored token - {type(ex).__name__}: {ex}"
+                    )
+                    return None
                 # Credential-layer failures (RefreshError for an invalid/revoked/expired refresh
                 # token, ReauthFailError, etc.): the token is no longer usable, so invalidate it.
                 logger.error(

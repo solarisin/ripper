@@ -453,6 +453,22 @@ class TestAuthManager(unittest.TestCase):
                 self.auth_manager._token_store.invalidate.assert_not_called()
                 self.auth_manager._token_store.store.assert_not_called()
 
+    def test_refresh_token_retryable_refresh_error_preserves_store(self):
+        """A retryable RefreshError (token endpoint 500/503, server_error) must not invalidate (#102).
+
+        google-auth raises RefreshError with retryable=True for retryable HTTP failures after its
+        internal retries are exhausted. That is environmental, not a rejected token, so the keyring
+        entries must be preserved for the next launch.
+        """
+        mock_cred = make_mock_creds(expired=True, valid=True)
+        mock_cred.refresh.side_effect = RefreshError("server unavailable", retryable=True)
+
+        result = self.auth_manager.refresh_token(mock_cred)
+
+        self.assertIsNone(result)
+        self.auth_manager._token_store.invalidate.assert_not_called()
+        self.auth_manager._token_store.store.assert_not_called()
+
     def test_refresh_token_generic_google_auth_error(self):
         """refresh_token must catch any GoogleAuthError subclass, not just RefreshError (#102)."""
 
