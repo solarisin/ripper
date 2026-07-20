@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from PySide6.QtCharts import QChartView
-from PySide6.QtWidgets import QLabel, QScrollArea, QSplitter
+from PySide6.QtWidgets import QDialog, QLabel, QMessageBox, QScrollArea, QSplitter
 
 from ripper.rippergui.dashboard.models import Dashboard, WidgetConfig, WidgetType
 from ripper.rippergui.dashboard.services import DashboardDataService, DashboardRefreshResult
@@ -115,6 +115,121 @@ def test_refresh_reports_error_without_crashing(tmp_path, qtbot):
     qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
 
     assert "boom" in view.status_label.text()
+
+
+def _view_with_one_widget(tmp_path, qtbot):
+    """Build a DashboardView over a stored dashboard containing a single widget."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_widget(
+        WidgetConfig(
+            id="widget-1",
+            type=WidgetType.SPENDING_TREND,
+            title="Spending",
+            position=(0, 0),
+            size=(2, 2),
+        )
+    )
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    view = DashboardView(tmp_path, data_service=_fake_data_service())
+    qtbot.addWidget(view)
+    return view, dashboard
+
+
+def _patch_edit_dialog_exec(monkeypatch, mutate, result_code):
+    """Patch QDialog.exec so the edit dialog 'runs': mutate the editor's model, then close.
+
+    Simulates the user making an edit inside the modal editor and then pressing
+    Save (Accepted) or Cancel (Rejected), without spinning a real event loop.
+    """
+
+    def fake_exec(dialog_self):
+        editor = dialog_self.findChild(DashboardEditor)
+        assert editor is not None, "edit dialog should contain the DashboardEditor"
+        mutate(editor)
+        return result_code
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+
+
+def test_edit_dialog_cancel_reverts_changes(tmp_path, qtbot, monkeypatch):
+    """Cancelling the edit dialog must leave the live dashboard untouched (#95)."""
+    view, dashboard = _view_with_one_widget(tmp_path, qtbot)
+
+    _patch_edit_dialog_exec(
+        monkeypatch,
+        mutate=lambda editor: editor.dashboard.remove_widget("widget-1"),
+        result_code=QDialog.DialogCode.Rejected,
+    )
+    view._on_edit_dashboard()
+
+    assert view.current_dashboard is not None
+    assert "widget-1" in view.current_dashboard.widgets, "cancelled deletion leaked into the live dashboard"
+
+    # A later, unrelated save must not silently persist the cancelled deletion.
+    view.dashboard_manager.save_dashboard(view.current_dashboard)
+    reloaded = Dashboard.load_from_file(tmp_path / f"{dashboard.id}.json")
+    assert "widget-1" in reloaded.widgets
+
+
+def test_edit_dialog_save_persists_changes(tmp_path, qtbot, monkeypatch):
+    """Accepting the edit dialog persists the edits and updates the in-memory state (#95)."""
+    view, dashboard = _view_with_one_widget(tmp_path, qtbot)
+
+    def mutate(editor):
+        editor.dashboard.remove_widget("widget-1")
+        editor.dashboard.name = "Renamed"
+
+    _patch_edit_dialog_exec(monkeypatch, mutate=mutate, result_code=QDialog.DialogCode.Accepted)
+    view._on_edit_dashboard()
+
+    assert view.current_dashboard is not None
+    assert "widget-1" not in view.current_dashboard.widgets
+    assert view.current_dashboard.name == "Renamed"
+
+    # Persisted to disk.
+    reloaded = Dashboard.load_from_file(tmp_path / f"{dashboard.id}.json")
+    assert "widget-1" not in reloaded.widgets
+    assert reloaded.name == "Renamed"
+
+    # The manager and combo now reference the edited dashboard, keyed by the same id.
+    assert view.dashboard_manager.get_dashboard(dashboard.id) is view.current_dashboard
+    assert view.current_dashboard.id == dashboard.id
+    assert view.dashboard_combo.currentText() == "Renamed"
+
+
+def test_edit_dialog_save_failure_keeps_original_dashboard_everywhere(tmp_path, qtbot, monkeypatch):
+    """A failed save on Accept must leave both the view and the manager on the original (#95 review).
+
+    The view already keeps displaying the original; the manager must not have
+    registered the unpersisted working copy either.
+    """
+    view, dashboard = _view_with_one_widget(tmp_path, qtbot)
+    original = view.current_dashboard
+    assert original is not None
+
+    _patch_edit_dialog_exec(
+        monkeypatch,
+        mutate=lambda editor: editor.dashboard.remove_widget("widget-1"),
+        result_code=QDialog.DialogCode.Accepted,
+    )
+    critical = MagicMock(return_value=QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(QMessageBox, "critical", critical)
+    monkeypatch.setattr(Dashboard, "save_to_file", MagicMock(side_effect=OSError("disk full")))
+
+    view._on_edit_dashboard()
+
+    critical.assert_called_once()
+    assert view.current_dashboard is original
+    assert "widget-1" in view.current_dashboard.widgets
+    # The manager must still resolve the id to the original, not the failed working copy.
+    assert view.dashboard_manager.get_dashboard(dashboard.id) is original
+
+    # A later, unrelated save must not silently persist the failed edit.
+    monkeypatch.undo()
+    view.dashboard_manager.save_dashboard(view.current_dashboard)
+    reloaded = Dashboard.load_from_file(tmp_path / f"{dashboard.id}.json")
+    assert "widget-1" in reloaded.widgets
 
 
 def test_refresh_result_for_switched_away_dashboard_is_ignored():

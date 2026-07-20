@@ -377,10 +377,13 @@ class DashboardView(QWidget):
 
         from .dashboard_editor import DashboardEditor
 
+        # Edit a deep copy so Cancel leaves the live dashboard untouched (#95). The working
+        # copy is persisted and swapped in as the current dashboard only on Accept; the
+        # editor's internal "Save Dashboard" button just syncs canvas state into the copy.
+        working = Dashboard.from_dict(self.current_dashboard.to_dict())
+
         # Create and show the dashboard editor
-        editor = DashboardEditor(self.current_dashboard, self)
-        # Connect the dashboard_saved signal to refresh the view
-        editor.signals.dashboard_saved.connect(lambda: self._set_current_dashboard(self.current_dashboard))
+        editor = DashboardEditor(working, self)
         # Create dialog
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Edit Dashboard: {self.current_dashboard.name}")
@@ -406,14 +409,14 @@ class DashboardView(QWidget):
         # Show the dialog
         if dialog.exec() == QDialog.DialogCode.Accepted:
             try:
-                # Save the dashboard
-                self.dashboard_manager.save_dashboard(self.current_dashboard)
+                # Persist the working copy and swap it in as the live dashboard
+                self.dashboard_manager.save_dashboard(working)
                 self.dashboards = self.dashboard_manager.get_all_dashboards()
                 self._refresh_dashboard_combo()
                 # Refresh the view
-                self._set_current_dashboard(self.current_dashboard)
+                self._set_current_dashboard(working)
                 self.status_label.setStyleSheet("color: #1b5e20;")
-                self.status_label.setText(f"Saved dashboard '{self.current_dashboard.name}'.")
+                self.status_label.setText(f"Saved dashboard '{working.name}'.")
                 self.dashboard_changed.emit()
             except Exception as e:
                 logger.error(f"Error saving dashboard: {e}")
