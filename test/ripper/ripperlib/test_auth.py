@@ -2,7 +2,8 @@ import json
 import unittest
 from unittest.mock import MagicMock, create_autospec, patch
 
-from google.auth.exceptions import RefreshError
+from google.auth.exceptions import GoogleAuthError, RefreshError, ResponseError, TransportError
+from google.auth.exceptions import TimeoutError as GoogleAuthTimeoutError
 from google.oauth2.credentials import Credentials
 from keyring.errors import PasswordDeleteError
 
@@ -421,6 +422,68 @@ class TestAuthManager(unittest.TestCase):
         self.assertIsNone(result)
         self.auth_manager._token_store.invalidate.assert_called_once()
 
+    def test_refresh_token_transport_error(self):
+        """refresh_token must catch TransportError without invalidating stored credentials (#102).
+
+        TransportError is a sibling of RefreshError under GoogleAuthError, not a subclass, so a
+        bare `except RefreshError` lets an offline refresh crash the app. A transport failure is
+        transient (offline, DNS, timeout) — the credentials were never rejected, so the keyring
+        entries must be preserved for the next launch.
+        """
+        mock_cred = make_mock_creds(expired=True, valid=True)
+        mock_cred.refresh.side_effect = TransportError("connection error: DNS failure")
+
+        result = self.auth_manager.refresh_token(mock_cred)
+
+        self.assertIsNone(result)
+        self.auth_manager._token_store.invalidate.assert_not_called()
+        self.auth_manager._token_store.store.assert_not_called()
+
+    def test_refresh_token_other_transient_transport_errors(self):
+        """google.auth's TimeoutError and ResponseError are also transient — no invalidation (#102)."""
+        for transient_exc in (GoogleAuthTimeoutError("request timed out"), ResponseError("bad response read")):
+            with self.subTest(exception=type(transient_exc).__name__):
+                self.auth_manager._token_store.reset_mock()
+                mock_cred = make_mock_creds(expired=True, valid=True)
+                mock_cred.refresh.side_effect = transient_exc
+
+                result = self.auth_manager.refresh_token(mock_cred)
+
+                self.assertIsNone(result)
+                self.auth_manager._token_store.invalidate.assert_not_called()
+                self.auth_manager._token_store.store.assert_not_called()
+
+    def test_refresh_token_retryable_refresh_error_preserves_store(self):
+        """A retryable RefreshError (token endpoint 500/503, server_error) must not invalidate (#102).
+
+        google-auth raises RefreshError with retryable=True for retryable HTTP failures after its
+        internal retries are exhausted. That is environmental, not a rejected token, so the keyring
+        entries must be preserved for the next launch.
+        """
+        mock_cred = make_mock_creds(expired=True, valid=True)
+        mock_cred.refresh.side_effect = RefreshError("server unavailable", retryable=True)
+
+        result = self.auth_manager.refresh_token(mock_cred)
+
+        self.assertIsNone(result)
+        self.auth_manager._token_store.invalidate.assert_not_called()
+        self.auth_manager._token_store.store.assert_not_called()
+
+    def test_refresh_token_generic_google_auth_error(self):
+        """refresh_token must catch any GoogleAuthError subclass, not just RefreshError (#102)."""
+
+        class SomeOtherGoogleAuthError(GoogleAuthError):
+            pass
+
+        mock_cred = make_mock_creds(expired=True, valid=True)
+        mock_cred.refresh.side_effect = SomeOtherGoogleAuthError("some other auth failure")
+
+        result = self.auth_manager.refresh_token(mock_cred)
+
+        self.assertIsNone(result)
+        self.auth_manager._token_store.invalidate.assert_called_once()
+        self.auth_manager._token_store.store.assert_not_called()
+
     def test_attempt_load_stored_token_success(self):
         """Test that attempt_load_stored_token loads a valid token successfully."""
         mock_cred = make_mock_creds(expired=False, valid=True)
@@ -436,6 +499,23 @@ class TestAuthManager(unittest.TestCase):
         with patch.object(self.auth_manager, "refresh_token", return_value=refreshed_cred):
             result = self.auth_manager.attempt_load_stored_token()
             self.assertEqual(result, refreshed_cred)
+
+    def test_attempt_load_stored_token_expired_refresh_transport_error(self):
+        """An expired stored token whose refresh fails offline must yield None, not raise (#102).
+
+        The stored token and user info must stay in the keyring: the refresh failed for
+        environmental reasons, not because the credentials were rejected, so the next launch
+        (with connectivity) must be able to refresh silently instead of forcing a new OAuth flow.
+        """
+        mock_cred = make_mock_creds(expired=True, valid=True)
+        mock_cred.refresh.side_effect = TransportError("network unreachable")
+        self.auth_manager._token_store.get_credentials.return_value = mock_cred
+
+        result = self.auth_manager.attempt_load_stored_token()
+
+        self.assertIsNone(result)
+        self.auth_manager._token_store.invalidate.assert_not_called()
+        self.auth_manager._token_store.store.assert_not_called()
 
     def test_attempt_load_stored_token_no_token(self):
         """Test that attempt_load_stored_token handles the case when no token is found."""

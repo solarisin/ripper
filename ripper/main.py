@@ -159,7 +159,12 @@ def cli(
         app.setStyle("Fusion")
 
         main_window = MainView()
-        AuthManager().check_stored_credentials()
+        try:
+            AuthManager().check_stored_credentials()
+        except Exception:
+            # Defense in depth (#102): a startup auth failure (e.g. offline refresh of an expired
+            # token) must never kill the app - the UI simply starts logged out.
+            logger.exception("Startup credential check failed; continuing logged out")
         main_window.show()
 
         # Start the event loop
