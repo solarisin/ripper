@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+from google.auth.exceptions import TransportError
 
 from ripper.main import cli, get_version
 
@@ -52,6 +53,32 @@ class TestMain(unittest.TestCase):
 
         # Check that toml.load was called
         mock_toml_load.assert_called_once()
+
+
+class TestStartupCredentialCheck:
+    """Regression tests for GUI startup surviving auth failures (issue #102)."""
+
+    def test_startup_survives_transport_error_from_credential_check(self):
+        """A TransportError from check_stored_credentials (offline launch with an expired
+        stored token) must not kill the app before the window shows."""
+        runner = CliRunner()
+        with (
+            patch("ripper.main.Db"),
+            patch("PySide6.QtWidgets.QApplication") as mock_qapp,
+            patch("ripper.rippergui.mainview.MainView") as mock_mainview,
+            patch("ripper.main.AuthManager") as mock_auth_manager,
+        ):
+            mock_qapp.return_value.exec.return_value = 0
+            mock_auth_manager.return_value.check_stored_credentials.side_effect = TransportError(
+                "connection error: network unreachable"
+            )
+
+            result = runner.invoke(cli, [], obj={})
+
+        assert result.exit_code == 0, result.output
+        # Startup continued: the window was still shown and the event loop still ran.
+        mock_mainview.return_value.show.assert_called_once()
+        mock_qapp.return_value.exec.assert_called_once()
 
 
 class TestDbCreateFilePath:

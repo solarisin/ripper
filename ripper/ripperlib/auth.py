@@ -14,7 +14,7 @@ import os
 
 import keyring
 from beartype.typing import Any, Dict, List, Optional, Tuple, Type, cast
-from google.auth.exceptions import RefreshError
+from google.auth.exceptions import GoogleAuthError, RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
@@ -373,8 +373,14 @@ class AuthManager(QObject):
                     return valid_cred
                 else:
                     logger.debug("Expired credentials still invalid after refresh - invalidating token")
-            except RefreshError as ex:
-                logger.error(f"Existing credentials could not be refreshed, token will be invalidated - error: {ex}")
+            except GoogleAuthError as ex:
+                # Catch the whole google-auth hierarchy, not just RefreshError: network failures
+                # during refresh (offline, DNS, timeout, SSL) raise TransportError, a *sibling* of
+                # RefreshError under GoogleAuthError, and must degrade to logged-out, not crash (#102).
+                logger.error(
+                    f"Existing credentials could not be refreshed, token will be invalidated - "
+                    f"{type(ex).__name__}: {ex}"
+                )
         self._token_store.invalidate()
         return None
 
