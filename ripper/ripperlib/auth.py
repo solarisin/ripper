@@ -142,9 +142,32 @@ class TokenStore:
         except PasswordDeleteError:
             logger.debug(f"No user info to delete for user {self._token_user_id}")
 
+    def update_token(self, token: str) -> None:
+        """
+        Update only the stored token, leaving any stored user info untouched.
+
+        Use this for a token-only rotation (e.g. a successful refresh), where the user's identity
+        has not changed. `store()` is the full-identity write and treats a missing userinfo
+        argument as "delete the cached user info", which would needlessly erase the cached
+        email/name on every refresh (#103).
+
+        Args:
+            token (str): The OAuth token as a JSON string.
+
+        Side effects:
+            Updates the token keyring entry for the current user.
+        """
+        self._current_token = token
+        keyring.set_password(self.TOKEN_KEY, self._token_user_id, token)
+        logger.debug(f"Updated stored token for user {self._token_user_id}")
+
     def store(self, token: Optional[str], userinfo: Optional[str] = None) -> None:
         """
         Store token and user info in keyring.
+
+        This is the full-identity write: `userinfo=None` means "this identity has no user info"
+        and clears any previously cached entry. To rotate only the token while preserving the
+        cached user info, use `update_token()` instead.
 
         Args:
             token (Optional[str]): The OAuth token as a JSON string, or None to invalidate.
@@ -375,7 +398,9 @@ class AuthManager(QObject):
                 if expired_cred.valid:
                     valid_cred = expired_cred
                     logger.debug("Expired token successfully refreshed")
-                    self._token_store.store(valid_cred.to_json())
+                    # Token-only update: the user's identity is unchanged, so the cached user
+                    # info must survive the refresh (#103).
+                    self._token_store.update_token(valid_cred.to_json())
                     return valid_cred
                 else:
                     logger.debug("Expired credentials still invalid after refresh - invalidating token")

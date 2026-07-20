@@ -122,6 +122,40 @@ class TestTokenStore(unittest.TestCase):
         # Check that delete_password was called twice (once for token, once for userinfo)
         self.assertEqual(mock_delete_password.call_count, 2)
 
+    @patch("keyring.delete_password")
+    def test_invalidate_deletes_both_token_and_userinfo_entries(self, mock_delete_password):
+        """invalidate() remains the only path that erases the userinfo entry (#103).
+
+        Guards against a regression where the deletion reserved for invalidate() is either
+        dropped from here or leaks back into the token-only update path.
+        """
+        self.token_store._current_token = self.mock_token
+        self.token_store._current_userinfo = self.mock_userinfo
+
+        self.token_store.invalidate()
+
+        deleted_keys = {call.args[0] for call in mock_delete_password.call_args_list}
+        self.assertEqual(deleted_keys, {TokenStore.TOKEN_KEY, TokenStore.USERINFO_KEY})
+        self.assertIsNone(self.token_store._current_userinfo)
+
+    @patch("keyring.delete_password")
+    @patch("keyring.set_password")
+    def test_update_token_preserves_userinfo(self, mock_set_password, mock_delete_password):
+        """update_token() writes only the token entry and leaves user info untouched (#103)."""
+        self.token_store._current_token = "old_token"
+        self.token_store._current_userinfo = self.mock_userinfo
+
+        self.token_store.update_token(self.mock_token)
+
+        # The token entry is written...
+        self.assertEqual(self.token_store._current_token, self.mock_token)
+        mock_set_password.assert_called_once_with(
+            TokenStore.TOKEN_KEY, self.token_store._token_user_id, self.mock_token
+        )
+        # ...and the cached/stored user info survives untouched.
+        self.assertEqual(self.token_store._current_userinfo, self.mock_userinfo)
+        mock_delete_password.assert_not_called()
+
     @patch("keyring.set_password")
     def test_store(self, mock_set_password):
         """Test that store saves the token and userinfo to keyring."""
@@ -138,7 +172,12 @@ class TestTokenStore(unittest.TestCase):
     @patch("keyring.set_password")
     @patch("keyring.delete_password")
     def test_store_with_none_userinfo(self, mock_delete_password, mock_set_password):
-        """Test that store handles None userinfo correctly."""
+        """store(token, None) means "this identity has no user info" and clears the entry (#103).
+
+        This contract is retained deliberately: `store()` is the full-identity write used after a
+        fresh OAuth flow, where a missing user info lookup must not leave a previous account's
+        email cached. Callers that only rotate the access token must use `update_token()` instead.
+        """
         # Call store with token but no userinfo
         self.token_store.store(self.mock_token, None)
 
@@ -149,8 +188,8 @@ class TestTokenStore(unittest.TestCase):
         # Check that set_password was called once (for token)
         mock_set_password.assert_called_once()
 
-        # Check that delete_password was called once (for userinfo)
-        mock_delete_password.assert_called_once()
+        # Check that delete_password was called once, for the userinfo entry only
+        mock_delete_password.assert_called_once_with(TokenStore.USERINFO_KEY, self.token_store._token_user_id)
 
     @patch("keyring.get_password")
     def test_load(self, mock_get_password):
@@ -401,7 +440,34 @@ class TestAuthManager(unittest.TestCase):
         # Call refresh_token
         result = self.auth_manager.refresh_token(mock_cred)
         self.assertEqual(result, mock_cred)
-        self.auth_manager._token_store.store.assert_called_once_with(mock_cred.to_json())
+        self.auth_manager._token_store.update_token.assert_called_once_with(mock_cred.to_json())
+        # A token-only rotation must never go through store(), whose None-userinfo argument
+        # would erase the cached identity (#103).
+        self.auth_manager._token_store.store.assert_not_called()
+
+    @patch("keyring.delete_password")
+    @patch("keyring.set_password")
+    def test_refresh_token_preserves_cached_user_info(self, mock_set_password, mock_delete_password):
+        """A successful refresh must not erase the cached email/name from the keyring (#103).
+
+        Storing the refreshed token via `store(token)` (no userinfo argument) deleted the userinfo
+        keyring entry on every routine refresh, forcing an extra retrieve_user_info() round-trip at
+        startup - and leaving user_info None if that call failed.
+        """
+        token_store = TokenStore()
+        token_store._current_token = json.dumps({"access_token": "old_token"})
+        token_store._current_userinfo = json.dumps({"email": "test@example.com"})
+        self.auth_manager._token_store = token_store
+
+        mock_cred = make_mock_creds(expired=True, valid=True)
+        result = self.auth_manager.refresh_token(mock_cred)
+
+        self.assertEqual(result, mock_cred)
+        # The refreshed token was written to the keyring...
+        mock_set_password.assert_called_once_with(TokenStore.TOKEN_KEY, token_store._token_user_id, mock_cred.to_json())
+        # ...and the cached user info survived, in memory and in the keyring.
+        mock_delete_password.assert_not_called()
+        self.assertEqual(token_store.get_user_info(), {"email": "test@example.com"})
 
     def test_refresh_token_failure(self):
         """Test that refresh_token handles refresh failures."""
