@@ -105,3 +105,133 @@ def test_save_dashboard_failed_write_does_not_register_edited_copy(tmp_path):
     manager.save_dashboard(original)
     reloaded = Dashboard.load_from_file(tmp_path / f"{original.id}.json")
     assert reloaded.name == "Finance"
+
+
+def _make_source(source_id: str) -> DataSource:
+    return DataSource(
+        id=source_id,
+        type=DataSourceType.TILLER_TRANSACTIONS,
+        name="Transactions",
+        spreadsheet_id="spreadsheet-1",
+        sheet_name="Transactions",
+        range_a1="A1:F100",
+        date_range=DateRange(DateRangePreset.YEAR_TO_DATE),
+    )
+
+
+def _make_widget(widget_id: str, data_source_id: str | None) -> WidgetConfig:
+    return WidgetConfig(
+        id=widget_id,
+        type=WidgetType.SPENDING_TREND,
+        title="Spending",
+        position=(0, 0),
+        size=(4, 3),
+        data_source_id=data_source_id,
+    )
+
+
+def test_from_dict_skips_data_source_missing_required_field():
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(_make_source("source-good"))
+    dashboard.add_widget(_make_widget("widget-1", "source-good"))
+    data = dashboard.to_dict()
+
+    bad_source = _make_source("source-bad").to_dict()
+    del bad_source["spreadsheet_id"]
+    data["data_sources"]["source-bad"] = bad_source
+
+    loaded = Dashboard.from_dict(data)
+
+    assert "source-good" in loaded.data_sources
+    assert "source-bad" not in loaded.data_sources
+    assert "widget-1" in loaded.widgets
+
+
+def test_from_dict_skips_data_source_with_invalid_type():
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(_make_source("source-good"))
+    dashboard.add_widget(_make_widget("widget-1", "source-good"))
+    data = dashboard.to_dict()
+
+    bad_source = _make_source("source-bad").to_dict()
+    bad_source["type"] = "not_a_real_type"
+    data["data_sources"]["source-bad"] = bad_source
+
+    loaded = Dashboard.from_dict(data)
+
+    assert "source-good" in loaded.data_sources
+    assert "source-bad" not in loaded.data_sources
+    assert "widget-1" in loaded.widgets
+
+
+def test_from_dict_skips_data_source_with_null_date_range():
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(_make_source("source-good"))
+    dashboard.add_widget(_make_widget("widget-1", "source-good"))
+    data = dashboard.to_dict()
+
+    bad_source = _make_source("source-bad").to_dict()
+    bad_source["date_range"] = None
+    data["data_sources"]["source-bad"] = bad_source
+
+    loaded = Dashboard.from_dict(data)
+
+    assert "source-good" in loaded.data_sources
+    assert "source-bad" not in loaded.data_sources
+    assert "widget-1" in loaded.widgets
+
+
+def test_from_dict_skips_data_source_with_non_string_dates():
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(_make_source("source-good"))
+    dashboard.add_widget(_make_widget("widget-1", "source-good"))
+    data = dashboard.to_dict()
+
+    bad_source = _make_source("source-bad").to_dict()
+    bad_source["date_range"] = {
+        "preset": DateRangePreset.CUSTOM.value,
+        "start_date": 12345,
+        "end_date": 67890,
+    }
+    data["data_sources"]["source-bad"] = bad_source
+
+    loaded = Dashboard.from_dict(data)
+
+    assert "source-good" in loaded.data_sources
+    assert "source-bad" not in loaded.data_sources
+    assert "widget-1" in loaded.widgets
+
+
+def test_from_dict_skips_widget_with_null_position():
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(_make_source("source-good"))
+    dashboard.add_widget(_make_widget("widget-good", "source-good"))
+    data = dashboard.to_dict()
+
+    bad_widget = _make_widget("widget-bad", "source-good").to_dict()
+    bad_widget["position"] = None
+    data["widgets"]["widget-bad"] = bad_widget
+
+    loaded = Dashboard.from_dict(data)
+
+    assert "widget-good" in loaded.widgets
+    assert "widget-bad" not in loaded.widgets
+    assert "source-good" in loaded.data_sources
+
+
+def test_from_dict_prunes_widgets_with_dangling_data_source_references():
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(_make_source("source-good"))
+    dashboard.add_widget(_make_widget("widget-bound", "source-good"))
+    dashboard.add_widget(_make_widget("widget-unbound", None))
+    data = dashboard.to_dict()
+
+    data["widgets"]["widget-dangling"] = _make_widget("widget-dangling", "source-missing").to_dict()
+
+    loaded = Dashboard.from_dict(data)
+
+    assert "widget-dangling" not in loaded.widgets
+    assert "widget-bound" in loaded.widgets
+    assert "widget-unbound" in loaded.widgets
+    assert loaded.name == "Finance"
+    assert "source-good" in loaded.data_sources

@@ -111,19 +111,39 @@ class Dashboard:
             version=data.get("version", "1.0"),
         )
 
-        # Add data sources
+        # Add data sources. Malformed items are skipped so one bad entry cannot discard
+        # the whole dashboard: KeyError/ValueError for missing fields or bad enum/date
+        # values, TypeError for non-string dates, AttributeError for date_range: null.
         for source_data in data.get("data_sources", {}).values():
-            source = DataSource.from_dict(source_data)
-            dashboard.data_sources[source.id] = source
+            try:
+                source = DataSource.from_dict(source_data)
+                dashboard.data_sources[source.id] = source
+            except (KeyError, ValueError, TypeError, AttributeError) as e:
+                logger.error(f"Failed to load data source: {e}")
+                continue
 
-        # Add widgets
+        # Add widgets. Same per-item recovery; TypeError also covers null/non-iterable
+        # position or size values.
         for widget_data in data.get("widgets", {}).values():
             try:
                 widget = WidgetConfig.from_dict(widget_data)
                 dashboard.widgets[widget.id] = widget
-            except (KeyError, ValueError) as e:
+            except (KeyError, ValueError, TypeError, AttributeError) as e:
                 logger.error(f"Failed to load widget: {e}")
                 continue
+
+        # Prune widgets that reference a data source that failed to load or is missing.
+        # Widgets with data_source_id=None are legitimately unbound and are kept.
+        dangling_widget_ids = [
+            widget_id
+            for widget_id, widget in dashboard.widgets.items()
+            if widget.data_source_id is not None and widget.data_source_id not in dashboard.data_sources
+        ]
+        for widget_id in dangling_widget_ids:
+            widget = dashboard.widgets.pop(widget_id)
+            logger.warning(
+                f"Pruning widget '{widget.title}' ({widget_id}): references missing data source {widget.data_source_id}"
+            )
 
         return dashboard
 
