@@ -14,7 +14,8 @@ import os
 
 import keyring
 from beartype.typing import Any, Dict, List, Optional, Tuple, Type, cast
-from google.auth.exceptions import GoogleAuthError, RefreshError
+from google.auth.exceptions import GoogleAuthError, RefreshError, ResponseError, TransportError
+from google.auth.exceptions import TimeoutError as GoogleAuthTimeoutError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
@@ -361,7 +362,10 @@ class AuthManager(QObject):
             expired_cred: Expired credentials to refresh
 
         Returns:
-            Refreshed credentials if successful, None otherwise
+            Refreshed credentials if successful, None otherwise. Transient transport failures
+            (offline, DNS, timeout) return None but leave the stored token/user info in the
+            keyring so the next launch can refresh silently once connectivity returns; only
+            credential failures (e.g. an invalid/revoked refresh token) invalidate the store.
         """
         if expired_cred.refresh_token:
             try:
@@ -373,10 +377,19 @@ class AuthManager(QObject):
                     return valid_cred
                 else:
                     logger.debug("Expired credentials still invalid after refresh - invalidating token")
+            except (TransportError, GoogleAuthTimeoutError, ResponseError) as ex:
+                # Transient network-layer failures: the sync transport wraps offline/DNS/SSL/
+                # timeout errors in TransportError (TimeoutError/ResponseError cover the other
+                # transports). The credentials were never rejected, so keep them stored and
+                # degrade to logged-out for this session only (#102).
+                logger.warning(
+                    f"Could not refresh credentials due to a network error; keeping stored token - "
+                    f"{type(ex).__name__}: {ex}"
+                )
+                return None
             except GoogleAuthError as ex:
-                # Catch the whole google-auth hierarchy, not just RefreshError: network failures
-                # during refresh (offline, DNS, timeout, SSL) raise TransportError, a *sibling* of
-                # RefreshError under GoogleAuthError, and must degrade to logged-out, not crash (#102).
+                # Credential-layer failures (RefreshError for an invalid/revoked/expired refresh
+                # token, ReauthFailError, etc.): the token is no longer usable, so invalidate it.
                 logger.error(
                     f"Existing credentials could not be refreshed, token will be invalidated - "
                     f"{type(ex).__name__}: {ex}"
