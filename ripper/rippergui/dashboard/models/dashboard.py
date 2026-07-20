@@ -200,7 +200,11 @@ class DashboardManager:
         return list(self._dashboards.values())
 
     def save_dashboard(self, dashboard: Dashboard) -> Path:
-        """Save a dashboard to disk.
+        """Save a dashboard to disk and register it as the in-memory instance.
+
+        Registering keeps the manager's store coherent when the caller saves a
+        different object than the one currently held (e.g. the edit dialog's
+        working copy, #95): subsequent lookups return the saved instance.
 
         Args:
             dashboard: Dashboard to save
@@ -208,6 +212,7 @@ class DashboardManager:
         Returns:
             Path to the saved file
         """
+        self._dashboards[dashboard.id] = dashboard
         file_path = self.storage_dir / f"{dashboard.id}.json"
         dashboard.save_to_file(file_path)
         return file_path
