@@ -846,6 +846,16 @@ class MainView(QMainWindow):
             self._dock_manager.addDockWidget(ads.CenterDockWidgetArea, self._table_dock)
         else:
             self._table_dock.setWindowTitle(title)
+            # setWidget() only detaches the previous widget; without an explicit delete the old
+            # container (and its table/model holding the full row set) leaks for the life of the
+            # app (#107). takeWidget() hands ownership back so deleteLater() can reclaim it.
+            # The new widget is already registered in _table_widgets above, so the old widget's
+            # destroyed handler leaves that entry alone (its identity guard fails).
+            previous = self._table_dock.takeWidget()
+            if previous is not None:
+                previous.setParent(None)
+                previous.deleteLater()
+                logger.debug("Deleted replaced table dock container")
 
         self._table_dock.setWidget(container)
         self._table_dock.toggleView(True)
