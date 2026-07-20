@@ -92,39 +92,65 @@ def test_dashboard_dock_initialized(qtbot):
     assert isinstance(view._dashboard_dock, ads.CDockWidget)
 
 
+@pytest.fixture
+def layout_settings(monkeypatch, tmp_path):
+    """Redirect mainview's dock-layout QSettings to a temp INI file.
+
+    The production factory returns ``QSettings("solarisin", "ripper")`` with the default
+    NativeFormat, which on Windows is the developer's REAL ``HKCU\\Software\\solarisin\\ripper``
+    registry key — sandboxing via the ``XDG_CONFIG_HOME`` env var only works on Linux. Patching
+    the factory to a tmp_path-backed INI file isolates these tests on every platform. Tests use
+    the same factory for their own reads/writes; writes may be cached per instance, so ``sync()``
+    is called after writing / before reading through a different instance.
+    """
+    ini_path = str(tmp_path / "settings.ini")
+
+    def factory() -> QSettings:
+        return QSettings(ini_path, QSettings.Format.IniFormat)
+
+    monkeypatch.setattr("ripper.rippergui.mainview._layout_settings", factory)
+    return factory
+
+
 @pytest.mark.qt
-def test_close_saves_layout(qtbot, monkeypatch, tmp_path):
+def test_close_saves_layout(qtbot, layout_settings):
     """Closing MainView must persist dock layout to QSettings."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     view = MainView()
     qtbot.addWidget(view)
-    QSettings("solarisin", "ripper").remove("dock_layout/state")  # start clean
+    settings = layout_settings()
+    settings.remove("dock_layout/state")  # start clean
+    settings.sync()
     view.close()
-    state = QSettings("solarisin", "ripper").value("dock_layout/state")
-    assert state is not None
+    reader = layout_settings()
+    reader.sync()  # pick up the write flushed by close()
+    assert reader.value("dock_layout/state") is not None
 
 
 @pytest.mark.qt
-def test_reset_layout_clears_settings(qtbot, monkeypatch, tmp_path):
+def test_reset_layout_clears_settings(qtbot, layout_settings):
     """_reset_layout must remove the saved layout key from QSettings."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     view = MainView()
     qtbot.addWidget(view)
-    QSettings("solarisin", "ripper").setValue("dock_layout/state", b"dummy")
+    settings = layout_settings()
+    settings.setValue("dock_layout/state", b"dummy")
+    settings.sync()
     with patch("ripper.rippergui.mainview.QMessageBox.information"):
         view._reset_layout()
-    assert QSettings("solarisin", "ripper").value("dock_layout/state") is None
+    reader = layout_settings()
+    reader.sync()
+    assert reader.value("dock_layout/state") is None
 
 
 @pytest.mark.qt
-def test_restore_layout_invalid_state_no_crash(qtbot, monkeypatch, tmp_path):
+def test_restore_layout_invalid_state_no_crash(qtbot, layout_settings):
     """_restore_layout must not crash when QSettings contains garbage."""
     from PySide6.QtCore import QByteArray
 
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     view = MainView()
     qtbot.addWidget(view)
-    QSettings("solarisin", "ripper").setValue("dock_layout/state", QByteArray(b"not-valid-state"))
+    settings = layout_settings()
+    settings.setValue("dock_layout/state", QByteArray(b"not-valid-state"))
+    settings.sync()
     view._restore_layout()  # must not raise
 
 

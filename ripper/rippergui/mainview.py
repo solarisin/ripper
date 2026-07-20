@@ -37,6 +37,15 @@ from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import LoadSource, get_app_data_dir
 
 
+def _layout_settings() -> QSettings:
+    """Return the QSettings store used for dock-layout persistence.
+
+    Kept as a module-level factory so tests can inject an isolated, file-backed
+    store instead of the platform-native one (the Windows registry).
+    """
+    return QSettings("solarisin", "ripper")
+
+
 class _DataFetchWorker(QThread):
     """
     Background worker that authenticates with Google and fetches sheet data.
@@ -368,11 +377,11 @@ class MainView(QMainWindow):
 
     def _save_layout(self) -> None:
         """Save the current dock layout to QSettings."""
-        QSettings("solarisin", "ripper").setValue("dock_layout/state", self._dock_manager.saveState())
+        _layout_settings().setValue("dock_layout/state", self._dock_manager.saveState())
 
     def _restore_layout(self) -> None:
         """Restore dock layout from QSettings; silently skips on failure."""
-        state = QSettings("solarisin", "ripper").value("dock_layout/state")
+        state = _layout_settings().value("dock_layout/state")
         if state is not None:
             try:
                 self._dock_manager.restoreState(state)
@@ -381,7 +390,7 @@ class MainView(QMainWindow):
 
     def _reset_layout(self) -> None:
         """Clear saved layout from QSettings so next launch uses the default."""
-        QSettings("solarisin", "ripper").remove("dock_layout/state")
+        _layout_settings().remove("dock_layout/state")
         QMessageBox.information(self, "Layout Reset", "Layout will reset to default on next launch.")
 
     def closeEvent(self, event: QCloseEvent) -> None:  # type: ignore[override]
