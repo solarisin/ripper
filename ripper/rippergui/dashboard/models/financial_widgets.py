@@ -112,7 +112,8 @@ class SpendingTrendWidget(BaseWidget):
         series = QLineSeries()
         series.setName("Spending")
 
-        # Add data points
+        # Add data points. get_monthly_spending() already returns expense-only
+        # positive magnitudes; abs() is kept as a display-safety no-op.
         for i, item in enumerate(data):
             amount = abs(float(item.get("amount", 0)))
             series.append(i, amount)
@@ -245,7 +246,9 @@ class CategoryBreakdownWidget(BaseWidget):
         series = QPieSeries()
         series.setHoleSize(0.3)  # Create a donut chart
 
-        # Calculate total for percentage calculations
+        # Calculate total for percentage calculations. get_category_breakdown()
+        # already returns expense-only positive magnitudes; abs() is kept as a
+        # display-safety no-op.
         total = sum(abs(item.get("amount", 0)) for item in category_data)
         if total <= 0:
             return

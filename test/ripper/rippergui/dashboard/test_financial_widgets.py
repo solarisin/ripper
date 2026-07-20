@@ -106,10 +106,11 @@ class TestSpendingTrendWidget:
 
         with warnings.catch_warnings(record=True) as recorded:
             warnings.simplefilter("always")
+            # get_monthly_spending() now emits expense-only positive magnitudes.
             widget._update_chart(
                 [
-                    {"month": "2026-01", "amount": -100.0},
-                    {"month": "2026-02", "amount": -250.0},
+                    {"month": "2026-01", "amount": 100.0},
+                    {"month": "2026-02", "amount": 250.0},
                 ]
             )
         _assert_no_deprecated_axis_api(recorded)

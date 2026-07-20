@@ -63,16 +63,28 @@ def test_empty_processor_returns_empty_aggregations():
 # --------------------------------------------------------------------------- #
 # Aggregations
 # --------------------------------------------------------------------------- #
-def test_get_monthly_spending_sums_by_month():
+def test_get_monthly_spending_sums_expense_magnitudes_by_month():
     result = {row["month"]: row["amount"] for row in _processor().get_monthly_spending()}
-    assert result["2024-01"] == 995.0  # -5 + 1000
-    assert result["2024-02"] == -950.0  # -800 - 150
+    # Income (+1000 in January) must not offset or inflate spending.
+    assert result == {"2024-01": 5.0, "2024-02": 950.0}
 
 
-def test_get_category_breakdown_sorted_descending():
+def test_get_monthly_spending_omits_income_only_months():
+    processor = TillerDataProcessor(
+        [
+            {"date": "2024-03-01", "description": "Salary", "category": "Income", "amount": 1000.0, "account": "Bank"},
+            {"date": "2024-04-02", "description": "Coffee", "category": "Food", "amount": -4.0, "account": "Visa"},
+        ]
+    )
+    result = {row["month"]: row["amount"] for row in processor.get_monthly_spending()}
+    assert result == {"2024-04": 4.0}
+
+
+def test_get_category_breakdown_excludes_income_and_sorts_descending():
     breakdown = _processor().get_category_breakdown()
     amounts = {row["category"]: row["amount"] for row in breakdown}
-    assert amounts == {"Income": 1000.0, "Food": -155.0, "Housing": -800.0}
+    # Expense-only positive magnitudes; the "Income" category must be excluded.
+    assert amounts == {"Housing": 800.0, "Food": 155.0}
     # Sorted by amount descending.
     assert [row["amount"] for row in breakdown] == sorted((row["amount"] for row in breakdown), reverse=True)
 

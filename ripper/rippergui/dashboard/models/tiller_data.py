@@ -104,31 +104,49 @@ class TillerDataProcessor:
         return TillerDataProcessor(filtered_data)  # type: ignore[arg-type]
 
     def get_monthly_spending(self) -> List[Dict[str, Any]]:
-        """Get monthly spending data.
+        """Get monthly spending data (expenses only).
+
+        Income and other positive-amount transactions are excluded, so each
+        month's value is the total expense magnitude for that month. Months
+        with no expenses do not appear in the result.
 
         Returns:
-            List of dicts with 'month' and 'amount' keys
+            List of dicts with 'month' and 'amount' keys, where 'amount' is a
+            positive expense magnitude
         """
         if self.df.empty:
             return []
 
-        # Group by month and sum amounts
-        monthly = self.df.groupby("month")["amount"].sum().reset_index()
+        # Filter to expenses only, then group by month and sum magnitudes
+        expenses = self.df[self.df["amount"] < 0]
+        if expenses.empty:
+            return []
+
+        monthly = expenses.groupby("month")["amount"].sum().abs().reset_index()
         monthly["month"] = monthly["month"].astype(str)
 
         return monthly.to_dict("records")  # type: ignore[return-value]
 
     def get_category_breakdown(self) -> List[Dict[str, Any]]:
-        """Get spending breakdown by category.
+        """Get spending breakdown by category (expenses only).
+
+        Income and other positive-amount transactions are excluded, so each
+        category's value is its total expense magnitude. Categories with no
+        expenses do not appear in the result.
 
         Returns:
-            List of dicts with 'category' and 'amount' keys
+            List of dicts with 'category' and 'amount' keys, where 'amount' is
+            a positive expense magnitude, sorted descending by amount
         """
         if self.df.empty:
             return []
 
-        # Group by category and sum amounts
-        categories = self.df.groupby("category")["amount"].sum().reset_index()
+        # Filter to expenses only, then group by category and sum magnitudes
+        expenses = self.df[self.df["amount"] < 0]
+        if expenses.empty:
+            return []
+
+        categories = expenses.groupby("category")["amount"].sum().abs().reset_index()
         categories = categories.sort_values("amount", ascending=False)
 
         return categories.to_dict("records")  # type: ignore[return-value]
