@@ -7,6 +7,15 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 import pandas as pd
 
+# Category names (lowercased, whitespace-stripped) that identify account-to-account
+# transfer transactions rather than real income or expenses. The dashboard data model
+# only carries the Transactions sheet columns (date/description/category/amount/account);
+# the Tiller Categories sheet's Type column (Income/Expense/Transfer) is never fetched
+# into this layer, so transfers are classified by their conventional category names.
+# Both legs of a transfer (negative outgoing, positive incoming) match, so neither is
+# miscounted as spending or income.
+TRANSFER_CATEGORIES: frozenset[str] = frozenset({"transfer", "transfers", "credit card payment"})
+
 
 class TillerTransaction(TypedDict):
     """Represents a single Tiller transaction."""
@@ -75,6 +84,18 @@ class TillerDataProcessor:
 
         return -abs(amount) if is_parenthesized else amount
 
+    def _without_transfers(self) -> pd.DataFrame:
+        """Return the transactions with transfer-category rows removed.
+
+        Rows whose category matches :data:`TRANSFER_CATEGORIES` (case-insensitively,
+        ignoring surrounding whitespace) are dropped so that neither leg of an
+        account-to-account transfer is counted as spending or income.
+        """
+        if self.df.empty or "category" not in self.df.columns:
+            return self.df
+        normalized = self.df["category"].astype(str).str.strip().str.lower()
+        return self.df[~normalized.isin(TRANSFER_CATEGORIES)]
+
     def filter_by_date_range(self, start_date: datetime, end_date: datetime) -> "TillerDataProcessor":
         """Filter transactions by date range.
 
@@ -104,37 +125,63 @@ class TillerDataProcessor:
         return TillerDataProcessor(filtered_data)  # type: ignore[arg-type]
 
     def get_monthly_spending(self) -> List[Dict[str, Any]]:
-        """Get monthly spending data.
+        """Get monthly spending data (expenses only).
+
+        Transfer-category transactions (both legs) and income/positive-amount
+        transactions are excluded, so each month's value is the total expense
+        magnitude for that month. Months with no expenses do not appear in the
+        result.
 
         Returns:
-            List of dicts with 'month' and 'amount' keys
+            List of dicts with 'month' and 'amount' keys, where 'amount' is a
+            positive expense magnitude
         """
         if self.df.empty:
             return []
 
-        # Group by month and sum amounts
-        monthly = self.df.groupby("month")["amount"].sum().reset_index()
+        # Exclude transfers first (their outgoing leg is negative and would
+        # otherwise count as spending), then filter to expenses and sum magnitudes
+        non_transfers = self._without_transfers()
+        expenses = non_transfers[non_transfers["amount"] < 0]
+        if expenses.empty:
+            return []
+
+        monthly = expenses.groupby("month")["amount"].sum().abs().reset_index()
         monthly["month"] = monthly["month"].astype(str)
 
         return monthly.to_dict("records")  # type: ignore[return-value]
 
     def get_category_breakdown(self) -> List[Dict[str, Any]]:
-        """Get spending breakdown by category.
+        """Get spending breakdown by category (expenses only).
+
+        Transfer-category transactions (both legs) and income/positive-amount
+        transactions are excluded, so each category's value is its total
+        expense magnitude. Categories with no expenses do not appear in the
+        result.
 
         Returns:
-            List of dicts with 'category' and 'amount' keys
+            List of dicts with 'category' and 'amount' keys, where 'amount' is
+            a positive expense magnitude, sorted descending by amount
         """
         if self.df.empty:
             return []
 
-        # Group by category and sum amounts
-        categories = self.df.groupby("category")["amount"].sum().reset_index()
+        # Exclude transfers first, then filter to expenses and sum magnitudes
+        non_transfers = self._without_transfers()
+        expenses = non_transfers[non_transfers["amount"] < 0]
+        if expenses.empty:
+            return []
+
+        categories = expenses.groupby("category")["amount"].sum().abs().reset_index()
         categories = categories.sort_values("amount", ascending=False)
 
         return categories.to_dict("records")  # type: ignore[return-value]
 
     def get_top_expenses(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get top expenses by amount.
+
+        Transfer-category transactions are excluded so an outgoing transfer
+        leg (a large negative amount) does not appear as a top expense.
 
         Args:
             limit: Maximum number of expenses to return
@@ -145,8 +192,8 @@ class TillerDataProcessor:
         if self.df.empty:
             return []
 
-        # Get top expenses (largest absolute amounts)
-        expenses = self.df.dropna(subset=["amount"])
+        # Exclude transfers first, then get top expenses (largest absolute amounts)
+        expenses = self._without_transfers().dropna(subset=["amount"])
         expenses = expenses[expenses["amount"] < 0].copy()
         if expenses.empty:
             return []
