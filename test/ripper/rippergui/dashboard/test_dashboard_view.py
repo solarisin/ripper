@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from PySide6.QtCharts import QChartView
-from PySide6.QtWidgets import QDialog, QLabel, QScrollArea, QSplitter
+from PySide6.QtWidgets import QDialog, QLabel, QMessageBox, QScrollArea, QSplitter
 
 from ripper.rippergui.dashboard.models import Dashboard, WidgetConfig, WidgetType
 from ripper.rippergui.dashboard.services import DashboardDataService, DashboardRefreshResult
@@ -196,6 +196,40 @@ def test_edit_dialog_save_persists_changes(tmp_path, qtbot, monkeypatch):
     assert view.dashboard_manager.get_dashboard(dashboard.id) is view.current_dashboard
     assert view.current_dashboard.id == dashboard.id
     assert view.dashboard_combo.currentText() == "Renamed"
+
+
+def test_edit_dialog_save_failure_keeps_original_dashboard_everywhere(tmp_path, qtbot, monkeypatch):
+    """A failed save on Accept must leave both the view and the manager on the original (#95 review).
+
+    The view already keeps displaying the original; the manager must not have
+    registered the unpersisted working copy either.
+    """
+    view, dashboard = _view_with_one_widget(tmp_path, qtbot)
+    original = view.current_dashboard
+    assert original is not None
+
+    _patch_edit_dialog_exec(
+        monkeypatch,
+        mutate=lambda editor: editor.dashboard.remove_widget("widget-1"),
+        result_code=QDialog.DialogCode.Accepted,
+    )
+    critical = MagicMock(return_value=QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(QMessageBox, "critical", critical)
+    monkeypatch.setattr(Dashboard, "save_to_file", MagicMock(side_effect=OSError("disk full")))
+
+    view._on_edit_dashboard()
+
+    critical.assert_called_once()
+    assert view.current_dashboard is original
+    assert "widget-1" in view.current_dashboard.widgets
+    # The manager must still resolve the id to the original, not the failed working copy.
+    assert view.dashboard_manager.get_dashboard(dashboard.id) is original
+
+    # A later, unrelated save must not silently persist the failed edit.
+    monkeypatch.undo()
+    view.dashboard_manager.save_dashboard(view.current_dashboard)
+    reloaded = Dashboard.load_from_file(tmp_path / f"{dashboard.id}.json")
+    assert "widget-1" in reloaded.widgets
 
 
 def test_refresh_result_for_switched_away_dashboard_is_ignored():

@@ -1,7 +1,12 @@
 """Tests for dashboard model persistence."""
 
+from unittest.mock import patch
+
+import pytest
+
 from ripper.rippergui.dashboard.models import (
     Dashboard,
+    DashboardManager,
     DataSource,
     DataSourceType,
     DateRange,
@@ -73,3 +78,30 @@ def test_remove_referenced_data_source_fails():
         assert "Top Expenses" in str(exc)
     else:
         raise AssertionError("Expected referenced data source removal to fail")
+
+
+def test_save_dashboard_failed_write_does_not_register_edited_copy(tmp_path):
+    """A failed disk write must leave the manager's in-memory store untouched (#95 review).
+
+    If the edited copy were registered before the write, a failed save would leave
+    memory and disk inconsistent: later lookups would return (and a later save would
+    silently persist) an edit the user was told failed.
+    """
+    manager = DashboardManager(tmp_path)
+    original = manager.create_dashboard("Finance")
+    manager.save_dashboard(original)
+
+    edited = Dashboard.from_dict(original.to_dict())
+    edited.name = "Edited"
+
+    with patch.object(Dashboard, "save_to_file", side_effect=OSError("disk full")):
+        with pytest.raises(OSError, match="disk full"):
+            manager.save_dashboard(edited)
+
+    # The manager still holds the original instance, not the unpersisted edit.
+    assert manager.get_dashboard(original.id) is original
+
+    # A subsequent successful save of the original must not leak the failed edit.
+    manager.save_dashboard(original)
+    reloaded = Dashboard.load_from_file(tmp_path / f"{original.id}.json")
+    assert reloaded.name == "Finance"

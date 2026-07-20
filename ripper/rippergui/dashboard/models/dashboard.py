@@ -205,6 +205,9 @@ class DashboardManager:
         Registering keeps the manager's store coherent when the caller saves a
         different object than the one currently held (e.g. the edit dialog's
         working copy, #95): subsequent lookups return the saved instance.
+        Registration happens only after the file write succeeds, so a failed
+        save leaves the previously held instance in place and memory stays
+        consistent with disk.
 
         Args:
             dashboard: Dashboard to save
@@ -212,9 +215,9 @@ class DashboardManager:
         Returns:
             Path to the saved file
         """
-        self._dashboards[dashboard.id] = dashboard
         file_path = self.storage_dir / f"{dashboard.id}.json"
         dashboard.save_to_file(file_path)
+        self._dashboards[dashboard.id] = dashboard
         return file_path
 
     def delete_dashboard(self, dashboard_id: str) -> bool:
