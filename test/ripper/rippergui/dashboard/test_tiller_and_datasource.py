@@ -102,6 +102,57 @@ def test_get_top_expenses_excludes_income():
     assert income_only.get_top_expenses() == []
 
 
+# Both legs of an account-to-account transfer: the negative outgoing leg and the
+# positive incoming leg. Neither is income or an expense (see issue #94 / PR #111).
+TRANSFER_TRANSACTIONS = [
+    {"date": "2024-01-05", "description": "Coffee", "category": "Food", "amount": -5.0, "account": "Visa"},
+    {"date": "2024-01-10", "description": "To savings", "category": "Transfer", "amount": -2000.0, "account": "Bank"},
+    {
+        "date": "2024-01-10",
+        "description": "From checking",
+        "category": "Transfer",
+        "amount": 2000.0,
+        "account": "Savings",
+    },
+]
+
+
+def test_get_monthly_spending_excludes_transfer_legs():
+    processor = TillerDataProcessor(TRANSFER_TRANSACTIONS)
+    result = {row["month"]: row["amount"] for row in processor.get_monthly_spending()}
+    # The negative outgoing transfer leg must not be counted as spending.
+    assert result == {"2024-01": 5.0}
+
+
+def test_get_category_breakdown_excludes_transfer_legs():
+    processor = TillerDataProcessor(TRANSFER_TRANSACTIONS)
+    amounts = {row["category"]: row["amount"] for row in processor.get_category_breakdown()}
+    assert amounts == {"Food": 5.0}
+
+
+def test_get_top_expenses_excludes_transfer_legs():
+    processor = TillerDataProcessor(TRANSFER_TRANSACTIONS)
+    assert [row["description"] for row in processor.get_top_expenses()] == ["Coffee"]
+
+
+@pytest.mark.parametrize("category", ["transfer", "Transfers", "TRANSFER", "  Transfer  ", "Credit Card Payment"])
+def test_transfer_category_matching_is_case_insensitive_and_covers_variants(category):
+    processor = TillerDataProcessor(
+        [{"date": "2024-01-10", "description": "Move", "category": category, "amount": -100.0, "account": "Bank"}]
+    )
+    assert processor.get_monthly_spending() == []
+    assert processor.get_category_breakdown() == []
+    assert processor.get_top_expenses() == []
+
+
+def test_get_net_worth_over_time_still_includes_transfers():
+    # Transfers legitimately net out in the cumulative net-worth series and
+    # must NOT be excluded there.
+    processor = TillerDataProcessor(TRANSFER_TRANSACTIONS)
+    series = processor.get_net_worth_over_time()
+    assert series[-1]["net_worth"] == -5.0  # -5 - 2000 + 2000
+
+
 def test_get_budget_vs_actual_computes_remaining():
     result = {row["category"]: row for row in _processor().get_budget_vs_actual({"Food": 200.0, "Housing": 1000.0})}
     # amount is negative for expenses; remaining = budgeted + amount
