@@ -284,30 +284,29 @@ class TestAuthView(unittest.TestCase):
         auth_view.oauth_client_registered.emit = MagicMock()
         auth_view.store_credentials = MagicMock()
 
-        # Patch the static method and os.path.exists
-        import os
-
+        # Patch the static method and os.path.exists via context managers so teardown is
+        # guaranteed even if an assertion below fails. A bare assign/restore (no try/finally)
+        # would leak the os.path.exists mock into every later test in the process on failure (#99).
         import ripper.ripperlib.auth as auth_mod
-
-        original_from_json = auth_mod.AuthManager.oauth_client_credentials_from_json
-        original_exists = os.path.exists
-        auth_mod.AuthManager.oauth_client_credentials_from_json = MagicMock(return_value=("client_id", "client_secret"))
-        os.path.exists = MagicMock(return_value=True)
 
         auth_view.file_radio = self.mock_file_radio
         self.mock_file_radio.isChecked.return_value = True
         auth_view.file_path_edit = self.mock_file_path_edit
         self.mock_file_path_edit.text.return_value = "/fake/path/client_secret.json"
 
-        auth_view.register_client()
+        with (
+            patch.object(
+                auth_mod.AuthManager,
+                "oauth_client_credentials_from_json",
+                return_value=("client_id", "client_secret"),
+            ) as mock_from_json,
+            patch("os.path.exists", return_value=True),
+        ):
+            auth_view.register_client()
 
-        auth_mod.AuthManager.oauth_client_credentials_from_json.assert_called_once_with("/fake/path/client_secret.json")
+        mock_from_json.assert_called_once_with("/fake/path/client_secret.json")
         auth_view.store_credentials.assert_called_once_with("client_id", "client_secret")
         auth_view.oauth_client_registered.emit.assert_called_once()
-
-        # Restore patched methods
-        auth_mod.AuthManager.oauth_client_credentials_from_json = original_from_json
-        os.path.exists = original_exists
 
     @patch("ripper.rippergui.oauth_client_config_view.QMessageBox.warning")
     @patch.object(AuthView, "__init__", return_value=None)
@@ -376,15 +375,9 @@ class TestAuthView(unittest.TestCase):
         auth_view.oauth_client_registered.emit = MagicMock()
         auth_view.store_credentials = MagicMock()
 
-        # Patch the static method and os.path.exists
-        import os
-
+        # Patch the static method and os.path.exists via context managers so teardown is
+        # guaranteed even if an assertion below fails (#99).
         import ripper.ripperlib.auth as auth_mod
-
-        original_from_json = auth_mod.AuthManager.oauth_client_credentials_from_json
-        original_exists = os.path.exists
-        auth_mod.AuthManager.oauth_client_credentials_from_json = MagicMock(return_value=("client_id", "client_secret"))
-        os.path.exists = MagicMock(return_value=True)
 
         auth_view.file_radio = self.mock_file_radio
         self.mock_file_radio.isChecked.return_value = False
@@ -395,14 +388,18 @@ class TestAuthView(unittest.TestCase):
         auth_view.client_secret_edit = self.mock_client_secret_edit
         self.mock_client_secret_edit.text.return_value = "test_secret"
 
-        auth_view.register_client()
+        with (
+            patch.object(
+                auth_mod.AuthManager,
+                "oauth_client_credentials_from_json",
+                return_value=("client_id", "client_secret"),
+            ),
+            patch("os.path.exists", return_value=True),
+        ):
+            auth_view.register_client()
 
         auth_view.store_credentials.assert_called_once_with("test_id", "test_secret")
         auth_view.oauth_client_registered.emit.assert_called_once()
-
-        # Restore patched methods
-        auth_mod.AuthManager.oauth_client_credentials_from_json = original_from_json
-        os.path.exists = original_exists
 
     @patch("os.environ.get", return_value="/fake/appdata")
     @patch("ripper.rippergui.oauth_client_config_view.AuthView.setup_ui")
