@@ -100,6 +100,10 @@ class DashboardView(QWidget):
         else:
             self.data_service = DashboardDataService(records_provider=records_fn)
         self.refresh_result = DashboardRefreshResult()
+        # True while a _DashboardRefreshWorker is running. Every control that can switch or mutate
+        # the current dashboard is disabled while this holds, so the worker's target can't be
+        # reassigned or re-refreshed mid-flight (#96). Cleared in both refresh completion slots.
+        self._refresh_in_flight = False
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -216,18 +220,30 @@ class DashboardView(QWidget):
         layout = self._content_layout()
 
         if dashboard:
-            self.edit_dashboard_btn.setEnabled(True)
-            self.refresh_dashboard_btn.setEnabled(True)
-            self.delete_dashboard_btn.setEnabled(True)
             self._select_dashboard_in_combo(dashboard.id)
             self._add_dashboard_content(layout, dashboard)
         else:
-            self.edit_dashboard_btn.setEnabled(False)
-            self.refresh_dashboard_btn.setEnabled(False)
-            self.delete_dashboard_btn.setEnabled(False)
             placeholder = QLabel("No dashboard selected.")
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(placeholder, 1)
+        self._update_control_states()
+
+    def _update_control_states(self) -> None:
+        """Derive toolbar control enablement from current state — the single source of truth.
+
+        Centralising this keeps enablement consistent across the several places that change the
+        current dashboard or start/finish a refresh, instead of toggling buttons ad hoc. While a
+        refresh is in flight, every control that could switch or mutate ``current_dashboard`` (the
+        combo, New Dashboard, Edit, Delete, Refresh) is disabled so the running worker's target
+        cannot be reassigned or re-refreshed (#96).
+        """
+        has_dashboard = self.current_dashboard is not None
+        in_flight = self._refresh_in_flight
+        self.dashboard_combo.setEnabled(not in_flight)
+        self.add_dashboard_btn.setEnabled(not in_flight)
+        self.edit_dashboard_btn.setEnabled(has_dashboard and not in_flight)
+        self.refresh_dashboard_btn.setEnabled(has_dashboard and not in_flight)
+        self.delete_dashboard_btn.setEnabled(has_dashboard and not in_flight)
 
     def _select_dashboard_in_combo(self, dashboard_id: str) -> None:
         index = self.dashboard_combo.findData(dashboard_id)
@@ -298,7 +314,13 @@ class DashboardView(QWidget):
         if not self.current_dashboard:
             return
 
-        self.refresh_dashboard_btn.setEnabled(False)
+        # Mark the refresh in flight and re-derive control states: this disables Refresh, Edit,
+        # Delete, the dashboard combo, and New Dashboard together. All of these reassign, mutate, or
+        # switch the current dashboard, and doing so while the worker thread is refreshing the same
+        # object is a data race (#96). The flag is cleared — and controls restored — in
+        # _on_refresh_finished and _on_refresh_error.
+        self._refresh_in_flight = True
+        self._update_control_states()
         self.status_label.setStyleSheet("")
         self.status_label.setText("Refreshing…")
 
@@ -320,18 +342,28 @@ class DashboardView(QWidget):
         """Apply a completed refresh on the GUI thread, unless the user has switched dashboards."""
         if dashboard is not self.current_dashboard:
             # Stale: the refresh was for a dashboard the user has since navigated away from.
+            # Switching is blocked while in flight, so this is a defensive #36 guard that should
+            # not fire in practice; clear the flag regardless so controls can never stay stuck.
+            self._refresh_in_flight = False
+            self._update_control_states()
             return
+        self._refresh_in_flight = False
         self.refresh_result = result
-        self.refresh_dashboard_btn.setEnabled(True)
         self._show_refresh_summary()
+        # _set_current_dashboard re-derives control enablement via _update_control_states, which now
+        # sees the cleared in-flight flag and restores Refresh/Edit/Delete/combo/New Dashboard.
         self._set_current_dashboard(self.current_dashboard)
 
     @Slot(str, object)
     def _on_refresh_error(self, message: str, dashboard: Dashboard) -> None:
         """Report a failed refresh on the GUI thread, unless the user has switched dashboards."""
         if dashboard is not self.current_dashboard:
+            # Defensive (see _on_refresh_finished): clear the flag so controls can't stay stuck.
+            self._refresh_in_flight = False
+            self._update_control_states()
             return
-        self.refresh_dashboard_btn.setEnabled(True)
+        self._refresh_in_flight = False
+        self._update_control_states()
         self.status_label.setStyleSheet("color: #b00020;")
         self.status_label.setText(f"Refresh failed: {message}")
 
@@ -351,6 +383,11 @@ class DashboardView(QWidget):
     @Slot()
     def _on_add_dashboard(self) -> None:
         """Handle the add dashboard button click."""
+        if self._refresh_in_flight:
+            # The button is disabled during a refresh; guard the slot too so a programmatic call
+            # can't switch the current dashboard out from under the running worker (#96).
+            return
+
         from PySide6.QtWidgets import QInputDialog
 
         name, ok = QInputDialog.getText(
@@ -372,7 +409,7 @@ class DashboardView(QWidget):
     @Slot()
     def _on_edit_dashboard(self) -> None:
         """Handle the edit dashboard button click."""
-        if not self.current_dashboard:
+        if not self.current_dashboard or self._refresh_in_flight:
             return
 
         from .dashboard_editor import DashboardEditor
@@ -425,7 +462,7 @@ class DashboardView(QWidget):
     @Slot()
     def _on_delete_dashboard(self) -> None:
         """Handle the delete dashboard button click."""
-        if not self.current_dashboard:
+        if not self.current_dashboard or self._refresh_in_flight:
             return
 
         reply = QMessageBox.question(
@@ -458,6 +495,14 @@ class DashboardView(QWidget):
     @Slot(int)
     def _on_dashboard_selected(self, index: int) -> None:
         """Switch to the dashboard selected in the combo box."""
+        if self._refresh_in_flight:
+            # A refresh is running against the current dashboard; switching now would reassign the
+            # worker's target and strand the in-flight flag. The combo is disabled in the UI, so
+            # this only guards programmatic/edge index changes — re-sync it to the current
+            # dashboard and do nothing else (#96).
+            if self.current_dashboard is not None:
+                self._select_dashboard_in_combo(self.current_dashboard.id)
+            return
         dashboard_id = self.dashboard_combo.itemData(index)
         if dashboard_id is None:
             return

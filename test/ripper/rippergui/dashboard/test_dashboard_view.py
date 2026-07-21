@@ -1,5 +1,6 @@
 """Tests for dashboard view rendering from widget configs."""
 
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -115,6 +116,173 @@ def test_refresh_reports_error_without_crashing(tmp_path, qtbot):
     qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
 
     assert "boom" in view.status_label.text()
+
+
+def test_edit_and_delete_disabled_during_refresh_and_reenabled(tmp_path, qtbot):
+    """Edit/Delete must be disabled while a refresh is in flight, then re-enabled (#96).
+
+    Leaving Edit/Delete enabled lets the user reassign/re-render the current dashboard while the
+    worker thread is refreshing it. We block the worker mid-refresh to observe the disabled state,
+    then release it and assert everything is re-enabled once the result lands.
+    """
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    release = threading.Event()
+
+    def blocking_refresh(_dashboard):
+        release.wait(timeout=5)
+        return DashboardRefreshResult()
+
+    service = MagicMock(spec=DashboardDataService)
+    service.refresh_dashboard.side_effect = blocking_refresh
+
+    view = DashboardView(tmp_path, data_service=service)
+    qtbot.addWidget(view)
+    view.current_dashboard = dashboard
+
+    view.refresh()
+    # Disabling happens synchronously on the GUI thread before the worker starts.
+    assert not view.refresh_dashboard_btn.isEnabled()
+    assert not view.edit_dashboard_btn.isEnabled()
+    assert not view.delete_dashboard_btn.isEnabled()
+
+    release.set()
+    qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
+    assert view.edit_dashboard_btn.isEnabled()
+    assert view.delete_dashboard_btn.isEnabled()
+
+
+def test_edit_and_delete_reenabled_after_refresh_error(tmp_path, qtbot):
+    """A failing refresh must still restore Edit/Delete so they don't get stuck disabled (#96)."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    service = MagicMock(spec=DashboardDataService)
+    service.refresh_dashboard.side_effect = RuntimeError("boom")
+
+    view = DashboardView(tmp_path, data_service=service)
+    qtbot.addWidget(view)
+    view.current_dashboard = dashboard
+
+    view.refresh()
+    # Disabled synchronously before the worker starts; the error slot must restore them.
+    assert not view.edit_dashboard_btn.isEnabled()
+    assert not view.delete_dashboard_btn.isEnabled()
+
+    qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
+
+    assert "boom" in view.status_label.text()
+    assert view.edit_dashboard_btn.isEnabled()
+    assert view.delete_dashboard_btn.isEnabled()
+
+
+def _blocking_data_service():
+    """A data service whose refresh_dashboard blocks until released.
+
+    Returns ``(service, started, release)``: ``started`` is set once the worker thread has
+    entered ``refresh_dashboard`` (the refresh is now in flight), and setting ``release`` lets
+    it complete. Lets a test hold a refresh mid-flight and inspect control-enablement state.
+    """
+    started = threading.Event()
+    release = threading.Event()
+    service = MagicMock(spec=DashboardDataService)
+
+    def _blocking_refresh(dashboard):
+        started.set()
+        release.wait(timeout=5)
+        return DashboardRefreshResult()
+
+    service.refresh_dashboard.side_effect = _blocking_refresh
+    return service, started, release
+
+
+def _two_dashboard_view(tmp_path, qtbot, service):
+    """Build a DashboardView backed by two stored dashboards, using *service*."""
+    first = Dashboard.create_new("One")
+    first.save_to_file(tmp_path / f"{first.id}.json")
+    second = Dashboard.create_new("Two")
+    second.save_to_file(tmp_path / f"{second.id}.json")
+
+    view = DashboardView(tmp_path, data_service=service)
+    qtbot.addWidget(view)
+    return view, first, second
+
+
+def test_switching_combo_during_in_flight_refresh_does_not_re_enable_controls(tmp_path, qtbot):
+    """A refresh in flight must not be bypassable by changing the dashboard combo (#96 review).
+
+    While the worker runs, every control that can switch/mutate the current dashboard is
+    disabled. Forcing a combo selection change (as the reviewer asked) must NOT re-enable
+    Edit/Delete/Refresh, nor reassign the current dashboard. After the worker finishes, the
+    controls are restored.
+    """
+    service, started, release = _blocking_data_service()
+    view, _first, _second = _two_dashboard_view(tmp_path, qtbot, service)
+    original = view.current_dashboard
+    assert original is not None
+
+    try:
+        view.refresh()
+        qtbot.waitUntil(started.is_set, timeout=3000)  # worker is now blocked mid-refresh
+
+        # In flight: everything that could switch or mutate the current dashboard is disabled.
+        assert view._refresh_in_flight
+        assert not view.refresh_dashboard_btn.isEnabled()
+        assert not view.edit_dashboard_btn.isEnabled()
+        assert not view.delete_dashboard_btn.isEnabled()
+        assert not view.dashboard_combo.isEnabled()
+        assert not view.add_dashboard_btn.isEnabled()
+
+        # Force a selection change to the *other* dashboard. In the pre-fix code this routed
+        # through _set_current_dashboard() and re-enabled the guarded buttons.
+        other_index = 1 - view.dashboard_combo.currentIndex()
+        view.dashboard_combo.setCurrentIndex(other_index)
+
+        # The guard must hold: buttons stay disabled and the current dashboard is unchanged.
+        assert not view.edit_dashboard_btn.isEnabled()
+        assert not view.delete_dashboard_btn.isEnabled()
+        assert not view.refresh_dashboard_btn.isEnabled()
+        assert view.current_dashboard is original
+    finally:
+        release.set()
+
+    # After the worker completes, the controls are restored.
+    qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
+    assert not view._refresh_in_flight
+    assert view.edit_dashboard_btn.isEnabled()
+    assert view.delete_dashboard_btn.isEnabled()
+    assert view.dashboard_combo.isEnabled()
+    assert view.add_dashboard_btn.isEnabled()
+    assert view.current_dashboard is original
+
+
+def test_new_dashboard_is_inert_during_in_flight_refresh(tmp_path, qtbot, monkeypatch):
+    """New Dashboard must be blocked while a refresh is in flight (#96 review)."""
+    from PySide6.QtWidgets import QInputDialog
+
+    service, started, release = _blocking_data_service()
+    view, _first, _second = _two_dashboard_view(tmp_path, qtbot, service)
+    dashboards_before = len(view.dashboards)
+
+    get_text = MagicMock(return_value=("Should Not Appear", True))
+    monkeypatch.setattr(QInputDialog, "getText", get_text)
+
+    try:
+        view.refresh()
+        qtbot.waitUntil(started.is_set, timeout=3000)
+
+        assert not view.add_dashboard_btn.isEnabled()
+
+        # Even if invoked programmatically, the handler must be inert: no prompt, no creation.
+        view._on_add_dashboard()
+        get_text.assert_not_called()
+        assert len(view.dashboards) == dashboards_before
+    finally:
+        release.set()
+
+    qtbot.waitUntil(lambda: view.add_dashboard_btn.isEnabled(), timeout=3000)
+    assert view.add_dashboard_btn.isEnabled()
 
 
 def _view_with_one_widget(tmp_path, qtbot):

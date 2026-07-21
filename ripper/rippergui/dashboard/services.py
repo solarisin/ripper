@@ -123,7 +123,11 @@ class DashboardDataService:
                 service_box.append(self.create_sheets_service())
             return service_box[0]
 
-        for data_source in dashboard.data_sources.values():
+        # Snapshot the data sources up front: this runs on a background worker thread while the
+        # GUI-thread editor may mutate dashboard.data_sources, and iterating the live dict view
+        # would risk "dictionary changed size during iteration" or a silently inconsistent result
+        # (#96). The snapshot fixes exactly which sources this refresh iterates.
+        for data_source in list(dashboard.data_sources.values()):
             status, records = self.refresh_data_source(get_service, data_source)
             result.statuses[data_source.id] = status
             if records is not None:
