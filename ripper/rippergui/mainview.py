@@ -162,26 +162,32 @@ class MainView(QMainWindow):
         self._new_source_act.triggered.connect(self.new_source)
         self._new_source_act.setEnabled(False)
 
+        # Save/Print/Undo are unimplemented placeholders (#48). They stay disabled so the UI never
+        # reports success for work not done; they remain in the menus/toolbars to signal planned
+        # features. Enable them only once real functionality is wired up.
         self._save_act = QAction(parent=self)
         self._save_act.setIcon(QIcon.fromTheme("document-save"))
         self._save_act.setText("&Save...")
         self._save_act.setShortcut(QKeySequence.StandardKey.Save)
-        self._save_act.setStatusTip("Save the current spreadsheet")
+        self._save_act.setStatusTip("Save the current spreadsheet (not yet implemented)")
         self._save_act.triggered.connect(self.save)
+        self._save_act.setEnabled(False)
 
         self._print_act = QAction(parent=self)
         self._print_act.setIcon(QIcon.fromTheme("document-print"))
         self._print_act.setText("&Print...")
         self._print_act.setShortcut(QKeySequence.StandardKey.Print)
-        self._print_act.setStatusTip("Print the current view")
+        self._print_act.setStatusTip("Print the current view (not yet implemented)")
         self._print_act.triggered.connect(self.print_document)
+        self._print_act.setEnabled(False)
 
         self._undo_act = QAction(parent=self)
         self._undo_act.setIcon(QIcon.fromTheme("edit-undo"))
         self._undo_act.setText("&Undo")
         self._undo_act.setShortcut(QKeySequence.StandardKey.Undo)
-        self._undo_act.setStatusTip("Undo the last editing action")
+        self._undo_act.setStatusTip("Undo the last editing action (not yet implemented)")
         self._undo_act.triggered.connect(self.undo)
+        self._undo_act.setEnabled(False)
 
         self._quit_act = QAction(parent=self)
         self._quit_act.setText("&Quit")
@@ -633,31 +639,28 @@ class MainView(QMainWindow):
         """
         Save the current document.
 
-        This is a placeholder for future implementation.
+        Unimplemented placeholder; the triggering action is disabled (#48). Must not report a
+        fake-success status message. TODO: implement saving functionality.
         """
-        logger.debug("Save selected")
-        # TODO: implement saving functionality
-        self.statusBar().showMessage("Saved '[filename]'", 2000)
+        logger.debug("Save selected (not yet implemented)")
 
     def print_document(self) -> None:
         """
         Print the current document.
 
-        This is a placeholder for future implementation.
+        Unimplemented placeholder; the triggering action is disabled (#48). Must not report a
+        fake-success status message. TODO: implement printing functionality.
         """
-        logger.debug("Print selected")
-        # TODO: implement printing functionality
-        self.statusBar().showMessage("Printing...", 2000)
+        logger.debug("Print selected (not yet implemented)")
 
     def undo(self) -> None:
         """
         Undo the last action.
 
-        This is a placeholder for future implementation.
+        Unimplemented placeholder; the triggering action is disabled (#48). Must not report a
+        fake-success status message. TODO: implement undo functionality.
         """
-        logger.debug("Undo selected")
-        # TODO: implement undo functionality
-        self.statusBar().showMessage("Undo", 2000)
+        logger.debug("Undo selected (not yet implemented)")
 
     def about(self) -> None:
         """
