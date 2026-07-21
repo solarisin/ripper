@@ -13,6 +13,7 @@ from PySide6.QtCharts import (
     QChartView,
     QLineSeries,
     QPieSeries,
+    QValueAxis,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter
@@ -105,6 +106,11 @@ class SpendingTrendWidget(BaseWidget):
         chart = self.chart_view.chart()
         chart.removeAllSeries()
 
+        # Drop any axes left over from the empty-state chart (or a prior render)
+        # so we don't stack a stale numeric axis alongside the new month axis.
+        for axis in chart.axes():
+            chart.removeAxis(axis)
+
         if not data:
             return
 
@@ -112,26 +118,36 @@ class SpendingTrendWidget(BaseWidget):
         series = QLineSeries()
         series.setName("Spending")
 
-        # Add data points. get_monthly_spending() already returns expense-only
-        # positive magnitudes; abs() is kept as a display-safety no-op.
+        # Add data points and collect the real month labels. get_monthly_spending()
+        # already returns expense-only positive magnitudes; abs() is kept as a
+        # display-safety no-op. Each point's x-value is its index, which the
+        # category axis below maps to the matching month label.
+        months: list[str] = []
+        max_amount = 0.0
         for i, item in enumerate(data):
             amount = abs(float(item.get("amount", 0)))
             series.append(i, amount)
+            months.append(str(item.get("month", "")))
+            max_amount = max(max_amount, amount)
 
         # Add series to chart
         chart.addSeries(series)
 
-        # Configure axes. createDefaultAxes() attaches auto-ranged value axes to
-        # the series; access them via the Qt6 axes() API to title them.
-        chart.createDefaultAxes()
+        # Configure axes with the Qt6 addAxis/attachAxis API (no createDefaultAxes()).
+        # A QBarCategoryAxis labels each index with its real month string so the
+        # x-axis reads "2024-01", "2024-02", … instead of 0, 1, 2 (#97). A
+        # QBarCategoryAxis maps line-series index positions to categories in Qt6.
+        axis_x = QBarCategoryAxis()
+        axis_x.append(months)
+        axis_x.setTitleText("Month")
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
 
-        # Customize appearance
-        horizontal_axes = chart.axes(Qt.Orientation.Horizontal)
-        vertical_axes = chart.axes(Qt.Orientation.Vertical)
-        if horizontal_axes:
-            horizontal_axes[0].setTitleText("Month")
-        if vertical_axes:
-            vertical_axes[0].setTitleText("Amount ($)")
+        axis_y = QValueAxis()
+        axis_y.setTitleText("Amount ($)")
+        axis_y.setRange(0.0, max_amount if max_amount > 0 else 1.0)
+        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_y)
 
         # Update chart view
         self.chart_view.update()
