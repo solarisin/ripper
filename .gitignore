@@ -12,3 +12,4 @@ monkeytype.sqlite3
 test/test.db
 .hypothesis/
 .worktrees/
+.claude/worktrees/
