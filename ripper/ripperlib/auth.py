@@ -531,8 +531,17 @@ class AuthManager(QObject):
                 if user_info:
                     self._token_store.store(stored_cred.to_json(), json.dumps(user_info))
 
-            self._credentials = stored_cred
-            self.update_state(AuthState.LOGGED_IN, user_info)
+            if user_info:
+                self._credentials = stored_cred
+                self.update_state(AuthState.LOGGED_IN, user_info)
+            else:
+                # Valid stored token but no obtainable user info (e.g. offline startup). Caching
+                # stored_cred here would let the next authorize() short-circuit and return a usable
+                # credential under a logged-out state, so leave _credentials unset - authorize()
+                # then retries user-info recovery. The stored keyring token is preserved: this is a
+                # transient profile-fetch failure, not a token rejection (#103/#50).
+                self._credentials = None
+                self.update_state(AuthState.NOT_LOGGED_IN)
         else:
             self.update_state(AuthState.NOT_LOGGED_IN)
 
@@ -568,6 +577,19 @@ class AuthManager(QObject):
             return None
         if user_info is None:
             user_info = self.retrieve_user_info(credentials)
+        if user_info is None:
+            # We hold a usable token but couldn't fetch the user profile (transient failure).
+            # Invariant: LOGGED_IN <=> user_info present <=> _credentials usable. Presenting a
+            # credential here would let create_*_service() build authenticated clients while
+            # auth_info says NOT_LOGGED_IN, and caching it would make the next authorize()
+            # short-circuit past user-info recovery. So retain nothing usable and report failure;
+            # the caller retries next time. The stored keyring token is deliberately left intact
+            # (a profile-fetch failure is not a token rejection - #103), so a later attempt can
+            # succeed without a fresh OAuth flow. (#50)
+            logger.warning("Authorized a token but user info is unavailable; staying logged out and not caching it")
+            self._credentials = None
+            self.update_state(AuthState.NOT_LOGGED_IN)
+            return None
         logger.info(f"Authorization successful. User {user_info} logged in.")
         self._credentials = credentials
         self.update_state(AuthState.LOGGED_IN, user_info)

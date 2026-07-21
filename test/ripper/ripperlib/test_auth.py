@@ -945,3 +945,91 @@ class TestAuthManager(unittest.TestCase):
                 result = self.auth_manager.create_userinfo_service()
                 self.assertIsNone(result)
                 mock_build.assert_not_called()
+
+    def test_authorize_without_user_info_does_not_retain_usable_credentials(self):
+        """A usable token but no obtainable user info must not present a half-authenticated session (#50).
+
+        Invariant: LOGGED_IN <=> user_info present <=> _credentials usable. When retrieve_user_info
+        returns None, authorize() must degrade to NOT_LOGGED_IN AND leave no usable credential behind:
+        _credentials stays None and authorize() returns None, so the caller treats this session as
+        "not authorized" and retries next time rather than operating under a logged-out state.
+        """
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        mock_cred = make_mock_creds()
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=mock_cred):
+            with patch.object(self.auth_manager, "retrieve_user_info", return_value=None):
+                result = self.auth_manager.authorize()
+
+        self.assertIsNone(result)
+        self.assertIsNone(self.auth_manager._credentials)
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NOT_LOGGED_IN)
+
+    def test_services_refuse_when_user_info_unavailable(self):
+        """create_*_service must not build authenticated clients when user info is unavailable (#50).
+
+        Because _credentials is only ever set when LOGGED_IN, authorize() returns None on this path,
+        so the service creators return None and never call build() - no authenticated client is handed
+        out while auth_info says the user is logged out.
+        """
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        mock_cred = make_mock_creds()
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=mock_cred):
+            with patch.object(self.auth_manager, "retrieve_user_info", return_value=None):
+                with patch("ripper.ripperlib.auth.build") as mock_build:
+                    self.assertIsNone(self.auth_manager.create_sheets_service())
+                    self.assertIsNone(self.auth_manager.create_drive_service())
+                    mock_build.assert_not_called()
+        # No usable credential was cached as a side effect of the service calls.
+        self.assertIsNone(self.auth_manager._credentials)
+
+    def test_check_stored_credentials_no_user_info_leaves_credentials_unusable_and_token_preserved(self):
+        """A valid stored token with no obtainable user info must not cache a usable credential (#50).
+
+        check_stored_credentials previously cached stored_cred into _credentials before the state
+        downgrade, so the next authorize() short-circuited and returned it without retrying user-info
+        recovery. It must instead leave _credentials unset (so authorize() retries) while preserving
+        the stored keyring token (a profile-fetch failure is transient, not a token rejection - #103).
+        """
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        mock_cred = make_mock_creds()
+        with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=True):
+            with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=mock_cred):
+                self.auth_manager._token_store.get_user_info.return_value = None
+                with patch.object(self.auth_manager, "retrieve_user_info", return_value=None):
+                    self.auth_manager.check_stored_credentials()
+
+        # In-memory credential is not cached and the session is logged out...
+        self.assertIsNone(self.auth_manager._credentials)
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NOT_LOGGED_IN)
+        # ...and the stored keyring token was NOT invalidated (#103 transient-preservation guarantee).
+        self.auth_manager._token_store.invalidate.assert_not_called()
+
+        # The NEXT authorize() must actually retry user-info recovery rather than returning a cached
+        # usable credential.
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=mock_cred) as mock_load:
+            with patch.object(self.auth_manager, "retrieve_user_info", return_value=None) as mock_retrieve:
+                self.assertIsNone(self.auth_manager.authorize())
+                mock_load.assert_called_once()
+                mock_retrieve.assert_called_once()
+
+    def test_authorize_happy_path_sets_credentials_and_builds_services(self):
+        """Happy path is unchanged: user_info present -> LOGGED_IN, _credentials set, services build (#50)."""
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        mock_cred = make_mock_creds()
+        user_info = {"email": "test@example.com"}
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=mock_cred):
+            with patch.object(self.auth_manager, "retrieve_user_info", return_value=user_info):
+                result = self.auth_manager.authorize()
+
+                self.assertEqual(result, mock_cred)
+                self.assertEqual(self.auth_manager._credentials, mock_cred)
+                self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.LOGGED_IN)
+                self.assertEqual(self.auth_manager._current_auth_info.user_email(), "test@example.com")
+
+                with patch("ripper.ripperlib.auth.build", return_value=mock_resource):
+                    self.assertEqual(self.auth_manager.create_sheets_service(), mock_resource)
+                    self.assertEqual(self.auth_manager.create_drive_service(), mock_resource)
