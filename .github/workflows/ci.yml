@@ -13,6 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      # Don't cancel the other Python legs when one fails: a version-specific regression
+      # (stdlib / PySide6 / beartype / stub differences across 3.11-3.13) should still report
+      # on every version, not just whichever fails first (#100).
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
 
