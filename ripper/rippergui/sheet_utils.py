@@ -6,6 +6,17 @@ import re
 
 from beartype.typing import Tuple
 
+from ripper.ripperlib.range_manager import CellRange
+
+#: Maximum column index Google Sheets supports (column "XFD"). Columns beyond this are rejected
+#: as invalid format so absurd input like ``ZZZZ1`` never reads as a valid range.
+MAX_SHEET_COLUMNS = 16384
+
+#: Sentinel grid dimensions used only to resolve open-ended forms (e.g. ``A:Z``, ``2:10``) during a
+#: format-only check, where the real sheet dimensions are not known. Bounds are verified separately
+#: by :meth:`SheetRangeValidator.is_range_within_bounds` once the sheet's true dimensions are known.
+_FORMAT_CHECK_MAX_ROWS = 10_000_000
+
 
 def col_to_letter(col_index: int) -> str:
     """
@@ -60,35 +71,54 @@ class SheetRangeValidator:
     @staticmethod
     def is_range_format_valid(text: str) -> bool:
         """
-        Check if the range input matches the expected A1:B5 format.
+        Check whether the input is a syntactically valid Google Sheets A1 range.
+
+        Parsing is delegated to the canonical parser (:meth:`CellRange.from_a1_notation`) so the
+        GUI accepts exactly the forms the backend understands. Accepted forms:
+
+        - single cell: ``A1``
+        - bounded range: ``A1:B5`` (including the app-generated ``A1:{col}{row}`` full ranges)
+        - whole column: ``A:A``, ``A:Z``
+        - whole row: ``2:10``
+        - half-open: ``A1:A`` (down column B... to the last row), ``A1:B``
+
+        Rejected: empty/whitespace, reversed ranges (``B2:A1``), structurally malformed input
+        (``A1B2``, ``A1:``, ``:B2``, ``A``, ``1``, ``A:5``), and any range whose column exceeds the
+        Sheets maximum (``MAX_SHEET_COLUMNS`` / column "XFD"), e.g. ``ZZZZ1``.
+
+        This is a *format* check only: it does not verify the range fits a particular sheet's grid
+        (see :meth:`is_range_within_bounds`).
+
         Returns True if the format is valid, False otherwise.
         """
-        range_pattern = r"^[a-zA-Z]+\d+:[a-zA-Z]+\d+$"
-        return bool(re.match(range_pattern, text))
+        if not text.strip():
+            return False
+        try:
+            # Resolve open-ended forms against generous sentinels so the *shape* can be validated
+            # without the real sheet dimensions; column sanity is enforced explicitly below.
+            cell_range = CellRange.from_a1_notation(text, max_row=_FORMAT_CHECK_MAX_ROWS, max_col=MAX_SHEET_COLUMNS)
+        except ValueError:
+            return False
+        return cell_range.start_col <= MAX_SHEET_COLUMNS and cell_range.end_col <= MAX_SHEET_COLUMNS
 
     @staticmethod
     def is_range_within_bounds(text: str, sheet_row_count: int, sheet_col_count: int) -> bool:
         """
-        Check if the range is within the sheet dimensions.
+        Check whether the range fits within the given sheet dimensions.
+
+        Delegates parsing to :meth:`CellRange.from_a1_notation`, which resolves open-ended forms
+        (``A:Z``, ``2:10``, ``A1:A``) against the supplied dimensions, then verifies the resolved
+        rectangle lies within ``1..sheet_row_count`` x ``1..sheet_col_count``.
+
         Returns True if the range is within bounds, False otherwise.
         """
         try:
-            parts = text.split(":")
-            if len(parts) != 2:
-                return False
-            start_cell_text = parts[0]
-            end_cell_text = parts[1]
-            start_row, start_col = parse_cell(start_cell_text)
-            end_row, end_col = parse_cell(end_cell_text)
-            if (
-                start_row < 1
-                or start_col < 1
-                or end_row > sheet_row_count
-                or end_col > sheet_col_count
-                or start_row > end_row
-                or start_col > end_col
-            ):
-                return False
+            cell_range = CellRange.from_a1_notation(text, max_row=sheet_row_count, max_col=sheet_col_count)
         except ValueError:
             return False
-        return True
+        return (
+            cell_range.start_row >= 1
+            and cell_range.start_col >= 1
+            and cell_range.end_row <= sheet_row_count
+            and cell_range.end_col <= sheet_col_count
+        )

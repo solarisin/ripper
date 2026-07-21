@@ -197,6 +197,13 @@ class SheetsSelectionDialog(QDialog):
         self.details_text = ""
         details_layout.addWidget(self.details_content)
 
+        # Dedicated status/error label. Validation and load errors/warnings render here so the
+        # spreadsheet-details panel is never mutated and no stale message is left behind (#61).
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.status_label.setWordWrap(True)
+        details_layout.addWidget(self.status_label)
+
         # Sheet name, range, and data source name fields
         options_layout = QFormLayout()
 
@@ -589,14 +596,17 @@ class SheetsSelectionDialog(QDialog):
                 )
                 self.select_button.setEnabled(False)
                 return
-            # If bounds are valid, proceed to enable button
-            self.details_content.setText(self.details_text)  # Restore original details text
+            # Format valid and bounds verified: clear any status message and allow saving.
+            self.clear_status()
             self.select_button.setEnabled(True)
         else:
-            # If dimensions are not available, format is valid, but bounds can't be checked.
-
-            self.details_content.setText("Warning: Cannot validate range bounds (sheet dimensions not available).")
-            self.select_button.setEnabled(True)
+            # Format is valid but bounds cannot be verified (sheet dimensions unavailable). Refuse
+            # to enable Save rather than risk saving an out-of-range range (#61).
+            self.show_warning(
+                "Cannot verify range bounds: sheet dimensions are unavailable. "
+                "Select a sheet so the range can be validated before saving."
+            )
+            self.select_button.setEnabled(False)
 
     def print_spreadsheet_info(self) -> None:
         """
@@ -662,15 +672,29 @@ class SheetsSelectionDialog(QDialog):
 
     def show_error(self, message: str) -> None:
         """
-        Display error message in the dialog.
+        Display an error message in the dedicated status label.
+
+        The spreadsheet-details panel is left untouched, so errors never overwrite it and no stale
+        message is left behind (#61).
 
         Args:
             message (str): The error message to display.
         """
-        # Append the error message below the existing text
-        current_text = self.details_text
-        if not current_text.endswith("<br>"):
-            # Add a line break if the current text doesn't end with one
-            current_text += "<br>"
-        self.details_content.setText(f"{current_text}<br><br><br><span style='color: red;'>{message}</span>")
+        self.status_label.setStyleSheet("color: #c0392b;")  # red
+        self.status_label.setText(message)
         logger.error(message)
+
+    def show_warning(self, message: str) -> None:
+        """
+        Display a warning message in the dedicated status label.
+
+        Args:
+            message (str): The warning message to display.
+        """
+        self.status_label.setStyleSheet("color: #b9770e;")  # amber
+        self.status_label.setText(message)
+        logger.warning(message)
+
+    def clear_status(self) -> None:
+        """Clear any error/warning message shown in the status label."""
+        self.status_label.clear()
