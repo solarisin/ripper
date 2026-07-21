@@ -14,6 +14,7 @@ from ripper.ripperlib.auth import (
     AuthInfo,
     AuthManager,
     AuthState,
+    MissingScopesError,
     TokenStore,
 )
 
@@ -247,7 +248,12 @@ class TestTokenStore(unittest.TestCase):
 
     @patch("keyring.get_password")
     def test_get_credentials_missing_scopes(self, mock_get_password):
-        """Test that get_credentials raises SystemError when required scopes are missing."""
+        """get_credentials raises the dedicated MissingScopesError when scopes are missing (#50).
+
+        SystemError is a builtin reserved for interpreter-internal failures; the missing-scope
+        condition is a domain/value error, so it now raises MissingScopesError. That class
+        subclasses ValueError so existing `except ValueError` sites keep catching it.
+        """
         # Set up the mock to return a token without scopes
         token_without_scopes = json.dumps(
             {
@@ -260,9 +266,37 @@ class TestTokenStore(unittest.TestCase):
         )
         mock_get_password.side_effect = [token_without_scopes, None]
 
-        # Call get_credentials and check that it raises SystemError
-        with self.assertRaises(SystemError):
+        # Missing-scopes now raises MissingScopesError, which is a ValueError subclass.
+        self.assertTrue(issubclass(MissingScopesError, ValueError))
+        with self.assertRaises(MissingScopesError):
             self.token_store.get_credentials()
+
+    @patch("keyring.get_password")
+    def test_get_credentials_partial_scopes(self, mock_get_password):
+        """A token missing any required scope raises MissingScopesError (#50).
+
+        Exercises the simplified `any(s not in token_json["scopes"] for s in scopes)` check
+        against a token that carries only a subset of the required scopes.
+        """
+        token_partial_scopes = json.dumps(
+            {
+                "access_token": "test_token",
+                "scopes": ["openid"],  # missing spreadsheets / drive / email
+            }
+        )
+        mock_get_password.side_effect = [token_partial_scopes, None]
+
+        with self.assertRaises(MissingScopesError):
+            self.token_store.get_credentials()
+
+    @patch("keyring.get_password")
+    def test_get_user_info_corrupt_json_returns_none(self, mock_get_password):
+        """get_user_info returns None (not raise) when the stored user info is corrupt (#50).
+
+        The narrowed handler still catches the JSON decode failure it is meant to.
+        """
+        self.token_store._current_userinfo = "{not-valid-json"
+        self.assertIsNone(self.token_store.get_user_info())
 
     @patch("keyring.get_password")
     def test_get_user_info(self, mock_get_password):
@@ -334,6 +368,38 @@ class TestAuthManager(unittest.TestCase):
         self.assertEqual(client_id, "test_id")
         self.assertEqual(client_secret, "test_secret")
 
+    @patch("keyring.get_password")
+    def test_has_oauth_client_credentials_does_not_mutate_state(self, mock_get_password):
+        """A read of whether client creds exist must not flip auth state or emit a signal (#50).
+
+        `has_oauth_client_credentials` (and the underlying `load_oauth_client_credentials`) are
+        getters: they previously called `update_state(NOT_LOGGED_IN)` as a side effect, so a mere
+        boolean check could emit `authStateChanged` and move the state machine. State transitions
+        belong to imperative call sites (store_oauth_client_credentials / check_stored_credentials).
+        """
+        mock_get_password.return_value = json.dumps({"client_id": "test_id", "client_secret": "test_secret"})
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NO_CLIENT)
+        self.auth_manager.authStateChanged = MagicMock()
+
+        result = self.auth_manager.has_oauth_client_credentials()
+
+        self.assertTrue(result)
+        # State unchanged and no signal emitted from the read path.
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NO_CLIENT)
+        self.auth_manager.authStateChanged.emit.assert_not_called()
+
+    @patch("keyring.get_password")
+    def test_load_oauth_client_credentials_does_not_mutate_state(self, mock_get_password):
+        """load_oauth_client_credentials is a pure read: no state transition, no signal (#50)."""
+        mock_get_password.return_value = json.dumps({"client_id": "test_id", "client_secret": "test_secret"})
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NO_CLIENT)
+        self.auth_manager.authStateChanged = MagicMock()
+
+        self.auth_manager.load_oauth_client_credentials()
+
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NO_CLIENT)
+        self.auth_manager.authStateChanged.emit.assert_not_called()
+
     @patch("keyring.set_password")
     def test_store_oauth_client_credentials(self, mock_set_password):
         """Test that store_oauth_client_credentials saves the credentials to keyring."""
@@ -393,11 +459,22 @@ class TestAuthManager(unittest.TestCase):
         # Check that the signal was not emitted
         self.auth_manager.authStateChanged.emit.assert_not_called()
 
-    def test_update_state_requires_user_info(self):
-        """Test that update_state requires user_info when state is LOGGED_IN."""
-        # Call update_state with LOGGED_IN but no user_info
-        with self.assertRaises(ValueError):
-            self.auth_manager.update_state(AuthState.LOGGED_IN)
+    def test_update_state_logged_in_without_user_info_degrades(self):
+        """LOGGED_IN without user_info must degrade to NOT_LOGGED_IN, not raise (#50).
+
+        Previously update_state raised ValueError, which made the offline-startup path in
+        check_stored_credentials/authorize a reachable crash. The guard now logs a warning and
+        falls back to NOT_LOGGED_IN so the app can start logged out.
+        """
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NO_CLIENT)
+        self.auth_manager.authStateChanged = MagicMock()
+
+        # Must not raise.
+        self.auth_manager.update_state(AuthState.LOGGED_IN)
+
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NOT_LOGGED_IN)
+        self.assertIsNone(self.auth_manager._current_auth_info.user_email())
+        self.auth_manager.authStateChanged.emit.assert_called_once()
 
     def test_auth_info(self):
         """Test that auth_info returns the current auth info."""
@@ -595,9 +672,14 @@ class TestAuthManager(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_attempt_load_stored_token_invalid_token(self):
-        """Test that attempt_load_stored_token handles the case when the token is invalid."""
-        # Set up the token store to raise SystemError
-        self.auth_manager._token_store.get_credentials.side_effect = SystemError("Invalid token")
+        """attempt_load_stored_token handles a missing-scopes token by returning None (#50).
+
+        The store now raises MissingScopesError (a ValueError subclass) rather than SystemError.
+        """
+        # Set up the token store to raise MissingScopesError
+        self.auth_manager._token_store.get_credentials.side_effect = MissingScopesError(
+            "Required scopes are missing from token."
+        )
 
         # Call attempt_load_stored_token
         result = self.auth_manager.attempt_load_stored_token()
@@ -676,6 +758,25 @@ class TestAuthManager(unittest.TestCase):
                 self.auth_manager.check_stored_credentials()
                 self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.LOGGED_IN)
                 self.assertEqual(self.auth_manager._current_auth_info.user_email(), "test@example.com")
+
+    def test_check_stored_credentials_valid_token_but_no_user_info_degrades(self):
+        """Offline startup: a valid token with no obtainable user info must not crash (#50).
+
+        When the cached user info is absent and retrieve_user_info() also fails (e.g. offline),
+        check_stored_credentials passes user_info=None into update_state(LOGGED_IN). That used to
+        raise ValueError and take down startup; it must instead degrade to NOT_LOGGED_IN.
+        """
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        self.auth_manager.authStateChanged = MagicMock()
+        with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=True):
+            with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=make_mock_creds()):
+                # No cached user info, and the live lookup also fails.
+                self.auth_manager._token_store.get_user_info.return_value = None
+                with patch.object(self.auth_manager, "retrieve_user_info", return_value=None):
+                    # Must not raise.
+                    self.auth_manager.check_stored_credentials()
+
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NOT_LOGGED_IN)
 
     def test_check_stored_credentials_with_no_token(self):
         """Test that check_stored_credentials updates the state to NOT_LOGGED_IN when no token is found."""
