@@ -3,11 +3,16 @@ from unittest.mock import MagicMock, patch
 
 from googleapiclient.errors import HttpError
 
+from ripper.ripperlib.database import RipperDb
 from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProperties
+from ripper.ripperlib.range_manager import split_sheet_and_range
 from ripper.ripperlib.sheets_backend import (
     fetch_sheets_of_spreadsheet,
     fetch_spreadsheets,
     fetch_thumbnail,
+    get_tiller_budget,
+    get_tiller_categories,
+    get_tiller_transactions,
     retrieve_sheet_data,
     retrieve_sheet_data_for,
     retrieve_sheets_of_spreadsheet,
@@ -362,3 +367,113 @@ class TestThumbnail(unittest.TestCase):
             data, source = retrieve_thumbnail("book", "https://example.com/t.png")
         self.assertEqual((data, source), (b"", LoadSource.API))
         mock_db.store_spreadsheet_thumbnail.assert_not_called()
+
+
+def _column_letters_to_number(letters: str) -> int:
+    """Convert A1 column letters ('A' -> 1, 'Z' -> 26, 'AD' -> 30) to a 1-based number."""
+    number = 0
+    for char in letters.upper():
+        number = number * 26 + (ord(char) - ord("A") + 1)
+    return number
+
+
+def _requested_column_bound(range_name: str) -> float:
+    """Highest column index the requested A1 string can return; ``inf`` when unbounded.
+
+    A whole-sheet reference (no cell-range part), or a range whose end omits the column, is
+    unbounded and therefore cannot truncate. Anything else is bounded by its end column.
+    """
+    _, range_part = split_sheet_and_range(range_name)
+    if not range_part:
+        return float("inf")
+    end_cell = range_part.split(":")[-1].strip()
+    letters = "".join(char for char in end_cell if char.isalpha())
+    if not letters:
+        return float("inf")
+    return _column_letters_to_number(letters)
+
+
+class TestTillerWideSheets(unittest.TestCase):
+    """Tiller getters must not truncate sheets wider than column Z (#104)."""
+
+    GETTERS = (
+        (get_tiller_transactions, "Transactions"),
+        (get_tiller_categories, "Categories"),
+        (get_tiller_budget, "Budget"),
+    )
+
+    @staticmethod
+    def _mock_service(values):
+        """Build a mocked Sheets service that records every requested A1 range.
+
+        No live API call is made; the mock mirrors ``service.spreadsheets().values().get(...)``.
+        """
+        requested: list[str] = []
+
+        def _get(**kwargs):
+            requested.append(kwargs["range"])
+            request = MagicMock()
+            request.execute.return_value = {"values": values}
+            return request
+
+        service = MagicMock()
+        service.spreadsheets.return_value.values.return_value.get.side_effect = _get
+        return service, requested
+
+    @staticmethod
+    def _grid(column_count, row_count=3):
+        """Build a header row plus data rows for a sheet ``column_count`` columns wide."""
+        headers = [f"col_{i}" for i in range(column_count)]
+        rows = [[f"r{r}c{c}" for c in range(column_count)] for r in range(1, row_count)]
+        return [headers, *rows]
+
+    def _run(self, getter, sheet_name, values):
+        """Invoke a Tiller getter against the mocked service, isolating the cache from the real DB."""
+        service, requested = self._mock_service(values)
+        # Keep the test hermetic if the call ever routes through SheetDataCache (which reads
+        # stored grid properties); no real database or API is touched.
+        mock_db = MagicMock(spec=RipperDb)
+        mock_db.get_sheet_properties_of_spreadsheet.return_value = []
+        with patch("ripper.ripperlib.sheet_data_cache.Db", mock_db):
+            result = getter(service, "book", sheet_name)
+        self.assertTrue(requested, "expected at least one API read")
+        return result, requested
+
+    def test_wide_sheet_columns_are_not_truncated(self) -> None:
+        """A 30-column Tiller sheet keeps every column: the request is never bounded at Z."""
+        column_count = 30
+        values = self._grid(column_count)
+        for getter, sheet_name in self.GETTERS:
+            with self.subTest(getter=getter.__name__):
+                rows, requested = self._run(getter, sheet_name, values)
+
+                for range_name in requested:
+                    self.assertGreaterEqual(
+                        _requested_column_bound(range_name),
+                        column_count,
+                        f"requested range {range_name!r} truncates a {column_count}-column sheet",
+                    )
+
+                self.assertEqual(len(rows), len(values) - 1)
+                expected_headers = [f"col_{i}" for i in range(column_count)]
+                for row in rows:
+                    self.assertEqual(list(row.keys()), expected_headers)
+                self.assertEqual(rows[0]["col_29"], "r1c29")
+
+    def test_narrow_sheet_still_works(self) -> None:
+        """A <=26-column sheet is unaffected (no regression)."""
+        values = [
+            ["Date", "Description", "Amount"],
+            ["2026-01-01", "Coffee", "-4.50"],
+            ["2026-01-02", "Salary", "1000.00"],
+        ]
+        for getter, sheet_name in self.GETTERS:
+            with self.subTest(getter=getter.__name__):
+                rows, _ = self._run(getter, sheet_name, values)
+                self.assertEqual(
+                    rows,
+                    [
+                        {"date": "2026-01-01", "description": "Coffee", "amount": "-4.50"},
+                        {"date": "2026-01-02", "description": "Salary", "amount": "1000.00"},
+                    ],
+                )
