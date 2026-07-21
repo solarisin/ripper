@@ -1042,17 +1042,53 @@ class TestAuthManager(unittest.TestCase):
         must return None. State stays consistent with the invariant LOGGED_IN <=> user_info present
         <=> _credentials usable: not-logged-in and no half-set _credentials.
         """
+        # A client IS configured here (so the logged-out state is NOT_LOGGED_IN, not NO_CLIENT);
+        # the NO_CLIENT branch is covered by test_authorize_silent_preserves_no_client_*.
         self.auth_manager._credentials = None
         self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
         with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=None):
-            with patch.object(self.auth_manager, "acquire_new_credentials") as mock_acquire:
-                result = self.auth_manager.authorize(silent=True)
+            with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=True):
+                with patch.object(self.auth_manager, "acquire_new_credentials") as mock_acquire:
+                    result = self.auth_manager.authorize(silent=True)
 
         self.assertIsNone(result)
         # The interactive browser flow was never triggered.
         mock_acquire.assert_not_called()
         # State remains logged out with no usable credential retained.
         self.assertIsNone(self.auth_manager._credentials)
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NOT_LOGGED_IN)
+
+    def test_authorize_silent_preserves_no_client_when_no_client_configured(self):
+        """A silent authorize with no OAuth client configured must stay NO_CLIENT (#106 review).
+
+        Forcing NOT_LOGGED_IN here would falsely claim a client exists (MainView treats any state
+        other than NO_CLIENT as configured and enables the authenticate action). The silent path
+        must derive the logged-out state the same way acquire_new_credentials() does.
+        """
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NO_CLIENT)
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=None):
+            with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=False):
+                with patch.object(self.auth_manager, "acquire_new_credentials") as mock_acquire:
+                    result = self.auth_manager.authorize(silent=True)
+
+        self.assertIsNone(result)
+        mock_acquire.assert_not_called()
+        self.assertIsNone(self.auth_manager._credentials)
+        # NO_CLIENT preserved, not downgraded to NOT_LOGGED_IN.
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NO_CLIENT)
+
+    def test_authorize_silent_reports_not_logged_in_when_client_configured(self):
+        """Silent authorize with a client configured but no token yields NOT_LOGGED_IN (#106 review)."""
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=None):
+            with patch.object(self.auth_manager, "has_oauth_client_credentials", return_value=True):
+                with patch.object(self.auth_manager, "acquire_new_credentials") as mock_acquire:
+                    result = self.auth_manager.authorize(silent=True)
+
+        self.assertIsNone(result)
+        mock_acquire.assert_not_called()
         self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NOT_LOGGED_IN)
 
     def test_authorize_silent_still_uses_valid_stored_credentials(self):
