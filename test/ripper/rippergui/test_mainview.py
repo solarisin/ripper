@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import PySide6QtAds as ads  # type: ignore[import-untyped]
 import pytest
+import shiboken6
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
@@ -79,6 +80,70 @@ def test_show_data_source_creates_table_dock(qtbot):
 
     assert view._table_dock is not None
     assert isinstance(view._table_dock, ads.CDockWidget)
+
+
+@pytest.mark.qt
+def test_show_data_source_deletes_replaced_container(qtbot):
+    """Replacing the dock's widget must destroy the old container, not leak it (#107).
+
+    ``CDockWidget.setWidget()`` detaches the previous widget instead of deleting it, so without an
+    explicit ``takeWidget()`` + ``deleteLater()`` every sidebar click / Refresh leaves a full
+    table widget + model alive for the life of the app.
+    """
+    view = MainView()
+    qtbot.addWidget(view)
+
+    sheet_data = [["ID", "Date", "Description"], ["1", "2024-01-01", "Test"]]
+    source_info = {"spreadsheet_id": "s1", "sheet_name": "Sheet1", "sheet_range": "A1:C10"}
+
+    with patch("ripper.rippergui.mainview.Db") as mock_db:
+        mock_db.get_data_source.return_value = {"last_fetched_at": "2024-01-01"}
+        view._show_data_source_in_dock(1, "Test Source", sheet_data, source_info)
+        assert view._table_dock is not None
+        old_container = view._table_dock.widget()
+        assert old_container is not None
+
+        with qtbot.waitSignal(old_container.destroyed, timeout=2000):
+            view._show_data_source_in_dock(1, "Test Source", sheet_data, source_info)
+            QApplication.processEvents()
+
+    new_container = view._table_dock.widget()
+    assert new_container is not None
+    assert not shiboken6.isValid(old_container)
+    assert shiboken6.isValid(new_container)
+
+
+@pytest.mark.qt
+def test_show_data_source_keeps_new_widget_registered_after_old_destroyed(qtbot):
+    """The new table widget must remain in ``_table_widgets`` after the old one is destroyed (#107).
+
+    The ``destroyed`` handler pops the key only when the stored widget is still the destroyed one;
+    since the new widget is registered before the old container is deleted, the identity guard must
+    keep the new entry intact.
+    """
+    view = MainView()
+    qtbot.addWidget(view)
+
+    sheet_data = [["ID", "Date", "Description"], ["1", "2024-01-01", "Test"]]
+    source_info = {"spreadsheet_id": "s1", "sheet_name": "Sheet1", "sheet_range": "A1:C10"}
+    key = ("s1", "Sheet1", "A1:C10")
+
+    with patch("ripper.rippergui.mainview.Db") as mock_db:
+        mock_db.get_data_source.return_value = {"last_fetched_at": "2024-01-01"}
+        view._show_data_source_in_dock(1, "Test Source", sheet_data, source_info)
+        old_table_widget = view._table_widgets[key]
+        assert view._table_dock is not None
+        old_container = view._table_dock.widget()
+
+        with qtbot.waitSignal(old_container.destroyed, timeout=2000):
+            view._show_data_source_in_dock(1, "Test Source", sheet_data, source_info)
+            QApplication.processEvents()
+
+    qtbot.wait(50)
+    assert key in view._table_widgets
+    new_table_widget = view._table_widgets[key]
+    assert new_table_widget is not old_table_widget
+    assert shiboken6.isValid(new_table_widget)
 
 
 @pytest.mark.qt
