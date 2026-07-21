@@ -707,6 +707,112 @@ class TestDatabaseCaching(unittest.TestCase):
 
         conn.close()
 
+    # ---- Open-ended complete-coverage marker (#68) --------------------------------
+
+    def test_open_ended_coverage_marker_round_trip(self) -> None:
+        """A range stored with the open-ended marker is retrievable via get_open_ended_coverage (#68)."""
+        cell_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
+        # Store under the actual extent A1:B2, marked as the complete result of an A:Z request
+        # (open-ended columns 1..26 starting at row 1).
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            1,
+            1,
+            2,
+            2,
+            cell_data,
+            open_ended_start_row=1,
+            open_ended_start_col=1,
+            open_ended_end_col=26,
+        )
+
+        covered = self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26)
+        self.assertEqual(covered, cell_data)
+
+        # A different open-ended request (different column span) does not match.
+        self.assertIsNone(self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 13))
+
+    def test_bounded_store_has_no_open_ended_marker(self) -> None:
+        """A plain bounded store never satisfies an open-ended coverage lookup (#68 (c) at the DB layer)."""
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 2, 2, [["A1", "B1"], ["A2", "B2"]]
+        )
+        self.assertIsNone(self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26))
+
+    def test_open_ended_marker_dropped_by_sheet_wide_invalidation(self) -> None:
+        """Sheet-wide invalidation drops the open-ended marker along with the range (#68)."""
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            1,
+            1,
+            2,
+            2,
+            [["Date", "Amount"], ["2024-01-01", "-5"]],
+            open_ended_start_row=1,
+            open_ended_start_col=1,
+            open_ended_end_col=26,
+        )
+        self.db.invalidate_sheet_data_cache(self.test_spreadsheet_id, self.test_sheet_name)
+        self.assertIsNone(self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26))
+
+    def test_schema_add_column_on_existing_db(self) -> None:
+        """Opening a DB whose sheet_data_ranges predates the marker columns adds them, no crash (#68 (e))."""
+        legacy_path = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        legacy_path.close()
+        try:
+            # Build a legacy sheet_data_ranges table WITHOUT the open_ended_* columns.
+            conn = sqlite3.connect(legacy_path.name)
+            conn.execute(
+                """CREATE TABLE sheet_data_ranges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    spreadsheet_id TEXT NOT NULL,
+                    sheet_name TEXT NOT NULL,
+                    start_row INTEGER NOT NULL,
+                    start_col INTEGER NOT NULL,
+                    end_row INTEGER NOT NULL,
+                    end_col INTEGER NOT NULL,
+                    cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
+                );"""
+            )
+            conn.commit()
+            conn.close()
+
+            # Opening via RipperDb must upgrade the schema in place.
+            legacy_db = RipperDb(legacy_path.name)
+            try:
+                conn = sqlite3.connect(legacy_path.name)
+                cols = {row[1] for row in conn.execute("PRAGMA table_info(sheet_data_ranges)").fetchall()}
+                conn.close()
+                for expected in ("open_ended_start_row", "open_ended_start_col", "open_ended_end_col"):
+                    self.assertIn(expected, cols)
+
+                # And the marker round-trips on the upgraded DB.
+                legacy_db.store_spreadsheet_properties(self.test_spreadsheet_id, self.test_spreadsheet_props)
+                legacy_db.store_sheet_data_range(
+                    self.test_spreadsheet_id,
+                    self.test_sheet_name,
+                    1,
+                    1,
+                    1,
+                    1,
+                    [["X"]],
+                    open_ended_start_row=1,
+                    open_ended_start_col=1,
+                    open_ended_end_col=26,
+                )
+                self.assertEqual(
+                    legacy_db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26),
+                    [["X"]],
+                )
+            finally:
+                legacy_db.close()
+        finally:
+            if os.path.exists(legacy_path.name):
+                os.remove(legacy_path.name)
+
 
 if __name__ == "__main__":
     unittest.main()

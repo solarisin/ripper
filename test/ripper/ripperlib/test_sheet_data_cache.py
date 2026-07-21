@@ -302,14 +302,14 @@ class TestSheetDataCache(unittest.TestCase):
             self.mock_sheets_service, self.test_spreadsheet_id, f"'{self.test_sheet_name}'!A1:Z10"
         )
 
-    def test_get_sheet_data_open_ended_always_fetches_fresh(self) -> None:
-        """Open-ended requests fetch fresh each time; cached overlap can't prove completeness (#30, #66 review)."""
+    def test_open_ended_repeated_read_served_from_cache(self) -> None:
+        """A repeated 'A:Z' read is served from the complete-coverage marker; API called once (#68 (a))."""
         self._store_grid_dimensions(row_count=10, column_count=26)
         api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
 
         with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
             mock_fetch.return_value = api_data
-            first, _ = self.cache.get_sheet_data(
+            first, first_sources = self.cache.get_sheet_data(
                 self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
             )
             second, second_sources = self.cache.get_sheet_data(
@@ -318,8 +318,103 @@ class TestSheetDataCache(unittest.TestCase):
 
         self.assertEqual(first, api_data)
         self.assertEqual(second, api_data)
-        self._assert_single_source(second_sources, LoadSource.API)
+        # First read hit the API, the second was served from the cache.
+        self._assert_single_source(first_sources, LoadSource.API)
+        self._assert_single_source(second_sources, LoadSource.DATABASE)
+        self.assertEqual(mock_fetch.call_count, 1)
+
+    def test_open_ended_reuse_invalidated_by_modified_time(self) -> None:
+        """A modifiedTime change invalidates the open-ended marker, forcing a re-fetch (#68 (b))."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            self.cache.get_sheet_data(self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z")
+
+            # Simulate the sheet changing: a new modifiedTime invalidates the sheet-data cache.
+            changed_props = SpreadsheetProperties(
+                {
+                    "id": self.test_spreadsheet_id,
+                    "name": "Test Spreadsheet for Cache",
+                    "modifiedTime": "2024-06-01T00:00:00Z",
+                    "createdTime": "2024-01-01T00:00:00Z",
+                    "webViewLink": "https://example.com",
+                    "owners": [],
+                    "size": 1000,
+                    "shared": False,
+                }
+            )
+            self.db.store_spreadsheet_properties(self.test_spreadsheet_id, changed_props)
+            # Grid dims were dropped by the invalidation; restore them so A:Z can resolve again.
+            self._store_grid_dimensions(row_count=10, column_count=26)
+
+            _, sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        self._assert_single_source(sources, LoadSource.API)
         self.assertEqual(mock_fetch.call_count, 2)
+
+    def test_open_ended_reuse_invalidated_by_refresh(self) -> None:
+        """An explicit range-scoped Refresh invalidates the open-ended marker, forcing a re-fetch (#68 (b))."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            self.cache.get_sheet_data(self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z")
+
+            # A Refresh of this source invalidates the overlapping cached ranges (issue #80).
+            self.assertTrue(self.cache.invalidate_cache_range(self.test_spreadsheet_id, self.test_sheet_name, "A:Z"))
+
+            _, sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        self._assert_single_source(sources, LoadSource.API)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    def test_open_ended_refresh_of_distant_column_drops_marker(self) -> None:
+        """Refreshing a column within A:Z but beyond the cached extent still drops the marker (#68)."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]  # actual extent only A1:B2
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            self.cache.get_sheet_data(self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z")
+
+            # Refresh a bounded region (column H) that lies within the A:Z column span but does
+            # not overlap the stored A1:B2 extent. The open-ended snapshot may now be stale, so
+            # the marker must be dropped.
+            self.assertTrue(self.cache.invalidate_cache_range(self.test_spreadsheet_id, self.test_sheet_name, "H1:H10"))
+
+            _, sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        self._assert_single_source(sources, LoadSource.API)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    def test_open_ended_cache_served_byte_identical_to_fresh(self) -> None:
+        """A cache-served open-ended read is byte-identical to the fresh fetch, incl. ragged trimming (#68 (d))."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        # Ragged data with a short row and a trailing empty cell, mirroring a real API read.
+        api_data = [["Date", "Amount", ""], ["2024-01-01"], ["2024-01-02", "-9"]]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            fresh, _ = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+            cached, cached_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A:Z"
+            )
+
+        self._assert_single_source(cached_sources, LoadSource.DATABASE)
+        self.assertEqual(mock_fetch.call_count, 1)
+        # Byte-identical: same trimming of trailing empty rows/cells as the fresh path.
+        self.assertEqual(cached, fresh)
 
     def test_open_ended_fetch_does_not_falsely_satisfy_from_partial_cache(self) -> None:
         """A smaller bounded cache entry must not be treated as a complete open-ended result (#66 review)."""

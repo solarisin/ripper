@@ -27,6 +27,22 @@ def default_db_path() -> Path:
     return Path(defs.get_app_data_dir()) / "ripper.db"
 
 
+# Columns added to ``sheet_data_ranges`` after the initial schema, mapping name -> SQL type.
+# These flag a stored range as a COMPLETE open-ended snapshot (issue #68): the range is the full
+# result of an open-ended request covering columns [open_ended_start_col..open_ended_end_col]
+# from row open_ended_start_row onward. A plain bounded store leaves all three NULL.
+#
+# There is no migration framework (the DB is a rebuildable cache; see #78), so an existing DB
+# predating these columns is upgraded in place via a guarded, idempotent ``ALTER TABLE ... ADD
+# COLUMN`` in the open/create path. The keys here form the ONLY allowlist of identifiers ever
+# interpolated into that DDL — never interpolate untrusted values into SQL.
+_SHEET_DATA_RANGE_ADDED_COLUMNS: dict[str, str] = {
+    "open_ended_start_row": "INTEGER",
+    "open_ended_start_col": "INTEGER",
+    "open_ended_end_col": "INTEGER",
+}
+
+
 class RipperDb:
     """
     SQLite database manager for spreadsheet and sheet metadata, thumbnails, and related data.
@@ -186,6 +202,8 @@ class RipperDb:
                         REFERENCES sheets(spreadsheet_id, sheetId) ON DELETE CASCADE
                 );"""
             )
+            # open_ended_* columns flag a range as a complete open-ended snapshot (issue #68);
+            # NULL on ordinary bounded stores. Existing DBs predating them are upgraded below.
             c.execute(
                 """CREATE TABLE IF NOT EXISTS sheet_data_ranges (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,10 +214,15 @@ class RipperDb:
                     end_row INTEGER NOT NULL,
                     end_col INTEGER NOT NULL,
                     cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    open_ended_start_row INTEGER,
+                    open_ended_start_col INTEGER,
+                    open_ended_end_col INTEGER,
                     FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE,
                     UNIQUE(spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
                 );"""
             )
+            # Upgrade existing (pre-#68) databases in place: add any missing marker columns.
+            self._ensure_sheet_data_range_columns(c)
             c.execute(
                 """CREATE TABLE IF NOT EXISTS sheet_data_cells (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -237,6 +260,26 @@ class RipperDb:
                    ON data_sources(spreadsheet_id);"""
             )
             logger.info("Database tables created successfully")
+
+    def _ensure_sheet_data_range_columns(self, c: sqlite.Cursor) -> None:
+        """Add any missing ``sheet_data_ranges`` marker columns to a pre-existing table.
+
+        Idempotent and additive: on a freshly created table the columns already exist and this
+        is a no-op; on a DB predating them (see :data:`_SHEET_DATA_RANGE_ADDED_COLUMNS`) each is
+        added via ``ALTER TABLE ... ADD COLUMN``. SQLite DDL cannot bind identifiers, so the
+        column name and type are interpolated — but ONLY from the module-level allowlist, never
+        from untrusted input.
+
+        Args:
+            c: An open cursor participating in the caller's transaction.
+        """
+        existing = {row[1] for row in c.execute("PRAGMA table_info(sheet_data_ranges)").fetchall()}
+        for column, col_type in _SHEET_DATA_RANGE_ADDED_COLUMNS.items():
+            if column in existing:
+                continue
+            # column/col_type come exclusively from the allowlist above (safe to interpolate).
+            c.execute(f"ALTER TABLE sheet_data_ranges ADD COLUMN {column} {col_type}")
+            logger.info(f"Added column '{column}' to sheet_data_ranges (schema upgrade)")
 
     def store_sheet_properties(self, spreadsheet_id: str, sheet_properties: list[SheetProperties]) -> bool:
         """
@@ -478,6 +521,9 @@ class RipperDb:
         end_row: int,
         end_col: int,
         cell_data: list[list[Any]],
+        open_ended_start_row: Optional[int] = None,
+        open_ended_start_col: Optional[int] = None,
+        open_ended_end_col: Optional[int] = None,
     ) -> Optional[int]:
         """
         Store sheet data for a specific range in the database.
@@ -490,6 +536,11 @@ class RipperDb:
             end_row: Ending row (1-based)
             end_col: Ending column (1-based)
             cell_data: 2D list of cell values
+            open_ended_start_row: If set (together with the two below), marks this range as the
+                COMPLETE result of an open-ended request whose resolved columns are
+                [open_ended_start_col..open_ended_end_col] starting at this row (issue #68).
+            open_ended_start_col: Resolved start column of the open-ended request (see above).
+            open_ended_end_col: Resolved end column of the open-ended request (see above).
 
         Returns:
             Range ID if successful, None otherwise
@@ -506,14 +557,33 @@ class RipperDb:
                 # row (and its id) rather than deleting/reinserting, so any externally-held
                 # range_id stays valid across re-caches. RETURNING id yields the stable id on
                 # both the insert-new and update-existing paths.
+                #
+                # The open_ended_* marker is always written (NULL for ordinary bounded stores),
+                # including on the ON CONFLICT update: a later bounded re-store of the SAME extent
+                # deliberately CLEARS a prior open-ended marker, since a bounded write does not
+                # prove the whole open-ended column span is still complete (correctness first).
                 c.execute(
                     """INSERT INTO sheet_data_ranges
-                       (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col, cached_at)
-                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                       (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col, cached_at,
+                        open_ended_start_row, open_ended_start_col, open_ended_end_col)
+                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
                        ON CONFLICT(spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
-                           DO UPDATE SET cached_at=CURRENT_TIMESTAMP
+                           DO UPDATE SET cached_at=CURRENT_TIMESTAMP,
+                                         open_ended_start_row=excluded.open_ended_start_row,
+                                         open_ended_start_col=excluded.open_ended_start_col,
+                                         open_ended_end_col=excluded.open_ended_end_col
                        RETURNING id""",
-                    (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col),
+                    (
+                        spreadsheet_id,
+                        sheet_name,
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                        open_ended_start_row,
+                        open_ended_start_col,
+                        open_ended_end_col,
+                    ),
                 )
                 range_id = int(c.fetchone()[0])
 
@@ -691,6 +761,77 @@ class RipperDb:
             logger.error(f"Error getting sheet data from cache: {e}")
             return None
 
+    def get_open_ended_coverage(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        open_ended_start_row: int,
+        open_ended_start_col: int,
+        open_ended_end_col: int,
+    ) -> Optional[list[list[Any]]]:
+        """Return the complete open-ended snapshot for a matching request, or ``None`` (issue #68).
+
+        Looks for a ``sheet_data_ranges`` row flagged as the COMPLETE result of an open-ended
+        request with exactly this resolved identity (start row + start/end columns), and, if
+        found, reconstructs that stored range's rectangle from its own cells. Only rows carrying
+        the marker qualify, so a plain bounded store (marker NULL) can never satisfy an
+        open-ended read — the guard that keeps a seeded ``A1:B2`` from masquerading as ``A:Z``.
+
+        The reconstructed rectangle is padded (``None`` for absent cells); the caller reproduces
+        the same trailing-empty trimming a fresh API read would receive.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet.
+            sheet_name: The name of the sheet.
+            open_ended_start_row: Resolved start row of the open-ended request.
+            open_ended_start_col: Resolved start column of the open-ended request.
+            open_ended_end_col: Resolved end column of the open-ended request.
+
+        Returns:
+            2D list of cell values for the snapshot's extent, or ``None`` if no fresh
+            complete-coverage marker exists for this request.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return None
+
+        try:
+            with self._transaction():
+                c = self._conn.cursor()
+                c.execute(
+                    """SELECT id, start_row, start_col, end_row, end_col
+                       FROM sheet_data_ranges
+                       WHERE spreadsheet_id = ? AND sheet_name = ?
+                       AND open_ended_start_row = ? AND open_ended_start_col = ? AND open_ended_end_col = ?
+                       ORDER BY cached_at DESC
+                       LIMIT 1""",
+                    (spreadsheet_id, sheet_name, open_ended_start_row, open_ended_start_col, open_ended_end_col),
+                )
+                marker = c.fetchone()
+                if marker is None:
+                    return None
+
+                range_id, start_row, start_col, end_row, end_col = marker
+                rows = end_row - start_row + 1
+                cols = end_col - start_col + 1
+                result: list[list[Any]] = [[None for _ in range(cols)] for _ in range(rows)]
+
+                c.execute(
+                    "SELECT row_num, col_num, cell_value FROM sheet_data_cells WHERE range_id = ?",
+                    (range_id,),
+                )
+                for cell_row_num, cell_col_num, cell_value in c.fetchall():
+                    result_row = cell_row_num - start_row
+                    result_col = cell_col_num - start_col
+                    if 0 <= result_row < rows and 0 <= result_col < cols:
+                        result[result_row][result_col] = cell_value
+
+                return result
+
+        except sqlite.Error as e:
+            logger.error(f"Error getting open-ended coverage: {e}")
+            return None
+
     def invalidate_sheet_data_cache(self, spreadsheet_id: str, sheet_name: Optional[str] = None) -> bool:
         """
         Invalidate cached sheet data for a spreadsheet or specific sheet.
@@ -769,9 +910,34 @@ class RipperDb:
                         cell_range.end_col,
                     ),
                 )
+                extent_dropped = c.rowcount
+
+                # Also drop any open-ended complete-coverage marker whose COLUMN span overlaps the
+                # refreshed columns, even if its (narrower) stored extent did not overlap above
+                # (issue #68). An open-ended snapshot claims completeness for every row of its
+                # column span, so a refresh touching any of those columns — e.g. a column with new
+                # data beyond the previously-cached extent — could make the snapshot stale. Rows
+                # overlap because the snapshot is unbounded downward from open_ended_start_row, so
+                # any refresh reaching row >= open_ended_start_row is relevant. Over-dropping is
+                # safe (the next open-ended read simply re-fetches); under-dropping risks stale data.
+                c.execute(
+                    """DELETE FROM sheet_data_ranges
+                       WHERE spreadsheet_id = ? AND sheet_name = ?
+                       AND open_ended_start_col IS NOT NULL AND open_ended_end_col IS NOT NULL
+                       AND open_ended_start_row IS NOT NULL
+                       AND NOT (open_ended_end_col < ? OR open_ended_start_col > ?)
+                       AND open_ended_start_row <= ?""",
+                    (
+                        spreadsheet_id,
+                        sheet_name,
+                        cell_range.start_col,
+                        cell_range.end_col,
+                        cell_range.end_row,
+                    ),
+                )
                 logger.debug(
-                    f"Invalidated {c.rowcount} cached range(s) overlapping "
-                    f"{cell_range.to_a1_notation()} for {spreadsheet_id}!{sheet_name}"
+                    f"Invalidated {extent_dropped} cached range(s) and {c.rowcount} open-ended "
+                    f"marker(s) overlapping {cell_range.to_a1_notation()} for {spreadsheet_id}!{sheet_name}"
                 )
                 return True
 
