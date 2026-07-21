@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QWidget
 from ripper.rippergui.dashboard.models.dashboard import Dashboard
 from ripper.rippergui.dashboard.models.data_source import DataSource, DataSourceType, DateRange, DateRangePreset
 from ripper.rippergui.dashboard.models.financial_widgets import (
+    CHART_COLORS,
     BudgetVsActualWidget,
     CategoryBreakdownWidget,
     SpendingTrendWidget,
@@ -434,6 +435,144 @@ class TestWidgetsConsumePreFilteredRecords:
         series = widget.chart_view.chart().series()
         assert series
         assert series[0].count() > 0
+
+
+def test_chart_colors_has_no_duplicate_entries():
+    """Item 2 (#62): the CHART_COLORS palette must not contain duplicate hex values,
+    otherwise adjacent categories can be rendered with identical colors."""
+    assert len(set(CHART_COLORS)) == len(CHART_COLORS)
+
+
+def _source_bound_config(widget_type: WidgetType) -> WidgetConfig:
+    """A widget config bound to a data source id the tests feed via the runtime cache."""
+    return WidgetConfig(
+        id="w",
+        type=widget_type,
+        title="t",
+        position=(0, 0),
+        size=(4, 3),
+        data_source_id="test_source",
+    )
+
+
+_ONE_EXPENSE = {"test_source": [{"date": "2026-04-18", "amount": "-100", "category": "Food", "description": "Rent"}]}
+
+
+@pytest.mark.qt
+class TestWidgetErrorStates:
+    """Item 1 (#62): a processing/render failure must surface a visible error state,
+    not just a log line, and must not crash."""
+
+    def test_spending_trend_shows_error_state_when_render_raises(self, sample_dashboard, qtbot):
+        widget = SpendingTrendWidget(_source_bound_config(WidgetType.SPENDING_TREND), sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        def _boom(_data):
+            raise RuntimeError("render failed")
+
+        widget._update_chart = _boom  # type: ignore[method-assign]
+
+        # Must not raise even though rendering blows up.
+        widget.update_data(_ONE_EXPENSE)
+
+        assert widget.status_label is not None
+        assert not widget.status_label.isHidden(), "error label should be visible"
+        assert "Error" in widget.status_label.text()
+        assert widget.chart_view is not None and widget.chart_view.isHidden()
+
+    def test_category_breakdown_shows_error_state_when_render_raises(self, sample_dashboard, qtbot):
+        widget = CategoryBreakdownWidget(_source_bound_config(WidgetType.CATEGORY_BREAKDOWN), sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        def _boom(_data):
+            raise RuntimeError("render failed")
+
+        widget._update_chart = _boom  # type: ignore[method-assign]
+
+        widget.update_data(_ONE_EXPENSE)
+
+        assert widget.status_label is not None
+        assert not widget.status_label.isHidden(), "error label should be visible"
+        assert "Error" in widget.status_label.text()
+        assert widget.chart_view is not None and widget.chart_view.isHidden()
+
+    def test_top_expenses_shows_error_state_when_processing_raises(self, sample_dashboard, qtbot, monkeypatch):
+        widget = TopExpensesWidget(_source_bound_config(WidgetType.TOP_EXPENSES), sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        class _BoomProcessor:
+            def __init__(self, _data):
+                pass
+
+            def get_top_expenses(self, _n):
+                raise RuntimeError("processing failed")
+
+        monkeypatch.setattr(
+            "ripper.rippergui.dashboard.models.financial_widgets.TillerDataProcessor",
+            _BoomProcessor,
+        )
+
+        widget.update_data(_ONE_EXPENSE)
+
+        assert widget.table is not None
+        texts = [
+            widget.table.item(row, 0).text()
+            for row in range(widget.table.rowCount())
+            if widget.table.item(row, 0) is not None
+        ]
+        # A distinct error message (not the plain "No expense data available" empty state).
+        assert any("Error" in text for text in texts), texts
+
+
+@pytest.mark.qt
+class TestWidgetNoDataStates:
+    """Item 3 (#62): empty data must render an explicit no-data placeholder rather than
+    leaving whatever was previously shown."""
+
+    def test_spending_trend_shows_no_data_placeholder(self, sample_dashboard, qtbot):
+        widget = SpendingTrendWidget(_source_bound_config(WidgetType.SPENDING_TREND), sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        widget.update_data({"test_source": []})
+
+        assert widget.status_label is not None
+        assert not widget.status_label.isHidden(), "no-data placeholder should be visible"
+        assert "No" in widget.status_label.text()
+        assert widget.chart_view is not None and widget.chart_view.isHidden()
+
+    def test_category_breakdown_shows_no_data_placeholder(self, sample_dashboard, qtbot):
+        widget = CategoryBreakdownWidget(_source_bound_config(WidgetType.CATEGORY_BREAKDOWN), sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        widget.update_data({"test_source": []})
+
+        assert widget.status_label is not None
+        assert not widget.status_label.isHidden(), "no-data placeholder should be visible"
+        assert "No" in widget.status_label.text()
+        assert widget.chart_view is not None and widget.chart_view.isHidden()
+
+    def test_spending_trend_clears_placeholder_when_data_present(self, sample_dashboard, qtbot):
+        widget = SpendingTrendWidget(_source_bound_config(WidgetType.SPENDING_TREND), sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        widget.update_data({"test_source": []})  # placeholder shown
+        widget.update_data(_ONE_EXPENSE)  # real data should restore the chart
+
+        assert widget.status_label is not None
+        assert widget.status_label.isHidden(), "placeholder should be hidden once data is present"
+        assert widget.chart_view is not None and not widget.chart_view.isHidden()
 
 
 class TestTillerDataProcessor:

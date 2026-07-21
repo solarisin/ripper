@@ -28,7 +28,6 @@ The dashboard system provides an embedded financial dashboard experience inside 
 
 ## Remaining Design Work
 
-- Decide whether `DataSource.fetch_data()` should remain as a legacy convenience or be removed so all dashboard reads flow through `DashboardDataService`.
 - Add a clearer dashboard-level status surface instead of modal warnings for refresh failures.
 - Add a formal runtime data cache type if more source types are added.
 - Decide how budget data should be modeled before implementing budget-vs-actual for real.
