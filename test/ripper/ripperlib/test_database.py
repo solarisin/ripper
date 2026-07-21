@@ -3,10 +3,12 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
+import unittest.mock
 from typing import Any, Dict
 
-from ripper.ripperlib.database import RipperDb
+from ripper.ripperlib.database import RipperDb, _LazyDb
 from ripper.ripperlib.defs import SheetProperties, SpreadsheetProperties
 
 
@@ -762,3 +764,55 @@ class TestDataSourceCRUD(unittest.TestCase):
         sources = self.db.list_data_sources()
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0]["spreadsheet_name"], "Test Spreadsheet")
+
+
+class TestLazyDbThreadSafety(unittest.TestCase):
+    """Guards _LazyDb._resolve() against the first-access construction race (#105)."""
+
+    def test_concurrent_first_access_constructs_exactly_one_instance(self) -> None:
+        """Many threads hitting a fresh proxy at once must share ONE constructed RipperDb.
+
+        Without the lock, each thread that passes the `is None` check before any other publishes
+        `_instance` constructs its own RipperDb; the losers are silently discarded. A short sleep
+        inside construction widens that window so the race is reliably exercised.
+        """
+        lazy = _LazyDb()
+        tmp = tempfile.mkdtemp()
+        db_path = os.path.join(tmp, "ripper.db")
+        constructed: list[RipperDb] = []
+        orig_init = RipperDb.__init__
+
+        # Wrap __init__ (not the RipperDb name — that name is also a type hint beartype resolves,
+        # so replacing it would break the checker). Sleeping before the real init widens the
+        # check-then-construct window so the race is reliably exercised.
+        def slow_init(self: RipperDb, *_args: Any, **_kwargs: Any) -> None:
+            time.sleep(0.02)
+            orig_init(self, db_path)
+            constructed.append(self)  # list.append is atomic under the GIL
+
+        n = 8
+        barrier = threading.Barrier(n)
+        results: list[RipperDb] = []
+
+        def worker() -> None:
+            barrier.wait()  # release all threads into _resolve() simultaneously
+            results.append(lazy._resolve())
+
+        with unittest.mock.patch.object(RipperDb, "__init__", slow_init):
+            threads = [threading.Thread(target=worker) for _ in range(n)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        try:
+            # Exactly one construction, and every thread got the same instance.
+            self.assertEqual(len(constructed), 1)
+            self.assertEqual(len({id(r) for r in results}), 1)
+            self.assertEqual(len(results), n)
+        finally:
+            for inst in constructed:
+                try:
+                    inst.close()
+                except Exception:
+                    pass
