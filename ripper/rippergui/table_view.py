@@ -474,14 +474,8 @@ class TransactionSortFilterProxyModel(QSortFilterProxyModel):
             return ldate < rdate
         # Default: string comparison (case-insensitive)
         is_less: bool = str(left_raw).lower() < str(right_raw).lower()
-        log.debug(
-            "String comparison for column %d (%s): '%s' < '%s' = %s",
-            col,
-            source_model.headerData(col, Qt.Orientation.Horizontal),
-            left_raw,
-            right_raw,
-            is_less,
-        )
+        header = source_model.headerData(col, Qt.Orientation.Horizontal)
+        log.debug(f"String comparison for column {col} ({header}): '{left_raw}' < '{right_raw}' = {is_less}")
         return is_less
 
 

@@ -377,6 +377,32 @@ class TestTransactionSortFilterProxyModel(unittest.TestCase):
         self.assertTrue(self.proxy_model.lessThan(left_index, right_index))  # 2025-05-01 < 2025-05-02
         self.assertFalse(self.proxy_model.lessThan(right_index, left_index))  # 2025-05-02 > 2025-05-01
 
+    def test_less_than_string_debug_log_interpolates_values(self):
+        """The string-comparison debug log must substitute values, not print literal placeholders (#109).
+
+        loguru formats with str.format, not %-style, so the old `log.debug("... %s ...", val)` printed
+        the literal template and dropped the args. Capture the emitted record and assert the real
+        column/values appear and no %-placeholder survives.
+        """
+        from loguru import logger
+
+        records: list[str] = []
+        sink_id = logger.add(records.append, level="DEBUG", format="{message}")
+        try:
+            # Column 2 is Description ("Coffee Shop" vs "Grocery Store") — the string path.
+            left_index = self.source_model.index(0, 2)
+            right_index = self.source_model.index(1, 2)
+            self.proxy_model.lessThan(left_index, right_index)
+        finally:
+            logger.remove(sink_id)
+
+        line = next(m for m in records if m.startswith("String comparison"))
+        self.assertIn("Coffee Shop", line)
+        self.assertIn("Grocery Store", line)
+        self.assertIn("Description", line)  # the resolved header, not a %s
+        self.assertNotIn("%s", line)
+        self.assertNotIn("%d", line)
+
 
 @pytest.mark.qt
 class TestTransactionTableViewWidget:
