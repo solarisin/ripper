@@ -124,6 +124,35 @@ class TestSheetDataCache(unittest.TestCase):
         self.assertEqual(result_data, expected_data)
         self._assert_single_source(range_sources, LoadSource.DATABASE)
 
+    def test_read_does_not_evict_sparse_cached_range(self) -> None:
+        """Reads must not destructively delete sparse ranges (issue #52 item 4).
+
+        Seed a range with a large (5x5 = 25-cell) declared extent but only a few stored
+        cells — exactly what the old ``detect_incomplete_ranges`` density heuristic
+        (<50% and >5 missing) would have flagged and deleted during a normal read. A
+        normal cache read must leave the range (and its cells) intact.
+        """
+        # 3 cells stored for a 25-cell extent -> old heuristic would evict this on read.
+        range_id = self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 5, 5, [["A1", "B1", "C1"]]
+        )
+        self.assertIsNotNone(range_id)
+
+        # A bounded read fully covered by the stored cells; patch the API so an accidental
+        # eviction+refetch would be observable (and to guarantee no live call).
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = [["A1", "B1", "C1"]]
+            result_data, range_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A1:C1"
+            )
+
+        self.assertEqual(result_data, [["A1", "B1", "C1"]])
+        self._assert_single_source(range_sources, LoadSource.DATABASE)
+
+        # The original sparse range must still be present after the read.
+        remaining = {r["range_id"] for r in self.db.get_cached_ranges(self.test_spreadsheet_id, self.test_sheet_name)}
+        self.assertIn(range_id, remaining)
+
     def test_get_sheet_data_cache_miss(self) -> None:
         """Test getting data when not cached (API call required)."""
         api_data = [["E5", "F5"], ["E6", "F6"]]

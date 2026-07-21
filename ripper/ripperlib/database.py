@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from beartype.typing import Any, Generator, Optional, Tuple
+from beartype.typing import Any, Generator, Optional
 from loguru import logger
 
 import ripper.ripperlib.defs as defs
@@ -108,44 +108,29 @@ class RipperDb:
             with self._conn:
                 yield
 
-    def execute_query(self, query: str, params: Tuple[Any, ...] = ()) -> list[Any] | None:
-        """
-        Execute a SQL query with parameters and return all rows.
-
-        Args:
-            query: SQL query string
-            params: Query parameters
-
-        Returns:
-            List of result rows, or None if execution fails.
-        """
-        try:
-            with self._transaction():
-                cursor = self._conn.cursor()  # type: ignore[union-attr]
-                cursor.execute(query, params)
-                return cursor.fetchall()
-        except sqlite.Error as e:
-            logger.error(f"Error executing query: {e}")
-            return None
-
     def clean(self) -> None:
         """
-        Clean the database by deleting the file.
-        """
-        # Close the connection if it exists
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        Clean the database by closing the connection and deleting the file.
 
-        # Delete the file if it exists
-        if Path(self._db_file_path).exists():
-            logger.info(f"Deleting database file {self._db_file_path}")
-            try:
-                Path(self._db_file_path).unlink()
-            except PermissionError:
-                logger.warning(f"Could not delete database file {self._db_file_path} - it may be in use")
-            except Exception as e:
-                logger.error(f"Error deleting database file {self._db_file_path}: {e}")
+        Acquires ``self._lock`` (mirroring ``open``/``close``) so a concurrent thread mid
+        ``_transaction`` is not hit when the connection is closed and the file unlinked out
+        from under it.
+        """
+        with self._lock:
+            # Close the connection if it exists
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+
+            # Delete the file if it exists
+            if Path(self._db_file_path).exists():
+                logger.info(f"Deleting database file {self._db_file_path}")
+                try:
+                    Path(self._db_file_path).unlink()
+                except PermissionError:
+                    logger.warning(f"Could not delete database file {self._db_file_path} - it may be in use")
+                except Exception as e:
+                    logger.error(f"Error deleting database file {self._db_file_path}: {e}")
 
     def create_tables(self) -> None:
         """
@@ -796,14 +781,23 @@ class RipperDb:
 
     def validate_cached_range_data(self, spreadsheet_id: str, sheet_name: str) -> bool:
         """
-        Validate that all cached ranges have corresponding cell data.
+        Check cached ranges for the corruption case of a non-empty extent with zero stored cells.
+
+        Contract: a range is INVALID only when it declares a non-empty extent
+        (``rows * cols > 0``) yet has **no** stored cells at all — a signal of an orphaned or
+        corrupt range record, not real data. Under-filled ranges (fewer stored cells than the
+        extent's area) are **valid**: empty cells are intentionally not persisted (see
+        ``store_sheet_data_range``/the cache layer), so a legitimately sparse range stores fewer
+        cells than its bounding rectangle contains. This method therefore never fails on
+        under-fill — doing so would reject valid sparse data.
 
         Args:
             spreadsheet_id: The ID of the spreadsheet
             sheet_name: The name of the sheet
 
         Returns:
-            True if all ranges have cell data, False otherwise
+            True if every range either has an empty extent or at least one stored cell; False if
+            any range declares a non-empty extent but has zero stored cells.
         """
         if self._conn is None:
             logger.error("Database not open")
@@ -840,17 +834,21 @@ class RipperDb:
                     expected_cells = (end_row - start_row + 1) * (end_col - start_col + 1)
 
                     if cell_count == 0 and expected_cells > 0:
+                        # Non-empty extent with zero stored cells: the only case treated as
+                        # invalid (orphaned/corrupt range record).
                         logger.warning(
                             f"Range {range_id} has no cell data but should have {expected_cells} cells "
                             f"(rows {start_row}-{end_row}, cols {start_col}-{end_col})"
                         )
                         all_valid = False
                     elif cell_count < expected_cells:
-                        logger.warning(
-                            f"Range {range_id} has only {cell_count}/{expected_cells} cells "
-                            f"(rows {start_row}-{end_row}, cols {start_col}-{end_col})"
+                        # Under-fill is expected and valid: empty cells are not persisted, so a
+                        # sparse range legitimately stores fewer cells than its extent's area.
+                        logger.debug(
+                            f"Range {range_id} sparsely filled with {cell_count}/{expected_cells} cells "
+                            f"(rows {start_row}-{end_row}, cols {start_col}-{end_col}); "
+                            f"expected for sparse data (empty cells are not stored)"
                         )
-                        # This might be OK if the range had empty cells
 
                 return all_valid
 

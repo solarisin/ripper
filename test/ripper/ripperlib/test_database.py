@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 from typing import Any, Dict
 
@@ -46,14 +47,13 @@ class TestDatabaseIntegration(unittest.TestCase):
         self.assertIn("sqlite_sequence", tables)  # Auto-created by SQLite for AUTOINCREMENT
         conn.close()
 
-    def test_execute_query(self) -> None:
-        """Test the execute_query method for successful and failed queries."""
-        # Test successful query
-        rows = self.db.execute_query("SELECT name FROM sqlite_master WHERE type='table'")
-        self.assertIsNotNone(rows)
-        self.assertGreater(len(rows or []), 0)
+    def test_stored_spreadsheet_persists(self) -> None:
+        """Stored spreadsheet properties are retrievable (was: test_execute_query).
 
-        # Test query with parameters
+        The former ``execute_query`` raw-SQL passthrough (issue #52 item 2) was removed as
+        dead, production-unused surface. This retargets the coverage onto the typed store
+        method, verifying persistence via a test-local raw connection.
+        """
         test_id = "test_id"
         self.db.store_spreadsheet_properties(
             test_id,
@@ -70,14 +70,50 @@ class TestDatabaseIntegration(unittest.TestCase):
                 }
             ),
         )
-        rows = self.db.execute_query("SELECT spreadsheet_id FROM spreadsheets WHERE spreadsheet_id = ?", (test_id,))
-        self.assertIsNotNone(rows)
-        self.assertGreater(len(rows or []), 0)
-        self.assertEqual((rows or [[]])[0][0], test_id)
 
-        # Test failed query (syntax error)
-        rows = self.db.execute_query("SELECT * FROM non_existent_table")
-        self.assertIsNone(rows)
+        conn = sqlite3.connect(self.db_path)
+        try:
+            c = conn.cursor()
+            c.execute("SELECT spreadsheet_id FROM spreadsheets WHERE spreadsheet_id = ?", (test_id,))
+            row = c.fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], test_id)
+
+    def test_execute_query_removed(self) -> None:
+        """The raw-SQL passthrough (issue #52 item 2) is gone from the public surface."""
+        self.assertFalse(hasattr(self.db, "execute_query"))
+
+    def test_clean_acquires_lock(self) -> None:
+        """clean() must hold self._lock (issue #52 item 1), matching open()/close().
+
+        Without the lock, a concurrent thread mid-_transaction could be hit when clean()
+        closes the connection and unlinks the file. We wrap the instance lock so the enter
+        is observable, then confirm clean() actually acquires it.
+        """
+
+        class _TrackingLock:
+            def __init__(self) -> None:
+                self._real = threading.RLock()
+                self.entered = False
+
+            def __enter__(self) -> Any:
+                self.entered = True
+                return self._real.__enter__()
+
+            def __exit__(self, *exc: Any) -> Any:
+                return self._real.__exit__(*exc)
+
+        tracking = _TrackingLock()
+        self.db._lock = tracking  # type: ignore[assignment]
+
+        self.db.clean()
+
+        self.assertTrue(tracking.entered, "clean() did not acquire self._lock")
+        # clean() also tears down the connection and removes the file.
+        self.assertFalse(os.path.exists(self.db_path))
 
     def test_get_sheet_metadata(self) -> None:
         """Test retrieving sheet metadata from the database."""

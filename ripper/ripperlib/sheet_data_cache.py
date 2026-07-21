@@ -283,15 +283,15 @@ class SheetDataCache:
         Returns:
             List of CachedRange objects
         """
-        # First, detect and clean up incomplete ranges
-        incomplete_ranges = self._db.detect_incomplete_ranges(spreadsheet_id, sheet_name)
-
-        if incomplete_ranges:
-            logger.info(f"Found {len(incomplete_ranges)} incomplete ranges, cleaning up...")
-            for range_id in incomplete_ranges:
-                self._db.delete_range_data(range_id)
-
-        # Clean up orphaned ranges
+        # NOTE: the read path is intentionally non-destructive toward populated ranges. The
+        # old density heuristic (RipperDb.detect_incomplete_ranges -> delete_range_data) used
+        # to run here and could evict legitimately sparse ranges during normal reads (issue
+        # #52 item 4). Correctness does not depend on that eviction: get_sheet_data_from_cache
+        # only serves a request when every requested cell is covered, otherwise the missing
+        # sub-ranges are fetched from the API, and staleness on refresh is handled by
+        # range-scoped invalidation (issue #80). detect_incomplete_ranges remains available
+        # for an explicit maintenance pass. We still drop zero-cell (orphaned) ranges below,
+        # which hold no data and can never satisfy a read.
         orphaned_count = self._db.clean_orphaned_ranges(spreadsheet_id, sheet_name)
         if orphaned_count > 0:
             logger.debug(f"Cleaned up {orphaned_count} orphaned ranges")
