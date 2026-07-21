@@ -93,9 +93,11 @@ uv run mypy
 
 Run `uv run ruff format .` and `uv run ruff check --fix .` when formatting/import order changes are needed, but avoid unrelated formatting churn.
 
-## When Updating Existing Guidance
+## Source of Truth
 
-The older `.junie/guidelines.md` and `.windsurf/rules/` files are useful background, but verify their file paths and commands against the live repository before relying on them. Known corrections reflected here:
+`CLAUDE.md` is the canonical reference for commands, architecture, and coding style; this file and
+`.github/copilot-instructions.md` should stay consistent with it (if they ever disagree, CLAUDE.md
+wins). Key facts, restated here for convenience:
 
 - Tests are under `test/ripper/...`, not `test/ripperlib/...`.
 - `ripper/main.py` is the entry point; `ripperlib` and `rippergui` are subpackages under `ripper/`.

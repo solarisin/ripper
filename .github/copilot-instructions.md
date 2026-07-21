@@ -1,3 +1,7 @@
+> `CLAUDE.md` at the repo root is the canonical reference for commands, architecture, and coding
+> style. These Copilot rules are a convenience checklist; where anything here is ambiguous or
+> conflicts, defer to CLAUDE.md.
+
 1. use the command "uv run pytest" to run the tests
 2. use the command "uv run mypy" to check the type hints
 3. use the command "uv run ruff check ." to check linting and import order
@@ -6,7 +10,7 @@
 6. tests that are written should never make network requests, tested code should be mocked
 7. all ruff, mypy and pytest errors should be fixed automatically when introduced in new code
 8. all function parameters and return values should have type hints
-9. prefer typing constructs from the beartype.typing module
+9. in files that already import from `beartype.typing`, use it for imported typing constructs; use built-in generics (`list[...]`, `tuple[...]`) elsewhere — do not churn a file's existing convention (see CLAUDE.md, the canonical style reference)
 10. when changes are made to the code, ensure that the tests are updated accordingly
 11. when adding tests, only start fixing ruff or mypy errors in tests after all tests are passing, unless they are causing the tests to fail
 12. after all changes are complete run "uv run ruff check . && uv run ruff format --check . && uv run mypy" to validate structure. Fix any errors that arise.
