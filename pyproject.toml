@@ -46,12 +46,14 @@ dev = [
 # Deps are installed into the venv; `ripper` is imported via pytest's pythonpath = ["."].
 package = false
 # Security floors for transitive dependencies (resolves Dependabot alerts). Each is pulled
-# in indirectly (cryptography/urllib3/idna via google-auth/requests); these constraints keep
-# the resolver from selecting a vulnerable version even if a parent would otherwise allow it.
+# in indirectly (cryptography/urllib3/idna via google-auth/requests; pyasn1 via
+# google-auth -> pyasn1-modules); these constraints keep the resolver from selecting a
+# vulnerable version even if a parent would otherwise allow it.
 constraint-dependencies = [
     "cryptography>=48.0.1",
     "urllib3>=2.7.0",
     "idna>=3.15",
+    "pyasn1>=0.6.4",
 ]
 
 [tool.ruff]
