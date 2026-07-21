@@ -638,6 +638,53 @@ class TestDatabaseCaching(unittest.TestCase):
 
         self.assertTrue(self.db.validate_cached_range_data(self.test_spreadsheet_id, self.test_sheet_name))
 
+    def _insert_bare_range(self, start_row: int, start_col: int, end_row: int, end_col: int) -> int:
+        """Insert a sheet_data_ranges row directly with NO cells and return its id."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            c = conn.cursor()
+            c.execute(
+                """INSERT INTO sheet_data_ranges
+                   (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (self.test_spreadsheet_id, self.test_sheet_name, start_row, start_col, end_row, end_col),
+            )
+            conn.commit()
+            range_id = c.lastrowid
+        finally:
+            conn.close()
+        assert range_id is not None
+        return range_id
+
+    def _insert_cell(self, range_id: int, row_num: int, col_num: int, value: str) -> None:
+        """Insert a single cell for an existing range via a test-local raw connection."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO sheet_data_cells (range_id, row_num, col_num, cell_value) VALUES (?, ?, ?, ?)",
+                (range_id, row_num, col_num, value),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_validate_cached_range_data_invalid_when_zero_cells_for_nonempty_extent(self) -> None:
+        """Contract (issue #52 item 3): a non-empty extent with ZERO stored cells is INVALID."""
+        # Range declaring a 2x2 extent but with no cells at all -> corruption/orphan signal.
+        self._insert_bare_range(1, 1, 2, 2)
+
+        self.assertFalse(self.db.validate_cached_range_data(self.test_spreadsheet_id, self.test_sheet_name))
+
+    def test_validate_cached_range_data_valid_when_sparsely_underfilled(self) -> None:
+        """Contract (issue #52 item 3): a sparse/under-filled range is VALID (empty cells aren't stored)."""
+        # Declare a 5x5 (25-cell) extent but persist only a couple of cells, as sparse data would.
+        range_id = self._insert_bare_range(1, 1, 5, 5)
+        self._insert_cell(range_id, 1, 1, "A1")
+        self._insert_cell(range_id, 3, 4, "D3")
+
+        self.assertTrue(self.db.validate_cached_range_data(self.test_spreadsheet_id, self.test_sheet_name))
+
     def test_table_creation_includes_new_tables(self) -> None:
         """Test that create_tables creates the new caching tables."""
         # Check that new tables exist
