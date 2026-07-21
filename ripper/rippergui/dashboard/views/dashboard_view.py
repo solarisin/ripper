@@ -298,7 +298,12 @@ class DashboardView(QWidget):
         if not self.current_dashboard:
             return
 
+        # Disable Edit/Delete alongside Refresh: both reassign/re-render the current dashboard, and
+        # letting the user do that while the worker thread is refreshing the same object is a data
+        # race (#96). They are restored in _on_refresh_finished and _on_refresh_error.
         self.refresh_dashboard_btn.setEnabled(False)
+        self.edit_dashboard_btn.setEnabled(False)
+        self.delete_dashboard_btn.setEnabled(False)
         self.status_label.setStyleSheet("")
         self.status_label.setText("Refreshing…")
 
@@ -323,6 +328,8 @@ class DashboardView(QWidget):
             return
         self.refresh_result = result
         self.refresh_dashboard_btn.setEnabled(True)
+        self.edit_dashboard_btn.setEnabled(True)
+        self.delete_dashboard_btn.setEnabled(True)
         self._show_refresh_summary()
         self._set_current_dashboard(self.current_dashboard)
 
@@ -332,6 +339,8 @@ class DashboardView(QWidget):
         if dashboard is not self.current_dashboard:
             return
         self.refresh_dashboard_btn.setEnabled(True)
+        self.edit_dashboard_btn.setEnabled(True)
+        self.delete_dashboard_btn.setEnabled(True)
         self.status_label.setStyleSheet("color: #b00020;")
         self.status_label.setText(f"Refresh failed: {message}")
 

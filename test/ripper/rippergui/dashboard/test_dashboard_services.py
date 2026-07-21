@@ -52,6 +52,33 @@ def test_validate_transaction_sheet_data_rejects_missing_columns():
     assert missing == {"account", "amount", "category"}
 
 
+def test_refresh_dashboard_snapshots_data_sources_against_concurrent_mutation():
+    """refresh_dashboard iterates a snapshot so a concurrent add can't corrupt iteration (#96).
+
+    The background refresh worker iterates the dashboard's data sources while the GUI-thread editor
+    can mutate the same dict. Iterating a snapshot means a mutation mid-refresh neither raises
+    ``RuntimeError: dictionary changed size during iteration`` nor changes what was iterated.
+    """
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source("source-1"))
+    dashboard.add_data_source(make_transaction_source("source-2"))
+
+    seen: list[str] = []
+
+    def records_provider(spreadsheet_id, sheet_name, range_a1):
+        seen.append(range_a1)
+        # Simulate the editor mutating the live dict while the refresh is iterating it.
+        dashboard.add_data_source(make_transaction_source(f"injected-{len(seen)}"))
+        return []
+
+    service = DashboardDataService(records_provider=records_provider)
+
+    result = service.refresh_dashboard(dashboard)  # must not raise despite the concurrent adds
+
+    # Exactly the two sources present when the refresh began were iterated; the injected ones were not.
+    assert set(result.statuses) == {"source-1", "source-2"}
+
+
 def test_refresh_dashboard_reports_missing_auth():
     dashboard = Dashboard.create_new("Finance")
     dashboard.add_data_source(make_transaction_source())

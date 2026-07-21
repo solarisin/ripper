@@ -1,5 +1,6 @@
 """Tests for dashboard view rendering from widget configs."""
 
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -115,6 +116,65 @@ def test_refresh_reports_error_without_crashing(tmp_path, qtbot):
     qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
 
     assert "boom" in view.status_label.text()
+
+
+def test_edit_and_delete_disabled_during_refresh_and_reenabled(tmp_path, qtbot):
+    """Edit/Delete must be disabled while a refresh is in flight, then re-enabled (#96).
+
+    Leaving Edit/Delete enabled lets the user reassign/re-render the current dashboard while the
+    worker thread is refreshing it. We block the worker mid-refresh to observe the disabled state,
+    then release it and assert everything is re-enabled once the result lands.
+    """
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    release = threading.Event()
+
+    def blocking_refresh(_dashboard):
+        release.wait(timeout=5)
+        return DashboardRefreshResult()
+
+    service = MagicMock(spec=DashboardDataService)
+    service.refresh_dashboard.side_effect = blocking_refresh
+
+    view = DashboardView(tmp_path, data_service=service)
+    qtbot.addWidget(view)
+    view.current_dashboard = dashboard
+
+    view.refresh()
+    # Disabling happens synchronously on the GUI thread before the worker starts.
+    assert not view.refresh_dashboard_btn.isEnabled()
+    assert not view.edit_dashboard_btn.isEnabled()
+    assert not view.delete_dashboard_btn.isEnabled()
+
+    release.set()
+    qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
+    assert view.edit_dashboard_btn.isEnabled()
+    assert view.delete_dashboard_btn.isEnabled()
+
+
+def test_edit_and_delete_reenabled_after_refresh_error(tmp_path, qtbot):
+    """A failing refresh must still restore Edit/Delete so they don't get stuck disabled (#96)."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    service = MagicMock(spec=DashboardDataService)
+    service.refresh_dashboard.side_effect = RuntimeError("boom")
+
+    view = DashboardView(tmp_path, data_service=service)
+    qtbot.addWidget(view)
+    view.current_dashboard = dashboard
+
+    view.refresh()
+    # Disabled synchronously before the worker starts; the error slot must restore them.
+    assert not view.edit_dashboard_btn.isEnabled()
+    assert not view.delete_dashboard_btn.isEnabled()
+
+    qtbot.waitUntil(lambda: view.refresh_dashboard_btn.isEnabled(), timeout=3000)
+
+    assert "boom" in view.status_label.text()
+    assert view.edit_dashboard_btn.isEnabled()
+    assert view.delete_dashboard_btn.isEnabled()
 
 
 def _view_with_one_widget(tmp_path, qtbot):
