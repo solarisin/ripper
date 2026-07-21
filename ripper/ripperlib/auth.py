@@ -39,6 +39,15 @@ SCOPES = [
 ]
 
 
+class MissingScopesError(ValueError):
+    """Raised when a stored token is missing one or more required OAuth scopes.
+
+    Subclasses ValueError so existing ``except ValueError`` handlers keep catching it. It replaces
+    the previous misuse of the builtin ``SystemError`` (which is reserved for interpreter-internal
+    failures) for this domain condition.
+    """
+
+
 class AuthState(enum.Enum):
     """
     Enumeration of possible authentication states.
@@ -233,8 +242,8 @@ class TokenStore:
         token, _ = self.load()
         token_json = json.loads(token)
 
-        if "scopes" not in token_json or any(s for s in scopes if s not in token_json["scopes"]):
-            raise SystemError("Required scopes are missing from token.")
+        if "scopes" not in token_json or any(s not in token_json["scopes"] for s in scopes):
+            raise MissingScopesError("Required scopes are missing from token.")
 
         return cast(Credentials, Credentials.from_authorized_user_info(token_json, scopes))
 
@@ -249,7 +258,10 @@ class TokenStore:
             return None
         try:
             return cast(Dict[str, Any], json.loads(self._current_userinfo))
-        except Exception:
+        except json.JSONDecodeError as e:
+            # The only expected failure here is a corrupt/non-JSON userinfo entry in the keyring;
+            # treat it as "no user info" rather than masking arbitrary bugs behind a bare except.
+            logger.warning(f"Stored user info is not valid JSON, ignoring it: {e}")
             return None
 
 
@@ -303,7 +315,13 @@ class AuthManager(QObject):
         return client_id is not None and client_secret is not None
 
     def load_oauth_client_credentials(self) -> Tuple[Optional[str], Optional[str]]:
-        """Load client ID and secret from keyring"""
+        """Load client ID and secret from keyring.
+
+        This is a pure read: it must not transition auth state or emit ``authStateChanged`` (#50).
+        The NOT_LOGGED_IN transition that used to live here happens at the imperative call sites
+        instead - store_oauth_client_credentials() when a client is configured, and
+        check_stored_credentials() at startup.
+        """
         oauth_client_credentials = keyring.get_password(OAUTH_CLIENT_KEY, OAUTH_CLIENT_USER)
         client_id = None
         client_secret = None
@@ -311,7 +329,6 @@ class AuthManager(QObject):
             oauth_client_credentials_dict = json.loads(oauth_client_credentials)
             client_id = oauth_client_credentials_dict.get("client_id", "")
             client_secret = oauth_client_credentials_dict.get("client_secret", "")
-            self.update_state(AuthState.NOT_LOGGED_IN, override=False)
         return client_id, client_secret
 
     def store_oauth_client_credentials(self, client_id: str, client_secret: str) -> None:
@@ -344,10 +361,14 @@ class AuthManager(QObject):
         """Update auth state and emit signal"""
         current_state = self._current_auth_info.auth_state()
         logger.debug(f"Called update_state - current: {current_state} new: {new_state} override: {override}")
+        if new_state == AuthState.LOGGED_IN and user_info is None:
+            # Reachable on offline startup: a valid stored token but no obtainable user info (cached
+            # entry absent and the live lookup failed). Rather than raising - which crashed startup -
+            # degrade to NOT_LOGGED_IN so the app comes up logged out (#50).
+            logger.warning("LOGGED_IN requested without user info; degrading to NOT_LOGGED_IN")
+            new_state = AuthState.NOT_LOGGED_IN
         if new_state == current_state:
             return
-        if new_state == AuthState.LOGGED_IN and user_info is None:
-            raise ValueError("User info must be provided for logged-in state.")
         if new_state > current_state or override:
             logger.debug(f"Updating auth state to {new_state}")
             self._current_auth_info = AuthInfo(new_state, user_info)
@@ -448,11 +469,12 @@ class AuthManager(QObject):
                 logger.debug("Existing token is expired, attempting refresh")
                 stored_cred = self.refresh_token(stored_cred)
             return stored_cred
+        except MissingScopesError as e:
+            # More specific than ValueError (its base), so it must be caught first.
+            logger.error(f"Existing token is invalid, please re-authorize: {e}")
+            return None
         except ValueError as e:
             logger.error(e)
-            return None
-        except SystemError as e:
-            logger.error(f"Existing token is invalid, please re-authorize: {e}")
             return None
 
     def acquire_new_credentials(self) -> Optional[Credentials]:
@@ -509,8 +531,17 @@ class AuthManager(QObject):
                 if user_info:
                     self._token_store.store(stored_cred.to_json(), json.dumps(user_info))
 
-            self._credentials = stored_cred
-            self.update_state(AuthState.LOGGED_IN, user_info)
+            if user_info:
+                self._credentials = stored_cred
+                self.update_state(AuthState.LOGGED_IN, user_info)
+            else:
+                # Valid stored token but no obtainable user info (e.g. offline startup). Caching
+                # stored_cred here would let the next authorize() short-circuit and return a usable
+                # credential under a logged-out state, so leave _credentials unset - authorize()
+                # then retries user-info recovery. The stored keyring token is preserved: this is a
+                # transient profile-fetch failure, not a token rejection (#103/#50).
+                self._credentials = None
+                self.update_state(AuthState.NOT_LOGGED_IN)
         else:
             self.update_state(AuthState.NOT_LOGGED_IN)
 
@@ -546,6 +577,19 @@ class AuthManager(QObject):
             return None
         if user_info is None:
             user_info = self.retrieve_user_info(credentials)
+        if user_info is None:
+            # We hold a usable token but couldn't fetch the user profile (transient failure).
+            # Invariant: LOGGED_IN <=> user_info present <=> _credentials usable. Presenting a
+            # credential here would let create_*_service() build authenticated clients while
+            # auth_info says NOT_LOGGED_IN, and caching it would make the next authorize()
+            # short-circuit past user-info recovery. So retain nothing usable and report failure;
+            # the caller retries next time. The stored keyring token is deliberately left intact
+            # (a profile-fetch failure is not a token rejection - #103), so a later attempt can
+            # succeed without a fresh OAuth flow. (#50)
+            logger.warning("Authorized a token but user info is unavailable; staying logged out and not caching it")
+            self._credentials = None
+            self.update_state(AuthState.NOT_LOGGED_IN)
+            return None
         logger.info(f"Authorization successful. User {user_info} logged in.")
         self._credentials = credentials
         self.update_state(AuthState.LOGGED_IN, user_info)
