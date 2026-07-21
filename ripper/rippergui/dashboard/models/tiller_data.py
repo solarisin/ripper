@@ -68,11 +68,15 @@ class TillerDataProcessor:
         if self.df.empty:
             return
 
-        # Convert date strings to datetime. This is the vectorized equivalent of the
-        # shared scalar parser ``parse_transaction_date`` (both call pandas ``to_datetime``
-        # with ``errors="coerce"``) so widget-side aggregation and the service-side date
-        # filter never disagree on how a row's date is interpreted (#44).
-        self.df["date"] = pd.to_datetime(self.df["date"], errors="coerce")
+        # Convert date strings to datetime by mapping the SAME scalar parser the service-side
+        # filter uses (``parse_transaction_date``) over each cell, so the two layers can never
+        # disagree on a row's date (#44). A single vectorized ``pd.to_datetime(series)`` is NOT
+        # equivalent: it infers one format from the first row and coerces differently-formatted
+        # but valid dates (e.g. "01/16/2024" after a leading "2024-01-15") to NaT, silently
+        # dropping rows the service accepted. The outer ``to_datetime`` only re-boxes the
+        # already-parsed naive datetimes into a ``datetime64`` column for the ``.dt`` accessors
+        # below; it does no format inference (the values are datetimes, not strings).
+        self.df["date"] = pd.to_datetime(self.df["date"].map(parse_transaction_date))
 
         # Ensure amount is numeric. Tiller exports may include currency symbols,
         # thousands separators, blanks, or accounting-style parenthesized values.

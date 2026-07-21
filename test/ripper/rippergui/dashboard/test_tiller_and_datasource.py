@@ -174,6 +174,32 @@ def test_filter_by_date_range_is_inclusive():
     assert descriptions == ["Groceries", "Rent"]
 
 
+def test_preprocess_parses_mixed_date_formats_like_the_scalar_parser():
+    """Every row's date must parse the same way the service-side scalar parser would (#44).
+
+    A single vectorized ``pd.to_datetime(series)`` infers one format from the first row and
+    coerces differently-formatted-but-valid dates to NaT — so a dataset mixing ISO and
+    US-slash dates would silently lose rows in widget aggregation that the service filter
+    accepted. Mapping the shared ``parse_transaction_date`` over the column avoids that.
+    """
+    rows = [
+        {"date": "2024-01-15", "description": "iso", "category": "Food", "amount": -1.0, "account": "A"},
+        {"date": "01/16/2024", "description": "us-slash", "category": "Food", "amount": -2.0, "account": "A"},
+        {"date": "2024/01/17", "description": "iso-slash", "category": "Food", "amount": -3.0, "account": "A"},
+    ]
+    processor = TillerDataProcessor(rows)
+
+    # No row was coerced to NaT, and each maps to what the scalar parser produces.
+    assert processor.df["date"].isna().sum() == 0
+    parsed = {row["description"]: parse_transaction_date(row["date"]) for row in rows}
+    got = dict(zip(processor.df["description"], processor.df["date"].dt.to_pydatetime()))
+    assert got == parsed
+
+    # All three fall in 2024-01, so monthly spending sums them rather than dropping two.
+    monthly = {row["month"]: row["amount"] for row in processor.get_monthly_spending()}
+    assert monthly == {"2024-01": 6.0}
+
+
 def test_filter_by_categories_keeps_only_requested():
     filtered = _processor().filter_by_categories(["Food"])
     assert sorted(filtered.df["description"].tolist()) == ["Coffee", "Groceries"]
