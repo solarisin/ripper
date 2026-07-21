@@ -1033,3 +1033,65 @@ class TestAuthManager(unittest.TestCase):
                 with patch("ripper.ripperlib.auth.build", return_value=mock_resource):
                     self.assertEqual(self.auth_manager.create_sheets_service(), mock_resource)
                     self.assertEqual(self.auth_manager.create_drive_service(), mock_resource)
+
+    def test_authorize_silent_skips_interactive_flow_when_nothing_stored(self):
+        """authorize(silent=True) must never open the browser when no usable creds exist (#106).
+
+        With no cached credential and nothing loadable from the store, the silent path must NOT
+        call acquire_new_credentials() (which runs the interactive local-server browser flow) and
+        must return None. State stays consistent with the invariant LOGGED_IN <=> user_info present
+        <=> _credentials usable: not-logged-in and no half-set _credentials.
+        """
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=None):
+            with patch.object(self.auth_manager, "acquire_new_credentials") as mock_acquire:
+                result = self.auth_manager.authorize(silent=True)
+
+        self.assertIsNone(result)
+        # The interactive browser flow was never triggered.
+        mock_acquire.assert_not_called()
+        # State remains logged out with no usable credential retained.
+        self.assertIsNone(self.auth_manager._credentials)
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.NOT_LOGGED_IN)
+
+    def test_authorize_silent_still_uses_valid_stored_credentials(self):
+        """silent=True suppresses only the INTERACTIVE flow, not use of stored creds (#106).
+
+        A valid stored token plus obtainable user info must still authorize successfully under
+        silent=True: the credential is returned, _credentials is cached, state is LOGGED_IN, and
+        acquire_new_credentials() is never called.
+        """
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        mock_cred = make_mock_creds()
+        user_info = {"email": "test@example.com"}
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=mock_cred):
+            with patch.object(self.auth_manager, "retrieve_user_info", return_value=user_info):
+                with patch.object(self.auth_manager, "acquire_new_credentials") as mock_acquire:
+                    result = self.auth_manager.authorize(silent=True)
+
+        self.assertEqual(result, mock_cred)
+        mock_acquire.assert_not_called()
+        self.assertEqual(self.auth_manager._credentials, mock_cred)
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.LOGGED_IN)
+        self.assertEqual(self.auth_manager._current_auth_info.user_email(), "test@example.com")
+
+    def test_authorize_default_still_acquires_new_credentials_when_nothing_stored(self):
+        """Default (silent=False) is unchanged: it still runs acquire_new_credentials() (#106).
+
+        Guards against a regression where wiring up silent accidentally suppresses the interactive
+        flow on the default path. The browser flow itself is mocked out via acquire_new_credentials.
+        """
+        self.auth_manager._credentials = None
+        self.auth_manager._current_auth_info = AuthInfo(AuthState.NOT_LOGGED_IN)
+        mock_cred = make_mock_creds()
+        user_info = {"email": "test@example.com"}
+        with patch.object(self.auth_manager, "attempt_load_stored_token", return_value=None):
+            with patch.object(self.auth_manager, "acquire_new_credentials", return_value=mock_cred) as mock_acquire:
+                with patch.object(self.auth_manager, "retrieve_user_info", return_value=user_info):
+                    result = self.auth_manager.authorize()
+
+        mock_acquire.assert_called_once()
+        self.assertEqual(result, mock_cred)
+        self.assertEqual(self.auth_manager._current_auth_info.auth_state(), AuthState.LOGGED_IN)

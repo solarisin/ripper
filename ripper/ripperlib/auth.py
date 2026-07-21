@@ -565,6 +565,16 @@ class AuthManager(QObject):
         if not force:
             credentials = self.attempt_load_stored_token()
         if not credentials:
+            if silent:
+                # A silent authorize is a non-interactive "still logged in?" check: no usable
+                # cached/stored credential was obtainable, so refuse to open the browser via
+                # acquire_new_credentials() and report not-authorized. Leave state consistent with
+                # the invariant LOGGED_IN <=> user_info present <=> _credentials usable - no
+                # half-set credential, logged-out - exactly like the interactive failure path (#106).
+                logger.debug("No stored credentials available; skipping interactive auth (silent)")
+                self._credentials = None
+                self.update_state(AuthState.NOT_LOGGED_IN)
+                return None
             credentials = self.acquire_new_credentials()
             if credentials:
                 user_info = self.retrieve_user_info(credentials)
