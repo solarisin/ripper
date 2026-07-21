@@ -1222,14 +1222,22 @@ class _LazyDb:
     """
 
     def __init__(self) -> None:
-        # Set via object.__setattr__ so it lands on the proxy, not a forwarded RipperDb.
+        # Set via object.__setattr__ so these land on the proxy, not a forwarded RipperDb.
         object.__setattr__(self, "_instance", None)
+        object.__setattr__(self, "_lock", threading.Lock())
 
     def _resolve(self) -> RipperDb:
         instance: Optional[RipperDb] = object.__getattribute__(self, "_instance")
         if instance is None:
-            instance = RipperDb()
-            object.__setattr__(self, "_instance", instance)
+            # Double-checked locking: without the lock two threads racing the first access
+            # could each construct their own RipperDb (separate sqlite connection + create_tables),
+            # and the loser's instance — and its lock — would be silently discarded (#105).
+            lock = object.__getattribute__(self, "_lock")
+            with lock:
+                instance = object.__getattribute__(self, "_instance")
+                if instance is None:
+                    instance = RipperDb()
+                    object.__setattr__(self, "_instance", instance)
         return instance
 
     def __getattr__(self, name: str) -> Any:
@@ -1237,18 +1245,19 @@ class _LazyDb:
         return getattr(self._resolve(), name)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        # `_instance` is the proxy's own backing slot (allows test injection); everything else
-        # is forwarded to the underlying RipperDb so assignments don't diverge from reads.
-        if name == "_instance":
-            object.__setattr__(self, "_instance", value)
+        # `_instance`/`_lock` are the proxy's own backing slots (`_instance` allows test injection);
+        # everything else is forwarded to the underlying RipperDb so assignments don't diverge
+        # from reads.
+        if name in ("_instance", "_lock"):
+            object.__setattr__(self, name, value)
         else:
             setattr(self._resolve(), name, value)
 
     def __delattr__(self, name: str) -> None:
         # Forward deletes to the underlying too, so set/delete stay symmetric (e.g. mock.patch
         # sets an attribute then deletes it on teardown).
-        if name == "_instance":
-            object.__delattr__(self, "_instance")
+        if name in ("_instance", "_lock"):
+            object.__delattr__(self, name)
         else:
             delattr(self._resolve(), name)
 
