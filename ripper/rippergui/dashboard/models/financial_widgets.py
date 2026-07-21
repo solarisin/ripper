@@ -146,20 +146,14 @@ class SpendingTrendWidget(BaseWidget):
             return
 
         try:
-            # Process data using TillerDataProcessor
+            # Records arrive already filtered by the data source's date range (and account/
+            # category filters) in DashboardDataService._apply_filters, so the widget consumes
+            # them as-is and does NOT re-apply the date range -- a single, shared filter pass
+            # avoids the two layers disagreeing on boundary rows (#44).
             self.data_processor = TillerDataProcessor(data)
 
-            # Get date range from data source
-            data_source = self.dashboard.get_data_source(self.config.data_source_id)
-            if not data_source:
-                return
-            date_range = data_source.date_range.get_date_range()
-
-            # Filter data by date range
-            filtered_processor = self.data_processor.filter_by_date_range(*date_range)
-
             # Get monthly spending data
-            monthly_data = filtered_processor.get_monthly_spending()
+            monthly_data = self.data_processor.get_monthly_spending()
 
             # Update the chart
             self._update_chart(monthly_data)
@@ -296,20 +290,12 @@ class CategoryBreakdownWidget(BaseWidget):
             return
 
         try:
-            # Process data using TillerDataProcessor
+            # Records arrive already filtered by the data source's date range in the service
+            # layer, so the widget renders them without re-applying the range (#44).
             self.data_processor = TillerDataProcessor(data)
 
-            # Get date range from data source
-            data_source = self.dashboard.get_data_source(self.config.data_source_id)
-            if not data_source:
-                return
-            date_range = data_source.date_range.get_date_range()
-
-            # Filter data by date range
-            filtered_processor = self.data_processor.filter_by_date_range(*date_range)
-
             # Get category breakdown data
-            category_data = filtered_processor.get_category_breakdown()
+            category_data = self.data_processor.get_category_breakdown()
 
             # Update the chart
             self._update_chart(category_data)
@@ -535,18 +521,11 @@ class TopExpensesWidget(BaseWidget):
             return
 
         try:
-            # Process data using TillerDataProcessor
+            # Records arrive already filtered by the data source's date range in the service
+            # layer, so the widget renders them without re-applying the range (#44).
             self.data_processor = TillerDataProcessor(data)
 
-            # Get date range from data source
-            data_source = self.dashboard.get_data_source(self.config.data_source_id)
-            if not data_source:
-                return
-            date_range = data_source.date_range.get_date_range()
-
-            # Filter data by date range and get top expenses
-            filtered_processor = self.data_processor.filter_by_date_range(*date_range)
-            top_expenses = filtered_processor.get_top_expenses(self.num_expenses)
+            top_expenses = self.data_processor.get_top_expenses(self.num_expenses)
 
             if not top_expenses:
                 self._show_empty_state()

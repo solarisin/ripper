@@ -15,7 +15,7 @@ from ripper.rippergui.dashboard.models.data_source import (
     DateRange,
     DateRangePreset,
 )
-from ripper.rippergui.dashboard.models.tiller_data import TillerDataProcessor
+from ripper.rippergui.dashboard.models.tiller_data import TillerDataProcessor, parse_transaction_date
 
 SAMPLE_TRANSACTIONS = [
     {"date": "2024-01-05", "description": "Coffee", "category": "Food", "amount": -5.0, "account": "Visa"},
@@ -174,6 +174,32 @@ def test_filter_by_date_range_is_inclusive():
     assert descriptions == ["Groceries", "Rent"]
 
 
+def test_preprocess_parses_mixed_date_formats_like_the_scalar_parser():
+    """Every row's date must parse the same way the service-side scalar parser would (#44).
+
+    A single vectorized ``pd.to_datetime(series)`` infers one format from the first row and
+    coerces differently-formatted-but-valid dates to NaT — so a dataset mixing ISO and
+    US-slash dates would silently lose rows in widget aggregation that the service filter
+    accepted. Mapping the shared ``parse_transaction_date`` over the column avoids that.
+    """
+    rows = [
+        {"date": "2024-01-15", "description": "iso", "category": "Food", "amount": -1.0, "account": "A"},
+        {"date": "01/16/2024", "description": "us-slash", "category": "Food", "amount": -2.0, "account": "A"},
+        {"date": "2024/01/17", "description": "iso-slash", "category": "Food", "amount": -3.0, "account": "A"},
+    ]
+    processor = TillerDataProcessor(rows)
+
+    # No row was coerced to NaT, and each maps to what the scalar parser produces.
+    assert processor.df["date"].isna().sum() == 0
+    parsed = {row["description"]: parse_transaction_date(row["date"]) for row in rows}
+    got = dict(zip(processor.df["description"], processor.df["date"].dt.to_pydatetime()))
+    assert got == parsed
+
+    # All three fall in 2024-01, so monthly spending sums them rather than dropping two.
+    monthly = {row["month"]: row["amount"] for row in processor.get_monthly_spending()}
+    assert monthly == {"2024-01": 6.0}
+
+
 def test_filter_by_categories_keeps_only_requested():
     filtered = _processor().filter_by_categories(["Food"])
     assert sorted(filtered.df["description"].tolist()) == ["Coffee", "Groceries"]
@@ -215,15 +241,61 @@ def test_date_range_current_month_starts_on_the_first():
     assert end >= start
 
 
-def test_date_range_custom_uses_provided_dates():
+def test_date_range_current_month_ends_on_last_day_of_month():
+    """CURRENT_MONTH must end on the true last day of the month (calendar.monthrange)."""
+    import calendar
+
+    now = datetime.now()
+    start, end = DateRange(DateRangePreset.CURRENT_MONTH).get_date_range()
+    last_day = calendar.monthrange(now.year, now.month)[1]
+    assert (end.month, end.day) == (now.month, last_day)
+    assert (end.hour, end.minute, end.second) == (23, 59, 59)
+
+
+def test_date_range_custom_uses_provided_start_and_inclusive_end():
+    """CUSTOM keeps the provided start and extends the end to end-of-day (#44).
+
+    The end bound is normalized to 23:59:59.999999 so a transaction dated on the
+    end day (stored at midnight) is not silently excluded -- consistent with how
+    presets end at ``now`` rather than a bare date.
+    """
     start_in, end_in = datetime(2020, 3, 1), datetime(2020, 3, 31)
     start, end = DateRange(DateRangePreset.CUSTOM, start_date=start_in, end_date=end_in).get_date_range()
-    assert (start, end) == (start_in, end_in)
+    assert start == start_in
+    assert end == datetime(2020, 3, 31, 23, 59, 59, 999999)
 
 
 def test_date_range_custom_without_dates_falls_back_to_30_days():
     start, end = DateRange(DateRangePreset.CUSTOM).get_date_range()
     assert (end - start) == timedelta(days=30)
+
+
+# --------------------------------------------------------------------------- #
+# Shared date parser (issue #44)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("2024-01-15", datetime(2024, 1, 15)),
+        ("2024/01/15", datetime(2024, 1, 15)),  # dropped by the old strict service parser
+        ("01/15/2024", datetime(2024, 1, 15)),
+        ("2024-01-15T08:30:00", datetime(2024, 1, 15, 8, 30, 0)),
+        (datetime(2024, 1, 15), datetime(2024, 1, 15)),
+    ],
+)
+def test_parse_transaction_date_parses_common_formats(raw, expected):
+    assert parse_transaction_date(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "not-a-date", None])
+def test_parse_transaction_date_returns_none_for_unparseable(raw):
+    assert parse_transaction_date(raw) is None
+
+
+def test_parse_transaction_date_strips_timezone():
+    parsed = parse_transaction_date("2024-06-01T12:00:00+05:00")
+    assert parsed is not None
+    assert parsed.tzinfo is None
 
 
 # --------------------------------------------------------------------------- #

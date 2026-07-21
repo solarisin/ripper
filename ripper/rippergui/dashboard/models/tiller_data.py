@@ -17,6 +17,28 @@ import pandas as pd
 TRANSFER_CATEGORIES: frozenset[str] = frozenset({"transfer", "transfers", "credit card payment"})
 
 
+def parse_transaction_date(value: Any) -> datetime | None:
+    """Parse a raw Tiller date cell into a naive :class:`datetime`, or ``None``.
+
+    This is the single date parser shared by the dashboard service's date-range
+    filter (``DashboardDataService._record_in_date_range``) and this module's
+    :meth:`TillerDataProcessor._preprocess_data`, so both layers agree on exactly
+    which rows fall inside a range (issue #44). It uses pandas ``to_datetime`` --
+    the more lenient of the two former implementations -- coercing unparseable
+    values to ``None`` and dropping any timezone so results compare cleanly with
+    the naive range bounds returned by ``DateRange.get_date_range``.
+    """
+    if value is None:
+        return None
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return None
+    parsed: datetime = timestamp.to_pydatetime()
+    if parsed.tzinfo is not None:
+        parsed = parsed.replace(tzinfo=None)
+    return parsed
+
+
 class TillerTransaction(TypedDict):
     """Represents a single Tiller transaction."""
 
@@ -46,8 +68,15 @@ class TillerDataProcessor:
         if self.df.empty:
             return
 
-        # Convert date strings to datetime
-        self.df["date"] = pd.to_datetime(self.df["date"], errors="coerce")
+        # Convert date strings to datetime by mapping the SAME scalar parser the service-side
+        # filter uses (``parse_transaction_date``) over each cell, so the two layers can never
+        # disagree on a row's date (#44). A single vectorized ``pd.to_datetime(series)`` is NOT
+        # equivalent: it infers one format from the first row and coerces differently-formatted
+        # but valid dates (e.g. "01/16/2024" after a leading "2024-01-15") to NaT, silently
+        # dropping rows the service accepted. The outer ``to_datetime`` only re-boxes the
+        # already-parsed naive datetimes into a ``datetime64`` column for the ``.dt`` accessors
+        # below; it does no format inference (the values are datetimes, not strings).
+        self.df["date"] = pd.to_datetime(self.df["date"].map(parse_transaction_date))
 
         # Ensure amount is numeric. Tiller exports may include currency symbols,
         # thousands separators, blanks, or accounting-style parenthesized values.

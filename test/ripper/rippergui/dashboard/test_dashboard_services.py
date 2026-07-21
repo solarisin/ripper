@@ -190,3 +190,72 @@ def test_refresh_dashboard_reports_unsupported_source():
 
     assert result.statuses["budget-1"].unsupported
     assert not result.statuses["budget-1"].ok
+
+
+# --------------------------------------------------------------------------- #
+# Date-range filtering (single, shared parser) -- issue #44
+# --------------------------------------------------------------------------- #
+def _service() -> DashboardDataService:
+    return DashboardDataService(FakeAuthManager())
+
+
+def test_record_in_date_range_includes_transaction_on_custom_end_day():
+    """A transaction dated on the CUSTOM end date is included (end-of-day fix, #44).
+
+    The stored ``end_date`` is a bare date (midnight). Because ``get_date_range``
+    now extends CUSTOM to end-of-day, a same-day transaction with any time-of-day
+    falls inside the range.
+    """
+    start, end = DateRange(
+        DateRangePreset.CUSTOM,
+        start_date=datetime(2024, 1, 1),
+        end_date=datetime(2024, 3, 31),
+    ).get_date_range()
+
+    record = {"date": "2024-03-31", "amount": "-5", "account": "Visa", "category": "Food"}
+    assert _service()._record_in_date_range(record, start, end) is True
+
+
+def test_record_in_date_range_accepts_lenient_formats_the_old_parser_dropped():
+    """The service now parses date formats the old strict parser silently dropped (#44).
+
+    ``2024/01/15`` is neither ISO (``fromisoformat``) nor ``%m/%d/%Y``, so the
+    previous hand-rolled parser dropped it while the widgets' pandas parser kept
+    it -- the two layers disagreed on the same row. With a single shared pandas
+    parser both agree, and the row is included when it is in range.
+    """
+    start = datetime(2024, 1, 1)
+    end = datetime(2024, 12, 31, 23, 59, 59)
+    record = {"date": "2024/01/15", "amount": "-5", "account": "Visa", "category": "Food"}
+
+    assert _service()._record_in_date_range(record, start, end) is True
+
+
+def test_record_in_date_range_and_processor_agree_on_boundary_row():
+    """The service filter and the widgets' processor parse the same row identically (#44)."""
+    from ripper.rippergui.dashboard.models.tiller_data import TillerDataProcessor, parse_transaction_date
+
+    raw = "2024/01/15"
+    parsed = parse_transaction_date(raw)
+    assert parsed == datetime(2024, 1, 15)
+
+    processed = TillerDataProcessor([{"date": raw, "amount": -5.0, "category": "Food", "account": "Visa"}])
+    assert processed.df["date"].iloc[0].to_pydatetime() == datetime(2024, 1, 15)
+
+
+def test_record_in_date_range_drops_unparseable_and_missing_dates():
+    start = datetime(2024, 1, 1)
+    end = datetime(2024, 12, 31, 23, 59, 59)
+    service = _service()
+
+    assert service._record_in_date_range({"date": "not-a-date"}, start, end) is False
+    assert service._record_in_date_range({"date": ""}, start, end) is False
+    assert service._record_in_date_range({"date": None}, start, end) is False
+    assert service._record_in_date_range({}, start, end) is False
+
+
+def test_record_in_date_range_coerces_timezone_aware_dates():
+    start = datetime(2024, 1, 1)
+    end = datetime(2024, 12, 31, 23, 59, 59)
+    record = {"date": "2024-06-01T12:00:00+05:00"}
+    assert _service()._record_in_date_range(record, start, end) is True
