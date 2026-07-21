@@ -290,6 +290,107 @@ class TestTopExpensesWidget:
         assert "$1,500.00" in rendered_amounts
 
 
+@pytest.mark.qt
+class TestWidgetsConsumePreFilteredRecords:
+    """Widgets must render service-filtered records as-is, without re-filtering by date (#44).
+
+    The service already applies the data source's date range before the records reach the
+    widget (dashboard_view passes ``refresh_result.data`` into ``update_data``). To prove the
+    widget no longer double-filters, we give the data source a *narrow* range that would
+    exclude the fed rows, then confirm the widget still renders them.
+    """
+
+    def _narrow_range_source(self):
+        # A range that excludes every fed row; if the widget re-filtered, nothing would render.
+        return DataSource(
+            id="test_source",
+            type=DataSourceType.TILLER_TRANSACTIONS,
+            name="Transactions",
+            spreadsheet_id="spreadsheet",
+            sheet_name="Transactions",
+            range_a1="A:E",
+            date_range=DateRange(
+                DateRangePreset.CUSTOM,
+                start_date=datetime(1999, 1, 1),
+                end_date=datetime(1999, 1, 2),
+            ),
+        )
+
+    def test_top_expenses_renders_prefiltered_rows_outside_source_range(self, sample_dashboard, qtbot):
+        data_source = self._narrow_range_source()
+        sample_dashboard.add_data_source(data_source)
+        config = WidgetConfig(
+            id="top_expenses",
+            type=WidgetType.TOP_EXPENSES,
+            title="Top Expenses",
+            position=(0, 0),
+            size=(4, 3),
+            data_source_id=data_source.id,
+        )
+        widget = TopExpensesWidget(config, sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        widget.update_data(
+            {
+                data_source.id: [
+                    {
+                        "date": "2026-04-18",
+                        "description": "Rent",
+                        "category": "Housing",
+                        "amount": "-1500",
+                        "account": "Checking",
+                    }
+                ]
+            }
+        )
+
+        assert widget.table is not None
+        descriptions = [
+            widget.table.item(row, 1).text()
+            for row in range(widget.table.rowCount())
+            if widget.table.item(row, 1) is not None
+        ]
+        assert "Rent" in descriptions
+
+    def test_spending_trend_renders_prefiltered_rows_outside_source_range(self, sample_dashboard, qtbot):
+        data_source = self._narrow_range_source()
+        sample_dashboard.add_data_source(data_source)
+        config = WidgetConfig(
+            id="spending_trend",
+            type=WidgetType.SPENDING_TREND,
+            title="Spending Trend",
+            position=(0, 0),
+            size=(4, 3),
+            data_source_id=data_source.id,
+        )
+        widget = SpendingTrendWidget(config, sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        widget.update_data(
+            {
+                data_source.id: [
+                    {
+                        "date": "2026-04-18",
+                        "description": "Rent",
+                        "category": "Housing",
+                        "amount": "-1500",
+                        "account": "Checking",
+                    }
+                ]
+            }
+        )
+
+        assert widget.chart_view is not None
+        # A line series with points means the row was rendered rather than filtered out.
+        series = widget.chart_view.chart().series()
+        assert series
+        assert series[0].count() > 0
+
+
 class TestTillerDataProcessor:
     """Test cases for TillerDataProcessor."""
 

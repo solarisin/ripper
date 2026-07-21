@@ -9,6 +9,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 from loguru import logger
 
 from ripper.rippergui.dashboard.models import Dashboard, DataSource, DataSourceType
+from ripper.rippergui.dashboard.models.tiller_data import parse_transaction_date
 from ripper.ripperlib.auth import AuthManager
 from ripper.ripperlib.defs import SheetData, SheetsService
 
@@ -263,19 +264,11 @@ class DashboardDataService:
         return filtered
 
     def _record_in_date_range(self, record: dict[str, Any], start_date: datetime, end_date: datetime) -> bool:
-        raw_date = record.get("date")
-        if raw_date is None:
+        # Use the single shared parser (pandas ``to_datetime``) so this service-level filter
+        # and the widgets' ``TillerDataProcessor`` interpret each row's date identically (#44).
+        # The parser already coerces unparseable values to None and strips any timezone.
+        parsed = parse_transaction_date(record.get("date"))
+        if parsed is None:
+            logger.debug(f"Could not parse transaction date: {record.get('date')}")
             return False
-        try:
-            parsed = datetime.fromisoformat(str(raw_date))
-        except ValueError:
-            try:
-                parsed = datetime.strptime(str(raw_date), "%m/%d/%Y")
-            except ValueError:
-                logger.debug(f"Could not parse transaction date: {raw_date}")
-                return False
-        # Coerce timezone-aware datetimes to naive so they are comparable with the
-        # naive start_date/end_date returned by DateRange.get_date_range().
-        if parsed.tzinfo is not None:
-            parsed = parsed.replace(tzinfo=None)
         return start_date <= parsed <= end_date

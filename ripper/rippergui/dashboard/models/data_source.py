@@ -1,5 +1,6 @@
 """Data source models for dashboards."""
 
+import calendar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -34,12 +35,18 @@ class DateRange:
     end_date: Optional[datetime] = None
 
     def get_date_range(self) -> tuple[datetime, datetime]:
-        """Get the start and end dates for this range."""
+        """Get the start and end dates for this range.
+
+        End bounds are inclusive of the whole final day. Presets that end "now"
+        naturally include same-day transactions; CUSTOM ranges are normalized so
+        that a transaction dated on the stored ``end_date`` (typically midnight)
+        is not silently dropped -- the end is extended to 23:59:59.999999 (#44).
+        """
         now = datetime.now()
         if self.preset == DateRangePreset.CURRENT_MONTH:
             start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            next_month = start.replace(day=28) + timedelta(days=4)  # Move to next month
-            end = (next_month - timedelta(days=next_month.day)).replace(hour=23, minute=59, second=59)
+            last_day = calendar.monthrange(now.year, now.month)[1]
+            end = now.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
             return start, end
         elif self.preset == DateRangePreset.LAST_30_DAYS:
             return now - timedelta(days=30), now
@@ -51,7 +58,8 @@ class DateRange:
             last_year = now.year - 1
             return (datetime(last_year, 1, 1), datetime(last_year, 12, 31, 23, 59, 59))
         elif self.preset == DateRangePreset.CUSTOM and self.start_date and self.end_date:
-            return self.start_date, self.end_date
+            end_of_day = self.end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+            return self.start_date, end_of_day
         else:
             # Default to last 30 days
             return now - timedelta(days=30), now

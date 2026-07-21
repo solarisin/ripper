@@ -17,6 +17,28 @@ import pandas as pd
 TRANSFER_CATEGORIES: frozenset[str] = frozenset({"transfer", "transfers", "credit card payment"})
 
 
+def parse_transaction_date(value: Any) -> datetime | None:
+    """Parse a raw Tiller date cell into a naive :class:`datetime`, or ``None``.
+
+    This is the single date parser shared by the dashboard service's date-range
+    filter (``DashboardDataService._record_in_date_range``) and this module's
+    :meth:`TillerDataProcessor._preprocess_data`, so both layers agree on exactly
+    which rows fall inside a range (issue #44). It uses pandas ``to_datetime`` --
+    the more lenient of the two former implementations -- coercing unparseable
+    values to ``None`` and dropping any timezone so results compare cleanly with
+    the naive range bounds returned by ``DateRange.get_date_range``.
+    """
+    if value is None:
+        return None
+    timestamp = pd.to_datetime(value, errors="coerce")
+    if pd.isna(timestamp):
+        return None
+    parsed: datetime = timestamp.to_pydatetime()
+    if parsed.tzinfo is not None:
+        parsed = parsed.replace(tzinfo=None)
+    return parsed
+
+
 class TillerTransaction(TypedDict):
     """Represents a single Tiller transaction."""
 
@@ -46,7 +68,10 @@ class TillerDataProcessor:
         if self.df.empty:
             return
 
-        # Convert date strings to datetime
+        # Convert date strings to datetime. This is the vectorized equivalent of the
+        # shared scalar parser ``parse_transaction_date`` (both call pandas ``to_datetime``
+        # with ``errors="coerce"``) so widget-side aggregation and the service-side date
+        # filter never disagree on how a row's date is interpreted (#44).
         self.df["date"] = pd.to_datetime(self.df["date"], errors="coerce")
 
         # Ensure amount is numeric. Tiller exports may include currency symbols,
