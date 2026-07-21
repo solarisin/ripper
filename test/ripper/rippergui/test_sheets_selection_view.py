@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QProgressDialog, QWidget
 
 from ripper.rippergui.sheets_selection_view import (
     SheetsSelectionDialog,
@@ -11,6 +11,18 @@ from ripper.rippergui.sheets_selection_view import (
 from ripper.rippergui.spreadsheet_thumbnail_widget import SpreadsheetThumbnailWidget
 from ripper.ripperlib.database import Db
 from ripper.ripperlib.defs import LoadSource, SheetProperties, SpreadsheetProperties
+
+
+class _SpyProgressDialog(QProgressDialog):
+    """QProgressDialog that counts reset() calls so tests can observe programmatic dismissal (#108)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.reset_calls = 0
+
+    def reset(self):  # noqa: D102
+        self.reset_calls += 1
+        super().reset()
 
 
 @pytest.fixture(autouse=True)
@@ -320,6 +332,84 @@ class TestSheetsSelectionDialog:
         assert dialog.sheet_range_input.text() == ""
         assert not dialog.select_button.isEnabled()
 
+    @staticmethod
+    def _spreadsheet(sid, name):
+        s = MagicMock(spec=SpreadsheetProperties)
+        s.id = sid
+        s.name = name
+        s.modified_time = "2024-01-01T00:00:00Z"
+        s.created_time = "2023-12-01T00:00:00Z"
+        s.thumbnail_link = ""
+        s.web_view_link = f"https://example.com/{sid}"
+        s.owners = [{"displayName": "Test User"}]
+        s.size = 1024
+        s.shared = True
+        return s
+
+    @patch("ripper.rippergui.sheets_selection_view.QProgressDialog", _SpyProgressDialog)
+    @patch("ripper.rippergui.sheets_selection_view._SheetMetadataLoader.isRunning", return_value=True)
+    @patch("ripper.rippergui.sheets_selection_view._SheetMetadataLoader.start")
+    @patch("ripper.rippergui.sheets_selection_view._SpreadsheetLoader.start")
+    @patch("ripper.rippergui.sheets_selection_view.AuthManager")
+    def test_superseded_metadata_progress_dialog_is_dismissed(
+        self, mock_auth, mock_loader_start, mock_meta_start, mock_is_running, qtbot
+    ):
+        """Selecting a second spreadsheet while the first metadata fetch is still in flight must
+        programmatically dismiss the first (superseded) progress dialog, so it can never pop up on
+        its 300ms timer as an un-cancelable modal, while leaving the new in-flight dialog intact (#108)."""
+        mock_auth_instance = MagicMock()
+        mock_auth.return_value = mock_auth_instance
+        mock_auth_instance.create_drive_service.return_value = MagicMock()
+        mock_auth_instance.create_sheets_service.return_value = MagicMock()
+
+        dialog = SheetsSelectionDialog()
+        qtbot.addWidget(dialog)
+
+        # First selection: creates the first progress dialog + metadata loader.  start() is patched
+        # and isRunning() forced True, so the loader stays "in flight".
+        dialog.select_spreadsheet(self._spreadsheet("s1", "One"))
+        first_progress = dialog._sheet_progress
+        assert isinstance(first_progress, _SpyProgressDialog)
+        assert first_progress.reset_calls == 0
+
+        # Second selection supersedes the first still-running loader.
+        dialog.select_spreadsheet(self._spreadsheet("s2", "Two"))
+
+        # The OLD dialog was explicitly reset by supersede (can no longer show on its timer)...
+        assert first_progress.reset_calls >= 1
+        # ...and was replaced by a distinct, still-active dialog that was NOT reset.
+        assert dialog._sheet_progress is not first_progress
+        assert dialog._sheet_progress.reset_calls == 0
+
+    @patch("ripper.rippergui.sheets_selection_view.QProgressDialog", _SpyProgressDialog)
+    @patch("ripper.rippergui.sheets_selection_view._SheetMetadataLoader.start")
+    @patch("ripper.rippergui.sheets_selection_view._SpreadsheetLoader.start")
+    @patch("ripper.rippergui.sheets_selection_view.AuthManager")
+    def test_single_fetch_flow_resets_dialog_on_completion(self, mock_auth, mock_loader_start, mock_meta_start, qtbot):
+        """Regression: in the normal (non-superseded) flow the dialog still resets when the loader
+        finishes, via the finished→reset wiring (#108)."""
+        mock_auth_instance = MagicMock()
+        mock_auth.return_value = mock_auth_instance
+        mock_auth_instance.create_drive_service.return_value = MagicMock()
+        mock_auth_instance.create_sheets_service.return_value = MagicMock()
+
+        sheet = self._spreadsheet("s1", "One")
+        mock_sheet_props = [
+            MagicMock(spec=SheetProperties, id="tab1", title="Sheet1", grid=MagicMock(row_count=100, column_count=26)),
+        ]
+
+        dialog = SheetsSelectionDialog()
+        qtbot.addWidget(dialog)
+
+        dialog.select_spreadsheet(sheet)
+        progress = dialog._sheet_progress
+        assert progress.reset_calls == 0
+
+        # Simulate the background loader completing normally.
+        dialog._sheet_loader.finished.emit(mock_sheet_props)
+
+        assert progress.reset_calls >= 1  # dialog dismissed on completion, no regression
+
 
 class TestLoaderReferenceTracking:
     """Identity-safe background-loader tracking guards the #74 out-of-order completion race.
@@ -406,3 +496,51 @@ class TestLoaderReferenceTracking:
             assert dialog._active_loaders == set()
         finally:
             ssv._orphaned_loaders.discard(slow)  # don't leak state into other tests
+
+    def test_track_loader_associates_progress_dialog(self):
+        """_track_loader records the progress dialog on the worker so supersede can dismiss it (#108)."""
+        dialog = self._mock_dialog()
+        worker = MagicMock(spec=_SpreadsheetLoader)
+        progress = MagicMock(spec=QProgressDialog)
+
+        SheetsSelectionDialog._track_loader(dialog, "_loader", worker, progress)
+
+        assert worker.progress_dialog is progress
+
+    def test_superseding_running_loader_dismisses_its_progress_dialog(self):
+        """A superseded, still-running loader must have ITS OWN dialog reset so it can't orphan
+        on the minimum-duration timer after we stop listening to the loader (#108)."""
+        dialog = self._mock_dialog()
+        old = MagicMock(spec=_SheetMetadataLoader)
+        old.isRunning.return_value = True
+        old_progress = MagicMock(spec=QProgressDialog)
+        old.progress_dialog = old_progress
+        dialog._sheet_loader = old
+
+        SheetsSelectionDialog._supersede_loader(dialog, "_sheet_loader")
+
+        old_progress.reset.assert_called_once()
+
+    def test_superseding_finished_loader_leaves_its_dialog_alone(self):
+        """A loader that already finished is not running; its dialog was already reset on
+        completion, so supersede must not touch it (#108)."""
+        dialog = self._mock_dialog()
+        old = MagicMock(spec=_SpreadsheetLoader)
+        old.isRunning.return_value = False
+        old_progress = MagicMock(spec=QProgressDialog)
+        old.progress_dialog = old_progress
+        dialog._loader = old
+
+        SheetsSelectionDialog._supersede_loader(dialog, "_loader")
+
+        old_progress.reset.assert_not_called()
+
+    def test_superseding_running_loader_without_dialog_is_safe(self):
+        """Supersede must not crash when a running loader has no associated dialog (#108)."""
+        dialog = self._mock_dialog()
+        old = MagicMock(spec=_SpreadsheetLoader)
+        old.isRunning.return_value = True
+        old.progress_dialog = None
+        dialog._loader = old
+
+        SheetsSelectionDialog._supersede_loader(dialog, "_loader")  # must not raise

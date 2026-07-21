@@ -47,6 +47,9 @@ class _SpreadsheetLoader(QThread):
     finished: Signal = Signal(list)  # type: ignore[misc]
     error: Signal = Signal(str)
 
+    #: Progress dialog shown while this loader runs; reset when the loader is superseded (#108).
+    progress_dialog: Optional[QProgressDialog] = None
+
     def run(self) -> None:  # noqa: D102
         """Fetch spreadsheets in the background."""
         try:
@@ -72,6 +75,9 @@ class _SheetMetadataLoader(QThread):
 
     finished: Signal = Signal(list)  # type: ignore[misc]
     error: Signal = Signal(str)
+
+    #: Progress dialog shown while this loader runs; reset when the loader is superseded (#108).
+    progress_dialog: Optional[QProgressDialog] = None
 
     def __init__(self, spreadsheet_id: str, parent: Optional[QWidget] = None) -> None:
         """Initialise with the target spreadsheet ID."""
@@ -260,14 +266,19 @@ class SheetsSelectionDialog(QDialog):
                     _retain_orphaned_loader(loader)
         self._active_loaders.clear()
 
-    def _track_loader(self, attr: str, worker: _Loader) -> None:
+    def _track_loader(self, attr: str, worker: _Loader, progress: Optional[QProgressDialog] = None) -> None:
         """Register *worker* as the current loader for *attr* with identity-safe cleanup (#74).
 
         The worker is added to the active-loader set and, on completion, removes itself and clears
         the attribute ONLY if it is still the current loader — so a superseded worker finishing
         late can never null out the reference to its replacement.
+
+        *progress* (if given) is associated with the worker so that superseding the worker can
+        explicitly dismiss its dialog, rather than relying on a ``finished``/``error`` connection
+        that supersession disconnects (#108).
         """
         setattr(self, attr, worker)
+        worker.progress_dialog = progress
         self._active_loaders.add(worker)
         worker.finished.connect(lambda *_, w=worker: self._retire_loader(attr, w))
         worker.error.connect(lambda *_, w=worker: self._retire_loader(attr, w))
@@ -288,6 +299,14 @@ class SheetsSelectionDialog(QDialog):
         """
         old = getattr(self, attr, None)
         if old is not None and old.isRunning():
+            # Explicitly dismiss the superseded loader's progress dialog BEFORE disconnecting its
+            # signals. Disconnecting severs the finished/error→reset connection, so the dialog would
+            # otherwise linger and could still auto-show on its minimum-duration timer as an
+            # un-cancelable modal (#108). ``self._<attr>_progress`` is reassigned by the caller only
+            # AFTER this returns, so ``old.progress_dialog`` here is the OLD dialog, not the new one.
+            old_dialog = old.progress_dialog
+            if old_dialog is not None:
+                old_dialog.reset()
             try:
                 old.finished.disconnect()
                 old.error.disconnect()
@@ -325,7 +344,7 @@ class SheetsSelectionDialog(QDialog):
         loader.error.connect(self._on_load_error)
         loader.finished.connect(self._progress.reset)
         loader.error.connect(self._progress.reset)
-        self._track_loader("_loader", loader)
+        self._track_loader("_loader", loader, self._progress)
         loader.start()
 
     def _on_spreadsheets_loaded(self, spreadsheets: list) -> None:
@@ -442,7 +461,7 @@ class SheetsSelectionDialog(QDialog):
         sheet_loader.error.connect(self._on_sheet_metadata_error)
         sheet_loader.finished.connect(self._sheet_progress.reset)
         sheet_loader.error.connect(self._sheet_progress.reset)
-        self._track_loader("_sheet_loader", sheet_loader)
+        self._track_loader("_sheet_loader", sheet_loader, self._sheet_progress)
         sheet_loader.start()
 
     def _on_sheet_metadata_loaded(self, sheet_props: list, loaded_for_id: str) -> None:
