@@ -20,6 +20,7 @@ from loguru import logger
 
 import ripper.ripperlib.defs as defs
 from ripper.ripperlib.defs import SheetProperties, SpreadsheetProperties
+from ripper.ripperlib.range_manager import CellRange
 
 
 def default_db_path() -> Path:
@@ -740,6 +741,57 @@ class RipperDb:
 
         except sqlite.Error as e:
             logger.error(f"Error invalidating sheet data cache: {e}")
+            return False
+
+    def invalidate_sheet_data_range(self, spreadsheet_id: str, sheet_name: str, cell_range: CellRange) -> bool:
+        """
+        Invalidate only the cached ranges on a sheet that OVERLAP a given extent.
+
+        Unlike :meth:`invalidate_sheet_data_cache` (which drops *every* cached range for the
+        tab), this deletes only the ``sheet_data_ranges`` rows whose extent intersects
+        ``cell_range``. It is used by the Refresh action so re-fetching one data source does not
+        evict sibling sources caching non-overlapping regions of the same tab (issue #80).
+        Deleted ranges' cells cascade away via the ``sheet_data_cells`` ``ON DELETE CASCADE`` FK.
+
+        The overlap predicate matches :meth:`get_sheet_data_from_cache`: a stored range overlaps
+        when it is NOT entirely above, below, left, or right of ``cell_range``.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet.
+            sheet_name: The name of the sheet.
+            cell_range: The (bounded) extent whose overlapping cached ranges should be dropped.
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        if self._conn is None:
+            logger.error("Database not open")
+            return False
+
+        try:
+            with self._transaction():
+                c = self._conn.cursor()
+                c.execute(
+                    """DELETE FROM sheet_data_ranges
+                       WHERE spreadsheet_id = ? AND sheet_name = ?
+                       AND NOT (end_row < ? OR start_row > ? OR end_col < ? OR start_col > ?)""",
+                    (
+                        spreadsheet_id,
+                        sheet_name,
+                        cell_range.start_row,
+                        cell_range.end_row,
+                        cell_range.start_col,
+                        cell_range.end_col,
+                    ),
+                )
+                logger.debug(
+                    f"Invalidated {c.rowcount} cached range(s) overlapping "
+                    f"{cell_range.to_a1_notation()} for {spreadsheet_id}!{sheet_name}"
+                )
+                return True
+
+        except sqlite.Error as e:
+            logger.error(f"Error invalidating sheet data range: {e}")
             return False
 
     def validate_cached_range_data(self, spreadsheet_id: str, sheet_name: str) -> bool:

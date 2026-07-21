@@ -8,6 +8,7 @@ from typing import Any
 
 from ripper.ripperlib.database import RipperDb
 from ripper.ripperlib.defs import SpreadsheetProperties
+from ripper.ripperlib.range_manager import CellRange
 
 
 class TestDatabaseCaching(unittest.TestCase):
@@ -506,6 +507,73 @@ class TestDatabaseCaching(unittest.TestCase):
 
         success = self.db.invalidate_sheet_data_cache(self.test_spreadsheet_id, self.test_sheet_name)
         self.assertFalse(success)
+
+    def _extent(self, spreadsheet_id: str, sheet_name: str) -> set[tuple[int, int, int, int]]:
+        """Return the (start_row, start_col, end_row, end_col) tuples currently cached for a sheet."""
+        return {
+            (r["start_row"], r["start_col"], r["end_row"], r["end_col"])
+            for r in self.db.get_cached_ranges(spreadsheet_id, sheet_name)
+        }
+
+    def test_invalidate_sheet_data_range_leaves_non_overlapping_sibling(self) -> None:
+        """Regression (#80): scoped invalidation must not evict a sibling source's disjoint cache.
+
+        Two sources share Sheet1 with non-overlapping extents A1:E10 and G1:K10. Invalidating the
+        first source's range must delete only its cached rows, leaving the second source's cache
+        intact so a later load is still served from the DB rather than re-fetched from the API.
+        """
+        # Source 1: A1:E10 -> rows 1-10, cols 1-5
+        self.db.store_sheet_data_range(self.test_spreadsheet_id, "Sheet1", 1, 1, 10, 5, [["x"] * 5 for _ in range(10)])
+        # Source 2: G1:K10 -> rows 1-10, cols 7-11
+        self.db.store_sheet_data_range(self.test_spreadsheet_id, "Sheet1", 1, 7, 10, 11, [["y"] * 5 for _ in range(10)])
+
+        success = self.db.invalidate_sheet_data_range(self.test_spreadsheet_id, "Sheet1", CellRange(1, 1, 10, 5))
+        self.assertTrue(success)
+
+        extents = self._extent(self.test_spreadsheet_id, "Sheet1")
+        self.assertNotIn((1, 1, 10, 5), extents)  # refreshed source's range removed
+        self.assertIn((1, 7, 10, 11), extents)  # sibling's range survives
+
+        # Sibling is still fully served from the DB cache.
+        sibling_data = self.db.get_sheet_data_from_cache(self.test_spreadsheet_id, "Sheet1", 1, 7, 10, 11)
+        self.assertIsNotNone(sibling_data)
+
+    def test_invalidate_sheet_data_range_removes_overlapping_range(self) -> None:
+        """Scoped invalidation removes the cached range for the refreshed source itself."""
+        self.db.store_sheet_data_range(self.test_spreadsheet_id, "Sheet1", 1, 1, 10, 5, [["x"] * 5 for _ in range(10)])
+
+        self.db.invalidate_sheet_data_range(self.test_spreadsheet_id, "Sheet1", CellRange(1, 1, 10, 5))
+
+        self.assertEqual(self._extent(self.test_spreadsheet_id, "Sheet1"), set())
+        self.assertIsNone(self.db.get_sheet_data_from_cache(self.test_spreadsheet_id, "Sheet1", 1, 1, 10, 5))
+
+    def test_invalidate_sheet_data_range_removes_overlapping_but_not_identical(self) -> None:
+        """A cached range that merely intersects the invalidated extent is evicted (not just exact matches)."""
+        # Cached A1:E10; invalidate C5:H20 -> overlaps at C5:E10 but is not identical.
+        self.db.store_sheet_data_range(self.test_spreadsheet_id, "Sheet1", 1, 1, 10, 5, [["x"] * 5 for _ in range(10)])
+        # A truly disjoint cached range in the same sheet must be untouched.
+        self.db.store_sheet_data_range(self.test_spreadsheet_id, "Sheet1", 30, 1, 31, 2, [["z", "z"], ["z", "z"]])
+
+        self.db.invalidate_sheet_data_range(self.test_spreadsheet_id, "Sheet1", CellRange(5, 3, 20, 8))
+
+        extents = self._extent(self.test_spreadsheet_id, "Sheet1")
+        self.assertNotIn((1, 1, 10, 5), extents)  # overlapping range evicted
+        self.assertIn((30, 1, 31, 2), extents)  # disjoint range preserved
+
+    def test_invalidate_sheet_data_range_database_closed(self) -> None:
+        """Scoped invalidation returns False when the database is closed."""
+        self.db.close()
+        success = self.db.invalidate_sheet_data_range(self.test_spreadsheet_id, "Sheet1", CellRange(1, 1, 10, 5))
+        self.assertFalse(success)
+
+    def test_sheet_wide_invalidation_still_nukes_everything(self) -> None:
+        """The sheet-wide method (used by the modifiedTime path) still clears every range on the tab."""
+        self.db.store_sheet_data_range(self.test_spreadsheet_id, "Sheet1", 1, 1, 10, 5, [["x"] * 5 for _ in range(10)])
+        self.db.store_sheet_data_range(self.test_spreadsheet_id, "Sheet1", 1, 7, 10, 11, [["y"] * 5 for _ in range(10)])
+
+        self.assertTrue(self.db.invalidate_sheet_data_cache(self.test_spreadsheet_id, "Sheet1"))
+
+        self.assertEqual(self._extent(self.test_spreadsheet_id, "Sheet1"), set())
 
     def test_foreign_key_constraints(self) -> None:
         """Test that foreign key constraints are enforced."""

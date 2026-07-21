@@ -519,10 +519,14 @@ class MainView(QMainWindow):
         if record is None:
             return
 
-        # invalidate_cache returns False on failure (DB locked/error) without raising. If we
-        # ignored it and reloaded, the still-cached stale rows would be served from the DB and
-        # then stamped as freshly refreshed — a silent wrong result. Abort and tell the user.
-        if not SheetDataCache().invalidate_cache(record["spreadsheet_id"], record["sheet_name"]):
+        # Scope invalidation to THIS source's A1 extent so refreshing one source doesn't evict
+        # sibling sources caching other regions of the same tab (issue #80). invalidate_cache_range
+        # returns False on failure (DB locked/error) without raising. If we ignored it and reloaded,
+        # the still-cached stale rows would be served from the DB and then stamped as freshly
+        # refreshed — a silent wrong result. Abort and tell the user.
+        if not SheetDataCache().invalidate_cache_range(
+            record["spreadsheet_id"], record["sheet_name"], record["range_a1"]
+        ):
             logger.warning(
                 f"Refresh aborted: could not invalidate cache for data source {ds_id} "
                 f"({record['spreadsheet_id']}!{record['sheet_name']})"

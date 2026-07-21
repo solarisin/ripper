@@ -239,6 +239,39 @@ class SheetDataCache:
         """
         return self._db.invalidate_sheet_data_cache(spreadsheet_id, sheet_name)
 
+    def invalidate_cache_range(self, spreadsheet_id: str, sheet_name: str, range_a1: str) -> bool:
+        """
+        Invalidate only the cached ranges on a sheet that overlap ``range_a1``.
+
+        Used by the Refresh action: refreshing one data source should evict only the cached
+        data covering that source's A1 extent, not the whole tab, so sibling sources caching
+        other regions of the same sheet are not needlessly dropped and re-fetched (issue #80).
+
+        Open-ended ranges (e.g. ``A:Z``) are resolved against the sheet's grid dimensions so
+        the overlap extent is bounded. If the range cannot be resolved to a concrete extent
+        (e.g. an open-ended range with no stored grid dimensions), this falls back to a
+        sheet-wide invalidation: over-invalidating is safe (data is merely re-fetched), whereas
+        under-invalidating would risk serving stale data.
+
+        Args:
+            spreadsheet_id: The ID of the spreadsheet.
+            sheet_name: The name of the sheet.
+            range_a1: The data source's range in A1 notation (e.g. ``A1:E10`` or ``A:Z``).
+
+        Returns:
+            True if successful, False otherwise.
+        """
+        max_row, max_col = self._resolve_grid_dimensions(spreadsheet_id, sheet_name)
+        try:
+            cell_range = CellRange.from_a1_notation(range_a1, max_row=max_row, max_col=max_col)
+        except ValueError as e:
+            logger.warning(
+                f"Range {range_a1!r} could not be resolved to a bounded extent ({e}); "
+                f"falling back to sheet-wide invalidation for {spreadsheet_id}!{sheet_name}"
+            )
+            return self._db.invalidate_sheet_data_cache(spreadsheet_id, sheet_name)
+        return self._db.invalidate_sheet_data_range(spreadsheet_id, sheet_name, cell_range)
+
     def _get_cached_ranges(self, spreadsheet_id: str, sheet_name: str) -> list[CachedRange]:
         """
         Get all cached ranges for a specific sheet.

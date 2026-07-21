@@ -452,6 +452,54 @@ class TestSheetDataCache(unittest.TestCase):
         )
         self.assertIsNone(cached_data_after)
 
+    def test_invalidate_cache_range_preserves_non_overlapping_sibling(self) -> None:
+        """Regression (#80): refreshing one source's range must not evict a disjoint sibling's cache."""
+        # Source 1 cached at A1:E10, Source 2 at G1:K10 (non-overlapping) on the same tab.
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 10, 5, [["x"] * 5 for _ in range(10)]
+        )
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 7, 10, 11, [["y"] * 5 for _ in range(10)]
+        )
+
+        # Refresh Source 1 -> scope invalidation to its A1:E10 extent.
+        success = self.cache.invalidate_cache_range(self.test_spreadsheet_id, self.test_sheet_name, "A1:E10")
+        self.assertTrue(success)
+
+        # Source 1 gone; Source 2 still served from the DB cache (no API call).
+        self.assertIsNone(
+            self.db.get_sheet_data_from_cache(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 10, 5)
+        )
+        result_data, range_sources = self.cache.get_sheet_data(
+            self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "G1:K10"
+        )
+        self.assertEqual(result_data, [["y"] * 5 for _ in range(10)])
+        self._assert_single_source(range_sources, LoadSource.DATABASE)
+
+    def test_invalidate_cache_range_removes_refreshed_source(self) -> None:
+        """The refreshed source's own overlapping cache is removed by the scoped call."""
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 10, 5, [["x"] * 5 for _ in range(10)]
+        )
+
+        self.cache.invalidate_cache_range(self.test_spreadsheet_id, self.test_sheet_name, "A1:E10")
+
+        self.assertEqual(len(self.db.get_cached_ranges(self.test_spreadsheet_id, self.test_sheet_name)), 0)
+
+    def test_invalidate_cache_range_open_ended_falls_back_when_grid_unknown(self) -> None:
+        """An unresolvable open-ended range falls back to sheet-wide invalidation (never under-invalidates)."""
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 10, 5, [["x"] * 5 for _ in range(10)]
+        )
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, 1, 7, 10, 11, [["y"] * 5 for _ in range(10)]
+        )
+
+        # No grid dimensions stored for this sheet, so 'A:Z' cannot resolve -> sheet-wide fallback.
+        success = self.cache.invalidate_cache_range(self.test_spreadsheet_id, self.test_sheet_name, "A:Z")
+        self.assertTrue(success)
+        self.assertEqual(len(self.db.get_cached_ranges(self.test_spreadsheet_id, self.test_sheet_name)), 0)
+
     def test_invalidate_all_cache(self) -> None:
         """Test invalidating all cache for a spreadsheet."""
         # Store data in multiple sheets
