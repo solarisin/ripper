@@ -130,6 +130,51 @@ class TestSpendingTrendWidget:
         assert horizontal_axes[0] in series.attachedAxes()
         assert vertical_axes[0] in series.attachedAxes()
 
+    def test_update_chart_x_axis_uses_month_categories(self, sample_widget_config, sample_dashboard, qtbot):
+        """Regression (#97): the x-axis must be a category axis of real month labels, not 0,1,2 indices."""
+        widget = SpendingTrendWidget(sample_widget_config, sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            widget._update_chart(
+                [
+                    {"month": "2024-01", "amount": 100.0},
+                    {"month": "2024-02", "amount": 250.0},
+                    {"month": "2024-03", "amount": 175.0},
+                ]
+            )
+        _assert_no_deprecated_axis_api(recorded)
+
+        assert widget.chart_view is not None
+        chart = widget.chart_view.chart()
+
+        horizontal_axes = chart.axes(Qt.Orientation.Horizontal)
+        assert horizontal_axes, "expected a horizontal axis to be attached"
+        assert isinstance(horizontal_axes[0], QBarCategoryAxis), "x-axis should be a category axis of months"
+        assert list(horizontal_axes[0].categories()) == ["2024-01", "2024-02", "2024-03"]
+
+        # The line series must still carry a point per month.
+        series = chart.series()[0]
+        assert series.count() == 3
+        assert horizontal_axes[0] in series.attachedAxes()
+
+    def test_update_chart_empty_data_renders_without_error(self, sample_widget_config, sample_dashboard, qtbot):
+        """The no-data path must clear series and not raise (#97 must not break the empty state)."""
+        widget = SpendingTrendWidget(sample_widget_config, sample_dashboard)
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        widget.create_widget(parent)
+
+        # Populate first, then refresh with no data.
+        widget._update_chart([{"month": "2024-01", "amount": 100.0}])
+        widget._update_chart([])
+
+        assert widget.chart_view is not None
+        assert widget.chart_view.chart().series() == []
+
 
 @pytest.mark.qt
 class TestCategoryBreakdownWidget:
