@@ -400,23 +400,3 @@ class TestAuthView(unittest.TestCase):
 
         auth_view.store_credentials.assert_called_once_with("test_id", "test_secret")
         auth_view.oauth_client_registered.emit.assert_called_once()
-
-    @patch("os.environ.get", return_value="/fake/appdata")
-    @patch("ripper.rippergui.oauth_client_config_view.AuthView.setup_ui")
-    @patch("ripper.rippergui.oauth_client_config_view.AuthView.load_credentials")
-    @patch.object(AuthView, "__init__", return_value=None)
-    def test_get_client_secret_path(self, mock_auth_view_init, mock_load_credentials, mock_setup_ui, mock_environ_get):
-        """Test that get_client_secret_path returns the correct path."""
-        auth_view = AuthView()
-        mock_auth_view_init.assert_called_once()
-        auth_view.setup_ui = MagicMock()
-        auth_view.load_credentials = MagicMock()
-        auth_view.setup_ui()
-        auth_view.load_credentials()
-
-        import os
-
-        expected_path = os.path.join("/fake/appdata", "ripper", "client_secret.json")
-        self.assertEqual(auth_view._get_client_secret_path(), expected_path)
-
-        mock_environ_get.assert_called_once_with("APPDATA", "")

@@ -10,7 +10,6 @@ This module provides:
 
 import enum
 import json
-import os
 
 import keyring
 from beartype.typing import Any, Dict, List, Optional, Tuple, Type, cast
@@ -299,15 +298,6 @@ class AuthManager(QObject):
         self._oauth2_service: Optional[UserInfoService] = None
         # Credentials are persisted only in the system keyring (see TokenStore); load them at
         # startup via check_stored_credentials(). No plaintext token file is written or read (#31).
-
-    def _get_client_secret_path(self) -> str:
-        """
-        Get the path to the client secret file.
-
-        Returns:
-            str: Path to the client secret file.
-        """
-        return os.path.join(os.environ.get("APPDATA", ""), "ripper", "client_secret.json")
 
     def has_oauth_client_credentials(self) -> bool:
         """Check if we have OAuth client credentials stored"""

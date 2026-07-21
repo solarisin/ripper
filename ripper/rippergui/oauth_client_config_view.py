@@ -6,7 +6,6 @@ either by manual entry or by selecting a client_secret.json file. It handles UI 
 and emits a signal when registration is successful.
 """
 
-import logging
 import os
 from pathlib import Path
 
@@ -27,8 +26,6 @@ from PySide6.QtWidgets import (
 )
 
 from ripper.ripperlib.auth import AuthManager
-
-log = logging.getLogger("ripper:oauth_client_config_view")
 
 
 class AuthView(QWidget):
@@ -231,12 +228,3 @@ class AuthView(QWidget):
 
             # Emit signal indicating successful registration
             self.oauth_client_registered.emit()
-
-    def _get_client_secret_path(self) -> str:
-        """
-        Get the path to the client secret file.
-
-        Returns:
-            str: Path to the client secret file.
-        """
-        return os.path.join(os.environ.get("APPDATA", ""), "ripper", "client_secret.json")
