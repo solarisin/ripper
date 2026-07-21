@@ -516,33 +516,43 @@ class RipperDb:
             with self._transaction():
                 c = self._conn.cursor()
 
-                # Insert or update the range record
+                # Upsert the range record. On the UNIQUE(extent) conflict we keep the existing
+                # row (and its id) rather than deleting/reinserting, so any externally-held
+                # range_id stays valid across re-caches. RETURNING id yields the stable id on
+                # both the insert-new and update-existing paths.
                 c.execute(
-                    """INSERT OR REPLACE INTO sheet_data_ranges
+                    """INSERT INTO sheet_data_ranges
                        (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col, cached_at)
-                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                       ON CONFLICT(spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
+                           DO UPDATE SET cached_at=CURRENT_TIMESTAMP
+                       RETURNING id""",
                     (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col),
                 )
+                range_id = int(c.fetchone()[0])
 
-                range_id = c.lastrowid
-
-                # Delete existing cell data for this range
+                # Load-bearing: with a stable id the ON CONFLICT path no longer cascade-deletes
+                # the previous cells, so we must clear them explicitly before re-inserting to
+                # avoid stale cells surviving a re-cache.
                 c.execute("DELETE FROM sheet_data_cells WHERE range_id = ?", (range_id,))
 
-                # Insert cell data
-                for row_offset, row_data in enumerate(cell_data):
-                    for col_offset, cell_value in enumerate(row_data):
-                        row_num = start_row + row_offset
-                        col_num = start_col + col_offset
-
-                        # Convert cell value to string for storage
-                        cell_str = str(cell_value) if cell_value is not None else None
-
-                        c.execute(
-                            """INSERT INTO sheet_data_cells (range_id, row_num, col_num, cell_value)
-                               VALUES (?, ?, ?, ?)""",
-                            (range_id, row_num, col_num, cell_str),
-                        )
+                # Batch-insert the new cell data (one executemany instead of a statement per cell).
+                cell_rows = [
+                    (
+                        range_id,
+                        start_row + row_offset,
+                        start_col + col_offset,
+                        str(cell_value) if cell_value is not None else None,
+                    )
+                    for row_offset, row_data in enumerate(cell_data)
+                    for col_offset, cell_value in enumerate(row_data)
+                ]
+                if cell_rows:
+                    c.executemany(
+                        """INSERT INTO sheet_data_cells (range_id, row_num, col_num, cell_value)
+                           VALUES (?, ?, ?, ?)""",
+                        cell_rows,
+                    )
 
                 logger.debug(
                     f"Stored sheet data range {start_row},{start_col}:{end_row},{end_col} "
