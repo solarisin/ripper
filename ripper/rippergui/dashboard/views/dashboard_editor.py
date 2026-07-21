@@ -1,11 +1,12 @@
 """Dashboard editor view."""
 
 import uuid
+from datetime import datetime
 from typing import Any, Callable, Optional
 
 from loguru import logger
-from PySide6.QtCore import QMimeData, QObject, QSize, Qt, Signal
-from PySide6.QtGui import QDrag, QDropEvent, QMouseEvent
+from PySide6.QtCore import QMimeData, QObject, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtGui import QDrag, QDropEvent, QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -138,6 +139,100 @@ class WidgetPalette(QFrame):
         self.widget_list.addItem(item)
 
 
+class WidgetContainer(QFrame):
+    """A draggable/resizable frame representing a single widget on the canvas.
+
+    Left-press-and-drag on the body moves the widget; press-and-drag on the
+    bottom-right grip resizes it. A press with no drag is treated as a plain
+    click and forwarded to the canvas for selection. All geometry snapping and
+    model bookkeeping is delegated to the owning ``DashboardCanvas`` so the
+    interaction logic stays testable and the model stays the single source of
+    truth for grid coordinates.
+    """
+
+    # Cursor travel (px) required before a press becomes a drag rather than a click.
+    DRAG_THRESHOLD_PX = 4
+    # Side (px) of the square bottom-right resize grip.
+    RESIZE_GRIP_PX = 16
+
+    def __init__(self, widget_id: str, canvas: "DashboardCanvas", parent: Optional[QWidget] = None) -> None:
+        """Initialize the container.
+
+        Args:
+            widget_id: ID of the widget this container represents.
+            canvas: Owning dashboard canvas.
+            parent: Parent widget.
+        """
+        super().__init__(parent)
+        self._widget_id = widget_id
+        self._canvas = canvas
+        self._press_global: Optional[QPoint] = None
+        self._origin_geometry: Optional[QRect] = None
+        self._mode: Optional[str] = None  # None | "move" | "resize"
+        self._dragging = False
+
+        # A visual, mouse-transparent grip in the bottom-right corner. Presses over it
+        # still reach this container, which decides move vs. resize by hit region.
+        self._resize_grip = QWidget(self)
+        self._resize_grip.setObjectName("resizeGrip")
+        self._resize_grip.setFixedSize(self.RESIZE_GRIP_PX, self.RESIZE_GRIP_PX)
+        self._resize_grip.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        self._resize_grip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._resize_grip.setStyleSheet("#resizeGrip { background-color: #4a90e2; border-top-left-radius: 6px; }")
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Keep the resize grip pinned to the bottom-right corner."""
+        super().resizeEvent(event)
+        self._resize_grip.move(self.width() - self.RESIZE_GRIP_PX, self.height() - self.RESIZE_GRIP_PX)
+        self._resize_grip.raise_()
+
+    def _in_resize_grip(self, local_pos: QPoint) -> bool:
+        return (
+            local_pos.x() >= self.width() - self.RESIZE_GRIP_PX and local_pos.y() >= self.height() - self.RESIZE_GRIP_PX
+        )
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Begin a potential move/resize gesture."""
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        self._press_global = event.globalPosition().toPoint()
+        self._origin_geometry = self.geometry()
+        self._dragging = False
+        self._mode = "resize" if self._in_resize_grip(event.position().toPoint()) else "move"
+        event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """Update the live preview geometry while dragging."""
+        if self._mode is None or self._press_global is None or self._origin_geometry is None:
+            super().mouseMoveEvent(event)
+            return
+        delta = event.globalPosition().toPoint() - self._press_global
+        if not self._dragging and delta.manhattanLength() < self.DRAG_THRESHOLD_PX:
+            return
+        self._dragging = True
+        if self._mode == "move":
+            self._canvas.preview_widget_move(self, self._origin_geometry, delta)
+        else:
+            self._canvas.preview_widget_resize(self, self._origin_geometry, delta)
+        event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """Snap and commit the gesture, or fall back to click-to-select."""
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+        if self._mode is not None and self._dragging:
+            self._canvas.commit_widget_geometry(self._widget_id)
+        else:
+            self._canvas._on_widget_clicked(self._widget_id, event)
+        self._mode = None
+        self._press_global = None
+        self._origin_geometry = None
+        self._dragging = False
+        event.accept()
+
+
 class DashboardCanvas(QFrame):
     """Canvas for arranging dashboard widgets."""
 
@@ -175,15 +270,11 @@ class DashboardCanvas(QFrame):
 
     def _add_widget(self, widget: WidgetConfig) -> None:
         """Add a widget to the canvas."""
-        container = QFrame()
+        container = WidgetContainer(widget.id, self)
         container.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
         container.setStyleSheet(self._widget_style(False))
         container.setProperty("widget_id", widget.id)
 
-        def handle_mouse_press(event: QMouseEvent) -> None:
-            self._on_widget_clicked(widget.id, event)
-
-        container.mousePressEvent = handle_mouse_press  # type: ignore[method-assign]
         # Create layout
         layout = QVBoxLayout()
         layout.setContentsMargins(2, 2, 2, 2)
@@ -370,6 +461,56 @@ class DashboardCanvas(QFrame):
         width = widget.geometry().width() // self.cell_size
         height = widget.geometry().height() // self.cell_size
         return (width, height)
+
+    def _pixel_bounds(self) -> tuple[int, int]:
+        """Return the canvas extent in pixels as ``(max_width, max_height)``."""
+        return self.grid_size[1] * self.cell_size, self.grid_size[0] * self.cell_size
+
+    def preview_widget_move(self, container: WidgetContainer, origin: QRect, delta: QPoint) -> None:
+        """Move a widget container to follow the drag, clamped to the canvas.
+
+        The container tracks the raw pixel position during the drag; it is snapped
+        to the grid on release in :meth:`commit_widget_geometry`.
+        """
+        max_width, max_height = self._pixel_bounds()
+        new_x = max(0, min(origin.x() + delta.x(), max_width - origin.width()))
+        new_y = max(0, min(origin.y() + delta.y(), max_height - origin.height()))
+        container.move(int(new_x), int(new_y))
+
+    def preview_widget_resize(self, container: WidgetContainer, origin: QRect, delta: QPoint) -> None:
+        """Resize a widget container to follow the drag, clamped to the canvas."""
+        max_width, max_height = self._pixel_bounds()
+        new_width = max(self.cell_size, min(origin.width() + delta.x(), max_width - origin.x()))
+        new_height = max(self.cell_size, min(origin.height() + delta.y(), max_height - origin.y()))
+        container.resize(int(new_width), int(new_height))
+
+    def commit_widget_geometry(self, widget_id: str) -> None:
+        """Snap a widget's pixel geometry to whole grid cells within the canvas.
+
+        Called on drag/resize release. Grid coordinates are re-derived from this
+        snapped geometry by :meth:`get_widget_position` / :meth:`get_widget_size`;
+        the model is updated when the dashboard is saved via ``apply_canvas_state``.
+        """
+        container = self.widgets.get(widget_id)
+        if container is None:
+            return
+
+        geom = container.geometry()
+        grid_rows, grid_cols = self.grid_size
+
+        width_cells = max(1, min(round(geom.width() / self.cell_size), grid_cols))
+        height_cells = max(1, min(round(geom.height() / self.cell_size), grid_rows))
+        col = max(0, min(round(geom.x() / self.cell_size), grid_cols - width_cells))
+        row = max(0, min(round(geom.y() / self.cell_size), grid_rows - height_cells))
+
+        container.setGeometry(
+            col * self.cell_size,
+            row * self.cell_size,
+            width_cells * self.cell_size,
+            height_cells * self.cell_size,
+        )
+        # Selecting the just-moved widget keeps the properties panel in sync.
+        self.signals.widget_selected.emit(widget_id)
 
 
 class DashboardSignals(QObject):
@@ -602,12 +743,20 @@ class DashboardEditor(QWidget):
         is up to date and can persist it to disk.
         """
         try:
-            # Update widget positions and sizes from canvas
+            # Update widget positions and sizes from canvas, tracking whether anything
+            # actually changed so we only bump updated_at on a real geometry change.
+            geometry_changed = False
             for widget_id, widget in self.dashboard.widgets.items():
                 if widget_id in self.canvas.widgets:
-                    # Update widget position and size from canvas
-                    widget.position = self.canvas.get_widget_position(widget_id)
-                    widget.size = self.canvas.get_widget_size(widget_id)
+                    new_position = self.canvas.get_widget_position(widget_id)
+                    new_size = self.canvas.get_widget_size(widget_id)
+                    if new_position != widget.position or new_size != widget.size:
+                        widget.position = new_position
+                        widget.size = new_size
+                        geometry_changed = True
+
+            if geometry_changed:
+                self.dashboard.updated_at = datetime.now()
 
             # Emit signal so the caller knows the model is up to date
             self.signals.dashboard_saved.emit()
