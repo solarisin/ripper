@@ -117,28 +117,3 @@ class DataSource:
             date_range=date_range,
             filters=data.get("filters", {}),
         )
-
-    def fetch_data(self, service: Any) -> Any:
-        """Fetch data for this data source.
-
-        Args:
-            service: The service object to use for fetching data
-
-        Returns:
-            The fetched data
-
-        Raises:
-            ValueError: If the data source type is unknown
-        """
-        from ripper.ripperlib.sheets_backend import retrieve_sheet_data
-
-        if self.type == DataSourceType.TILLER_TRANSACTIONS:
-            data, _ = retrieve_sheet_data(service, self.spreadsheet_id, f"{self.sheet_name}!{self.range_a1}")
-            if not data or len(data) < 2:
-                return []
-            headers = [str(cell).strip().lower().replace(" ", "_") for cell in data[0]]
-            return [
-                {headers[index]: cell for index, cell in enumerate(row) if index < len(headers)} for row in data[1:]
-            ]
-
-        raise ValueError(f"Unknown data source type: {self.type}")

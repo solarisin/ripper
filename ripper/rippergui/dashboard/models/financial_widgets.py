@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QHeaderView,
+    QLabel,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -30,7 +31,8 @@ from .tiller_data import TillerDataProcessor
 from .widget_types import WidgetType
 from .widgets import BaseWidget, WidgetConfig, register_widget
 
-# Default colors for charts
+# Default colors for charts. Each entry must be distinct so adjacent categories never
+# collapse to the same color (#62).
 CHART_COLORS = [
     "#2ecc71",  # emerald
     "#3498db",  # peter river
@@ -39,10 +41,39 @@ CHART_COLORS = [
     "#e67e22",  # carrot
     "#e74c3c",  # alizarin
     "#1abc9c",  # turquoise
-    "#3498db",  # peter river
-    "#9b59b6",  # amethyst
     "#34495e",  # wet asphalt
 ]
+
+
+def _create_status_label() -> QLabel:
+    """Create the hidden placeholder label used for no-data and error states (#62)."""
+    label = QLabel()
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setWordWrap(True)
+    label.hide()
+    return label
+
+
+def _show_status(chart_view: QChartView | None, status_label: QLabel | None, message: str, *, is_error: bool) -> None:
+    """Swap a chart widget's chart out for a visible status message.
+
+    Used for both the explicit no-data placeholder and the error state so a failure
+    or empty result is surfaced in the UI rather than leaving a blank/stale chart (#62).
+    """
+    if status_label is not None:
+        status_label.setText(message)
+        status_label.setStyleSheet("color: #c0392b; padding: 8px;" if is_error else "color: #7f8c8d; padding: 8px;")
+        status_label.show()
+    if chart_view is not None:
+        chart_view.hide()
+
+
+def _clear_status(chart_view: QChartView | None, status_label: QLabel | None) -> None:
+    """Restore the chart view after a successful render, hiding any status message."""
+    if status_label is not None:
+        status_label.hide()
+    if chart_view is not None:
+        chart_view.show()
 
 
 @register_widget(WidgetType.SPENDING_TREND)
@@ -52,6 +83,7 @@ class SpendingTrendWidget(BaseWidget):
     def __init__(self, config: WidgetConfig, dashboard: Dashboard) -> None:
         super().__init__(config, dashboard)
         self.chart_view: QChartView | None = None
+        self.status_label: QLabel | None = None
         self.data_processor: TillerDataProcessor | None = None
 
     def create_widget(self, parent: QWidget) -> QWidget:
@@ -70,6 +102,11 @@ class SpendingTrendWidget(BaseWidget):
         # Create chart view with initial empty state
         self.chart_view = self._create_empty_chart_view()
         layout.addWidget(self.chart_view)
+
+        # A status label swapped in for the chart when there is no data or a
+        # processing error occurs, so the failure is visible and not just logged (#62).
+        self.status_label = _create_status_label()
+        layout.addWidget(self.status_label)
 
         # Initial data load if data source is available
         self.update_data()
@@ -152,13 +189,14 @@ class SpendingTrendWidget(BaseWidget):
         # Update chart view
         self.chart_view.update()
 
-    def update_data(self, service: Any = None) -> None:
-        """Update the widget's data from its data source."""
+    def update_data(self, data_cache: Any = None) -> None:
+        """Update the widget's data from the runtime data cache."""
         if not self.config.data_source_id:
             return
 
-        data = self._runtime_data(service)
+        data = self._runtime_data(data_cache)
         if not data:
+            _show_status(self.chart_view, self.status_label, "No spending data available", is_error=False)
             return
 
         try:
@@ -170,16 +208,21 @@ class SpendingTrendWidget(BaseWidget):
 
             # Get monthly spending data
             monthly_data = self.data_processor.get_monthly_spending()
+            if not monthly_data:
+                _show_status(self.chart_view, self.status_label, "No spending data available", is_error=False)
+                return
 
             # Update the chart
             self._update_chart(monthly_data)
+            _clear_status(self.chart_view, self.status_label)
 
         except Exception as e:
             logger.error(f"Error updating spending trend: {e}")
+            _show_status(self.chart_view, self.status_label, f"Error loading chart: {e}", is_error=True)
 
-    def _runtime_data(self, service: Any = None) -> list[dict[str, Any]]:
-        if isinstance(service, dict) and self.config.data_source_id:
-            data = service.get(self.config.data_source_id)
+    def _runtime_data(self, data_cache: Any = None) -> list[dict[str, Any]]:
+        if isinstance(data_cache, dict) and self.config.data_source_id:
+            data = data_cache.get(self.config.data_source_id)
             if isinstance(data, list):
                 return data
         return []
@@ -192,6 +235,7 @@ class CategoryBreakdownWidget(BaseWidget):
     def __init__(self, config: WidgetConfig, dashboard: Dashboard) -> None:
         super().__init__(config, dashboard)
         self.chart_view: QChartView | None = None
+        self.status_label: QLabel | None = None
         self.data_processor: TillerDataProcessor | None = None
         self.min_percentage = 2.0  # Minimum percentage to show as individual slice
 
@@ -211,6 +255,10 @@ class CategoryBreakdownWidget(BaseWidget):
         # Create chart view with initial empty state
         self.chart_view = self._create_empty_chart_view()
         layout.addWidget(self.chart_view)
+
+        # Visible no-data / error placeholder swapped in for the chart (#62).
+        self.status_label = _create_status_label()
+        layout.addWidget(self.status_label)
 
         # Initial data load if data source is available
         self.update_data()
@@ -296,13 +344,14 @@ class CategoryBreakdownWidget(BaseWidget):
         # Update chart view
         self.chart_view.update()
 
-    def update_data(self, service: Any = None) -> None:
-        """Update the widget's data from its data source."""
+    def update_data(self, data_cache: Any = None) -> None:
+        """Update the widget's data from the runtime data cache."""
         if not self.config.data_source_id:
             return
 
-        data = self._runtime_data(service)
+        data = self._runtime_data(data_cache)
         if not data:
+            _show_status(self.chart_view, self.status_label, "No category data available", is_error=False)
             return
 
         try:
@@ -312,16 +361,21 @@ class CategoryBreakdownWidget(BaseWidget):
 
             # Get category breakdown data
             category_data = self.data_processor.get_category_breakdown()
+            if not category_data:
+                _show_status(self.chart_view, self.status_label, "No category data available", is_error=False)
+                return
 
             # Update the chart
             self._update_chart(category_data)
+            _clear_status(self.chart_view, self.status_label)
 
         except Exception as e:
             logger.error(f"Error updating category breakdown: {e}")
+            _show_status(self.chart_view, self.status_label, f"Error loading chart: {e}", is_error=True)
 
-    def _runtime_data(self, service: Any = None) -> list[dict[str, Any]]:
-        if isinstance(service, dict) and self.config.data_source_id:
-            data = service.get(self.config.data_source_id)
+    def _runtime_data(self, data_cache: Any = None) -> list[dict[str, Any]]:
+        if isinstance(data_cache, dict) and self.config.data_source_id:
+            data = data_cache.get(self.config.data_source_id)
             if isinstance(data, list):
                 return data
         return []
@@ -440,7 +494,7 @@ class BudgetVsActualWidget(BaseWidget):
         # Update chart view
         self.chart_view.update()
 
-    def update_data(self, service: Any = None) -> None:
+    def update_data(self, data_cache: Any = None) -> None:
         """Show the unsupported state until budget sources are implemented."""
         if self.chart_view:
             self.chart_view.chart().setTitle("Budget data sources are not supported yet")
@@ -526,12 +580,34 @@ class TopExpensesWidget(BaseWidget):
         # Disable sorting while in empty state
         self.table.setSortingEnabled(False)
 
-    def update_data(self, service: Any = None) -> None:
-        """Update the widget's data from its data source."""
+    def _show_error_state(self, message: str) -> None:
+        """Show a visible error message in the table, distinct from the empty state (#62)."""
+        if not self.table:
+            return
+
+        # Clear any stale data or spans before showing the single spanning error cell.
+        self.table.clearSpans()
+        self.table.clearContents()
+        self.table.setRowCount(1)
+        self.table.setRowHidden(0, False)
+
+        error_item = QTableWidgetItem(message)
+        error_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        error_item.setFlags(error_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        error_item.setForeground(QColor("#c0392b"))
+
+        self.table.setSpan(0, 0, 1, 4)
+        self.table.setItem(0, 0, error_item)
+
+        # Disable sorting while in error state.
+        self.table.setSortingEnabled(False)
+
+    def update_data(self, data_cache: Any = None) -> None:
+        """Update the widget's data from the runtime data cache."""
         if not self.config.data_source_id or not self.table:
             return
 
-        data = self._runtime_data(service)
+        data = self._runtime_data(data_cache)
         if not data:
             self._show_empty_state()
             return
@@ -591,11 +667,11 @@ class TopExpensesWidget(BaseWidget):
 
         except Exception as e:
             logger.error(f"Error updating top expenses: {e}")
-            self._show_empty_state()
+            self._show_error_state(f"Error loading data: {e}")
 
-    def _runtime_data(self, service: Any = None) -> list[dict[str, Any]]:
-        if isinstance(service, dict) and self.config.data_source_id:
-            data = service.get(self.config.data_source_id)
+    def _runtime_data(self, data_cache: Any = None) -> list[dict[str, Any]]:
+        if isinstance(data_cache, dict) and self.config.data_source_id:
+            data = data_cache.get(self.config.data_source_id)
             if isinstance(data, list):
                 return data
         return []

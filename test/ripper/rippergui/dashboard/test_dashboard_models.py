@@ -1,6 +1,7 @@
 """Tests for dashboard model persistence."""
 
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,6 +15,7 @@ from ripper.rippergui.dashboard.models import (
     WidgetConfig,
     WidgetType,
 )
+from ripper.rippergui.dashboard.models.widgets import BaseWidget
 
 
 def test_dashboard_round_trip_with_widget_configs_and_exact_ranges(tmp_path):
@@ -217,6 +219,41 @@ def test_from_dict_skips_widget_with_null_position():
     assert "widget-good" in loaded.widgets
     assert "widget-bad" not in loaded.widgets
     assert "source-good" in loaded.data_sources
+
+
+def test_data_source_has_no_legacy_fetch_data_method():
+    """Item 4 (#62): the legacy synchronous fetch path is dead code and must be removed."""
+    assert not hasattr(DataSource, "fetch_data")
+
+
+def test_base_widget_update_data_reads_dict_cache_only():
+    """Item 4 (#62): BaseWidget.update_data must consume only the runtime dict cache.
+
+    The legacy branch that called ``data_source.fetch_data(service)`` for a non-dict
+    "service" object is gone, so such an argument is simply ignored (no fetch, no crash).
+    """
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(_make_source("s1"))
+
+    processed: list[Any] = []
+
+    class _ConcreteWidget(BaseWidget):
+        def create_widget(self, parent):  # pragma: no cover - not exercised here
+            raise NotImplementedError
+
+        def _process_data(self, data):
+            processed.append(data)
+
+    widget = _ConcreteWidget(_make_widget("w1", "s1"), dashboard)
+
+    # The dict cache is the one supported contract.
+    widget.update_data({"s1": [{"amount": 1}]})
+    assert processed == [[{"amount": 1}]]
+
+    # A legacy non-dict "service" object is ignored now that the sync branch is gone.
+    processed.clear()
+    widget.update_data(MagicMock())
+    assert processed == []
 
 
 def test_from_dict_prunes_widgets_with_dangling_data_source_references():

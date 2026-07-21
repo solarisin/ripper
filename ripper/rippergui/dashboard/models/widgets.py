@@ -76,11 +76,16 @@ class BaseWidget:
         """
         raise NotImplementedError("Subclasses must implement create_widget")
 
-    def update_data(self, service: Any = None) -> None:
-        """Update widget data from its data source or runtime cache.
+    def update_data(self, data_cache: Any = None) -> None:
+        """Update widget data from the runtime data cache.
+
+        The dashboard's refresh service populates ``data_cache`` as a mapping of
+        ``data_source_id -> records`` and passes it here; this dict is the only
+        supported contract. The former legacy branch that synchronously fetched
+        via a "service" object has been removed (#62).
 
         Args:
-            service: Optional runtime data cache or legacy service object
+            data_cache: Mapping of data source id to already-refreshed records.
         """
         if not self.config.data_source_id:
             return
@@ -89,22 +94,18 @@ class BaseWidget:
         if not data_source:
             return
 
-        try:
-            if isinstance(service, dict):
-                data = service.get(self.config.data_source_id)
-                if data is None:
-                    # The dashboard may not have been refreshed yet; this is
-                    # normal on first render and should not produce noisy logs.
-                    logger.debug(f"No refreshed data yet for data source {self.config.data_source_id}")
-                    return
-            elif service is not None:
-                data = data_source.fetch_data(service)
-            else:
-                logger.debug("No service provided for data fetching; skipping widget update")
-                return
-            self._process_data(data)
-        except Exception as e:
-            logger.error(f"Error updating widget data: {e}")
+        if not isinstance(data_cache, dict):
+            # No runtime cache provided (or a legacy non-dict argument): nothing to render.
+            return
+
+        data = data_cache.get(self.config.data_source_id)
+        if data is None:
+            # The dashboard may not have been refreshed yet; this is normal on
+            # first render and should not produce noisy logs.
+            logger.debug(f"No refreshed data yet for data source {self.config.data_source_id}")
+            return
+
+        self._process_data(data)
 
     def _process_data(self, data: Any) -> None:
         """Process data from the data source.
