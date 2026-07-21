@@ -88,10 +88,14 @@ class TestIsRangeFormatValid:
     def test_over_limit_columns_rejected(self):
         # ``ZZZZ1`` far exceeds the Sheets column limit and must not read as valid format.
         assert SheetRangeValidator.is_range_format_valid("ZZZZ1") is False
-        # Boundary: the last valid column (XFD == 16384) is accepted, one past it is not.
-        assert col_to_letter(MAX_SHEET_COLUMNS) == "XFD"
+        # Boundary: Google Sheets supports up to column "ZZZ" (18278) — NOT the Excel "XFD"
+        # (16384) ceiling — so the last valid column is accepted and one past it (AAAA) is not.
+        assert col_to_letter(MAX_SHEET_COLUMNS) == "ZZZ"
+        assert col_to_letter(MAX_SHEET_COLUMNS + 1) == "AAAA"
         assert SheetRangeValidator.is_range_format_valid(f"{col_to_letter(MAX_SHEET_COLUMNS)}1") is True
         assert SheetRangeValidator.is_range_format_valid(f"{col_to_letter(MAX_SHEET_COLUMNS + 1)}1") is False
+        # Columns between the Excel and Sheets ceilings (XFE..ZZZ) are valid in Sheets.
+        assert SheetRangeValidator.is_range_format_valid("XFE1") is True
         # Over-limit column in an open-ended form is rejected too.
         assert SheetRangeValidator.is_range_format_valid(f"A:{col_to_letter(MAX_SHEET_COLUMNS + 1)}") is False
 
