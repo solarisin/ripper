@@ -410,6 +410,78 @@ class TestSheetsSelectionDialog:
 
         assert progress.reset_calls >= 1  # dialog dismissed on completion, no regression
 
+    @patch("ripper.rippergui.sheets_selection_view._SpreadsheetLoader.start")
+    @patch("ripper.rippergui.sheets_selection_view.AuthManager")
+    def test_valid_format_without_dimensions_keeps_save_disabled(self, mock_auth, mock_loader_start, qtbot):
+        """Core #61 bug: a format-valid range whose bounds cannot be verified (sheet dimensions
+        unavailable) must NOT enable Save, and must surface a warning rather than silently allow
+        an out-of-range save."""
+        mock_auth_instance = MagicMock()
+        mock_auth.return_value = mock_auth_instance
+        mock_auth_instance.create_drive_service.return_value = MagicMock()
+
+        dialog = SheetsSelectionDialog()
+        qtbot.addWidget(dialog)
+
+        # A spreadsheet is selected, but no sheet metadata (dimensions) is loaded yet.
+        dialog.selected_spreadsheet = self._spreadsheet("s1", "One")
+        dialog.sheet_properties_list = []
+        dialog.select_button.setEnabled(True)  # start from the (wrong) enabled state to prove it flips off
+
+        dialog._validate_sheet_range("A1:B5")
+
+        assert not dialog.select_button.isEnabled()
+        assert dialog.status_label.text()  # a warning is shown
+
+    @patch("ripper.rippergui.sheets_selection_view._SpreadsheetLoader.start")
+    @patch("ripper.rippergui.sheets_selection_view.AuthManager")
+    def test_error_uses_status_label_and_leaves_details_panel_intact(self, mock_auth, mock_loader_start, qtbot):
+        """Validation errors must render in the dedicated status label and must NOT overwrite the
+        spreadsheet details panel (no stale warning left behind) (#61)."""
+        mock_auth_instance = MagicMock()
+        mock_auth.return_value = mock_auth_instance
+        mock_auth_instance.create_drive_service.return_value = MagicMock()
+
+        dialog = SheetsSelectionDialog()
+        qtbot.addWidget(dialog)
+
+        dialog.details_text = "<b>Name:</b> One"
+        dialog.details_content.setText(dialog.details_text)
+
+        dialog._validate_sheet_range("not-a-range")
+
+        assert not dialog.select_button.isEnabled()
+        assert dialog.status_label.text()  # the error is shown in the status label
+        assert dialog.details_content.text() == dialog.details_text  # details panel untouched
+
+    @patch("ripper.rippergui.sheets_selection_view._SpreadsheetLoader.start")
+    @patch("ripper.rippergui.sheets_selection_view.AuthManager")
+    def test_valid_bounded_range_with_dimensions_enables_save_and_clears_status(
+        self, mock_auth, mock_loader_start, qtbot
+    ):
+        """A format-valid, in-bounds range with known dimensions enables Save and clears any prior
+        status message; the details panel is not disturbed."""
+        mock_auth_instance = MagicMock()
+        mock_auth.return_value = mock_auth_instance
+        mock_auth_instance.create_drive_service.return_value = MagicMock()
+
+        dialog = SheetsSelectionDialog()
+        qtbot.addWidget(dialog)
+
+        sheet_prop = MagicMock(spec=SheetProperties, title="Sheet1", grid=MagicMock(row_count=100, column_count=26))
+        dialog.selected_spreadsheet = self._spreadsheet("s1", "One")
+        dialog.sheet_properties_list = [sheet_prop]
+        old = dialog.sheet_name_combobox.blockSignals(True)
+        dialog.sheet_name_combobox.addItem("Sheet1")
+        dialog.sheet_name_combobox.setCurrentText("Sheet1")
+        dialog.sheet_name_combobox.blockSignals(old)
+        dialog.status_label.setText("stale warning")
+
+        dialog._validate_sheet_range("A1:B5")
+
+        assert dialog.select_button.isEnabled()
+        assert dialog.status_label.text() == ""
+
 
 class TestLoaderReferenceTracking:
     """Identity-safe background-loader tracking guards the #74 out-of-order completion race.
