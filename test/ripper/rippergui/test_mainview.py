@@ -219,6 +219,36 @@ def test_restore_layout_invalid_state_no_crash(qtbot, layout_settings):
     view._restore_layout()  # must not raise
 
 
+@pytest.mark.qt
+def test_stub_actions_disabled_on_construction(qtbot):
+    """Save/Print/Undo are unimplemented stubs and must ship disabled (#48).
+
+    They previously flashed a fake-success status message while doing nothing. Until real
+    implementations land they must be disabled so the UI never reports success for work not done.
+    """
+    view = MainView()
+    qtbot.addWidget(view)
+    assert view._save_act.isEnabled() is False
+    assert view._print_act.isEnabled() is False
+    assert view._undo_act.isEnabled() is False
+
+
+@pytest.mark.qt
+def test_stub_actions_remain_disabled_after_oauth_ui_update(qtbot):
+    """No reachable startup/state-change path may re-enable the stub actions (#48).
+
+    ``update_oauth_ui`` is the only method that programmatically toggles action enablement; it must
+    only touch the authenticate/new-source actions. Driving it (as startup does) must leave the
+    Save/Print/Undo stubs disabled, since there is no implementation behind them.
+    """
+    view = MainView()
+    qtbot.addWidget(view)
+    view.update_oauth_ui()
+    assert view._save_act.isEnabled() is False
+    assert view._print_act.isEnabled() is False
+    assert view._undo_act.isEnabled() is False
+
+
 if __name__ == "__main__":
     unittest.main()
 
