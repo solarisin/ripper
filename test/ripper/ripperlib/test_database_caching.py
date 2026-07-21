@@ -140,8 +140,8 @@ class TestDatabaseCaching(unittest.TestCase):
         range_id2 = self.db.store_sheet_data_range(
             self.test_spreadsheet_id, self.test_sheet_name, start_row, start_col, end_row, end_col, new_data
         )
-        # Should get different range_id due to REPLACE creating new row
-        self.assertNotEqual(range_id1, range_id2)
+        # The range id must stay STABLE across re-caches of the same extent (ON CONFLICT upsert)
+        self.assertEqual(range_id1, range_id2)
 
         # Verify new data is stored
         conn = sqlite3.connect(self.db_path)
@@ -149,6 +149,136 @@ class TestDatabaseCaching(unittest.TestCase):
         c.execute("SELECT cell_value FROM sheet_data_cells WHERE range_id = ? ORDER BY row_num, col_num", (range_id2,))
         values = [row[0] for row in c.fetchall()]
         self.assertEqual(values, ["New1", "New2", "New3", "New4"])
+        conn.close()
+
+    def test_recaching_same_extent_keeps_stable_range_id(self) -> None:
+        """Re-caching the SAME range extent twice must keep the SAME range id (#51 core regression)."""
+        start_row, start_col = 1, 1
+        end_row, end_col = 2, 2
+
+        range_id_first = self.db.store_sheet_data_range(
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            [["A1", "B1"], ["A2", "B2"]],
+        )
+        self.assertIsNotNone(range_id_first)
+
+        # Confirm exactly one range row exists and capture its id from the table itself.
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT id FROM sheet_data_ranges
+               WHERE spreadsheet_id = ? AND sheet_name = ?
+                 AND start_row = ? AND start_col = ? AND end_row = ? AND end_col = ?""",
+            (self.test_spreadsheet_id, self.test_sheet_name, start_row, start_col, end_row, end_col),
+        )
+        rows = c.fetchall()
+        self.assertEqual(len(rows), 1)
+        id_before = rows[0][0]
+        conn.close()
+
+        # Re-cache the identical extent (fresh values).
+        range_id_second = self.db.store_sheet_data_range(
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            [["X1", "Y1"], ["X2", "Y2"]],
+        )
+
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT id FROM sheet_data_ranges
+               WHERE spreadsheet_id = ? AND sheet_name = ?
+                 AND start_row = ? AND start_col = ? AND end_row = ? AND end_col = ?""",
+            (self.test_spreadsheet_id, self.test_sheet_name, start_row, start_col, end_row, end_col),
+        )
+        rows = c.fetchall()
+        self.assertEqual(len(rows), 1, "re-caching must not create a second range row")
+        id_after = rows[0][0]
+        conn.close()
+
+        self.assertEqual(range_id_first, range_id_second)
+        self.assertEqual(id_before, id_after)
+        self.assertEqual(id_before, range_id_second)
+
+    def test_recaching_replaces_stale_cells(self) -> None:
+        """Re-caching a same-extent range with new values must leave NO stale cells behind (#51)."""
+        start_row, start_col = 1, 1
+        end_row, end_col = 2, 2
+
+        # Seed the extent with value X everywhere.
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            [["X", "X"], ["X", "X"]],
+        )
+
+        # Re-store the identical extent with value Y everywhere.
+        range_id = self.db.store_sheet_data_range(
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            [["Y", "Y"], ["Y", "Y"]],
+        )
+
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        # No X cell may survive anywhere in the table.
+        c.execute("SELECT COUNT(*) FROM sheet_data_cells WHERE cell_value = 'X'")
+        self.assertEqual(c.fetchone()[0], 0, "stale cells from the previous cache survived")
+        # The stable range must hold exactly the four Y cells.
+        c.execute("SELECT cell_value FROM sheet_data_cells WHERE range_id = ?", (range_id,))
+        values = [row[0] for row in c.fetchall()]
+        self.assertEqual(len(values), 4)
+        self.assertTrue(all(v == "Y" for v in values))
+        conn.close()
+
+    def test_store_retrieve_round_trip_multi_row(self) -> None:
+        """A normal store + retrieve round-trip returns correct data for a 3x3 range (executemany path)."""
+        start_row, start_col = 1, 1
+        end_row, end_col = 3, 3
+        cell_data = [
+            ["A1", "B1", "C1"],
+            ["A2", "B2", "C2"],
+            ["A3", "B3", "C3"],
+        ]
+
+        range_id = self.db.store_sheet_data_range(
+            self.test_spreadsheet_id, self.test_sheet_name, start_row, start_col, end_row, end_col, cell_data
+        )
+        self.assertIsNotNone(range_id)
+
+        cached_data = self.db.get_sheet_data_from_cache(
+            self.test_spreadsheet_id, self.test_sheet_name, start_row, start_col, end_row, end_col
+        )
+        self.assertEqual(cached_data, cell_data)
+
+        # Verify all 9 cells landed at the correct coordinates.
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            "SELECT row_num, col_num, cell_value FROM sheet_data_cells WHERE range_id = ? ORDER BY row_num, col_num",
+            (range_id,),
+        )
+        cells = c.fetchall()
+        self.assertEqual(len(cells), 9)
+        expected = [(r, col, cell_data[r - 1][col - 1]) for r in range(1, 4) for col in range(1, 4)]
+        self.assertEqual(cells, expected)
         conn.close()
 
     def test_store_sheet_data_range_empty_data(self) -> None:
