@@ -8,12 +8,12 @@ from typing import Any, Dict, List, Optional, TypedDict
 import pandas as pd
 
 # Category names (lowercased, whitespace-stripped) that identify account-to-account
-# transfer transactions rather than real income or expenses. The dashboard data model
-# only carries the Transactions sheet columns (date/description/category/amount/account);
-# the Tiller Categories sheet's Type column (Income/Expense/Transfer) is never fetched
-# into this layer, so transfers are classified by their conventional category names.
-# Both legs of a transfer (negative outgoing, positive incoming) match, so neither is
-# miscounted as spending or income.
+# transfer transactions rather than real income or expenses. This is the FALLBACK
+# classifier, used only when the authoritative Tiller Categories "Type" column is
+# unavailable: a category absent from the ``category_types`` map (or no map at all)
+# is classified by matching its name here. Both legs of a transfer (negative outgoing,
+# positive incoming) match, so neither is miscounted as spending or income. Users who
+# rename their transfer categories are covered by the Type metadata instead (issue #115).
 TRANSFER_CATEGORIES: frozenset[str] = frozenset({"transfer", "transfers", "credit card payment"})
 
 
@@ -54,13 +54,33 @@ class TillerTransaction(TypedDict):
 class TillerDataProcessor:
     """Processes Tiller transaction data for dashboard visualizations."""
 
-    def __init__(self, transactions: List[TillerTransaction] | List[Dict[str, Any]]):
+    def __init__(
+        self,
+        transactions: List[TillerTransaction] | List[Dict[str, Any]],
+        category_types: Dict[str, str] | None = None,
+    ):
         """Initialize with transaction data.
 
         Args:
             transactions: List of transaction dictionaries
+            category_types: Optional authoritative ``{category_name: type}`` map
+                sourced from the Tiller Categories sheet's "Type" column
+                (Income/Expense/Transfer). When supplied, a transaction whose
+                category has ``Type == "Transfer"`` is excluded from spending
+                aggregations and ``Type == "Income"`` is excluded as income. Keys
+                and values are matched case-insensitively (whitespace-stripped).
+                A category absent from the map -- or the map being ``None`` -- falls
+                back to the name-based :data:`TRANSFER_CATEGORIES` classifier so
+                every existing call site keeps its current behavior (issue #115).
         """
         self.df = pd.DataFrame(transactions)
+        # Normalize both keys and values so lookups/comparisons are case- and
+        # whitespace-insensitive, mirroring the name-based fallback.
+        self._category_types: dict[str, str] = {
+            str(name).strip().lower(): str(ctype).strip().lower()
+            for name, ctype in (category_types or {}).items()
+            if str(name).strip() and str(ctype).strip()
+        }
         self._preprocess_data()
 
     def _preprocess_data(self) -> None:
@@ -113,17 +133,36 @@ class TillerDataProcessor:
 
         return -abs(amount) if is_parenthesized else amount
 
-    def _without_transfers(self) -> pd.DataFrame:
-        """Return the transactions with transfer-category rows removed.
+    def _non_spending_mask(self) -> pd.Series:
+        """Boolean mask of rows that must NOT count toward spending aggregations.
 
-        Rows whose category matches :data:`TRANSFER_CATEGORIES` (case-insensitively,
-        ignoring surrounding whitespace) are dropped so that neither leg of an
-        account-to-account transfer is counted as spending or income.
+        A row is excluded when its category is a transfer (both legs of an
+        account-to-account transfer) or income. Classification prefers the
+        authoritative Tiller Categories ``Type`` metadata (via the optional
+        ``category_types`` map) and falls back, per category, to the name-based
+        :data:`TRANSFER_CATEGORIES` frozenset when a category is absent from the
+        map or no map was supplied (issue #115).
+        """
+        normalized = self.df["category"].astype(str).str.strip().str.lower()
+        if self._category_types:
+            mapped = normalized.map(self._category_types)
+            in_map = mapped.notna()
+            typed_excluded = mapped.isin(("transfer", "income"))
+            # Categories the Type metadata doesn't cover fall back to name matching.
+            name_transfer = normalized.isin(TRANSFER_CATEGORIES)
+            return (in_map & typed_excluded) | (~in_map & name_transfer)
+        return normalized.isin(TRANSFER_CATEGORIES)
+
+    def _without_transfers(self) -> pd.DataFrame:
+        """Return the transactions with transfer- and income-category rows removed.
+
+        Rows classified as transfers or income (see :meth:`_non_spending_mask`)
+        are dropped so that neither leg of an account-to-account transfer, nor an
+        income-typed row, is counted as spending.
         """
         if self.df.empty or "category" not in self.df.columns:
             return self.df
-        normalized = self.df["category"].astype(str).str.strip().str.lower()
-        return self.df[~normalized.isin(TRANSFER_CATEGORIES)]
+        return self.df[~self._non_spending_mask()]
 
     def filter_by_date_range(self, start_date: datetime, end_date: datetime) -> "TillerDataProcessor":
         """Filter transactions by date range.

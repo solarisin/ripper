@@ -189,7 +189,7 @@ class SpendingTrendWidget(BaseWidget):
         # Update chart view
         self.chart_view.update()
 
-    def update_data(self, data_cache: Any = None) -> None:
+    def update_data(self, data_cache: Any = None, category_types: dict[str, str] | None = None) -> None:
         """Update the widget's data from the runtime data cache."""
         if not self.config.data_source_id:
             return
@@ -204,7 +204,7 @@ class SpendingTrendWidget(BaseWidget):
             # category filters) in DashboardDataService._apply_filters, so the widget consumes
             # them as-is and does NOT re-apply the date range -- a single, shared filter pass
             # avoids the two layers disagreeing on boundary rows (#44).
-            self.data_processor = TillerDataProcessor(data)
+            self.data_processor = TillerDataProcessor(data, category_types=category_types)
 
             # Get monthly spending data
             monthly_data = self.data_processor.get_monthly_spending()
@@ -344,7 +344,7 @@ class CategoryBreakdownWidget(BaseWidget):
         # Update chart view
         self.chart_view.update()
 
-    def update_data(self, data_cache: Any = None) -> None:
+    def update_data(self, data_cache: Any = None, category_types: dict[str, str] | None = None) -> None:
         """Update the widget's data from the runtime data cache."""
         if not self.config.data_source_id:
             return
@@ -357,7 +357,7 @@ class CategoryBreakdownWidget(BaseWidget):
         try:
             # Records arrive already filtered by the data source's date range in the service
             # layer, so the widget renders them without re-applying the range (#44).
-            self.data_processor = TillerDataProcessor(data)
+            self.data_processor = TillerDataProcessor(data, category_types=category_types)
 
             # Get category breakdown data
             category_data = self.data_processor.get_category_breakdown()
@@ -494,7 +494,7 @@ class BudgetVsActualWidget(BaseWidget):
         # Update chart view
         self.chart_view.update()
 
-    def update_data(self, data_cache: Any = None) -> None:
+    def update_data(self, data_cache: Any = None, category_types: dict[str, str] | None = None) -> None:
         """Show the unsupported state until budget sources are implemented."""
         if self.chart_view:
             self.chart_view.chart().setTitle("Budget data sources are not supported yet")
@@ -602,7 +602,7 @@ class TopExpensesWidget(BaseWidget):
         # Disable sorting while in error state.
         self.table.setSortingEnabled(False)
 
-    def update_data(self, data_cache: Any = None) -> None:
+    def update_data(self, data_cache: Any = None, category_types: dict[str, str] | None = None) -> None:
         """Update the widget's data from the runtime data cache."""
         if not self.config.data_source_id or not self.table:
             return
@@ -615,7 +615,7 @@ class TopExpensesWidget(BaseWidget):
         try:
             # Records arrive already filtered by the data source's date range in the service
             # layer, so the widget renders them without re-applying the range (#44).
-            self.data_processor = TillerDataProcessor(data)
+            self.data_processor = TillerDataProcessor(data, category_types=category_types)
 
             top_expenses = self.data_processor.get_top_expenses(self.num_expenses)
 

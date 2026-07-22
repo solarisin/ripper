@@ -76,7 +76,7 @@ class BaseWidget:
         """
         raise NotImplementedError("Subclasses must implement create_widget")
 
-    def update_data(self, data_cache: Any = None) -> None:
+    def update_data(self, data_cache: Any = None, category_types: dict[str, str] | None = None) -> None:
         """Update widget data from the runtime data cache.
 
         The dashboard's refresh service populates ``data_cache`` as a mapping of
@@ -86,6 +86,11 @@ class BaseWidget:
 
         Args:
             data_cache: Mapping of data source id to already-refreshed records.
+            category_types: Optional authoritative ``{category_name: type}`` map
+                from the Tiller Categories sheet, forwarded to
+                ``TillerDataProcessor`` for Type-based transfer/income
+                classification (issue #115). Ignored by widgets that don't
+                process transactions.
         """
         if not self.config.data_source_id:
             return

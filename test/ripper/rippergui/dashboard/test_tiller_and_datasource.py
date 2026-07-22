@@ -153,6 +153,125 @@ def test_get_net_worth_over_time_still_includes_transfers():
     assert series[-1]["net_worth"] == -5.0  # -5 - 2000 + 2000
 
 
+# --------------------------------------------------------------------------- #
+# Category Type metadata classifier (issue #115)
+#
+# When a category->type map is supplied, the authoritative Tiller Categories
+# "Type" column classifies transfers/income; the name-based TRANSFER_CATEGORIES
+# frozenset is only the per-category fallback when a category is absent from the
+# map (or no map is supplied at all).
+# --------------------------------------------------------------------------- #
+
+# Both legs use a RENAMED transfer category ("Move Money") that name-matching
+# alone would miss -- only the Type == "Transfer" metadata catches it.
+RENAMED_TRANSFER_TRANSACTIONS = [
+    {"date": "2024-01-05", "description": "Coffee", "category": "Food", "amount": -5.0, "account": "Visa"},
+    {"date": "2024-01-10", "description": "To savings", "category": "Move Money", "amount": -2000.0, "account": "Bank"},
+    {
+        "date": "2024-01-10",
+        "description": "From checking",
+        "category": "Move Money",
+        "amount": 2000.0,
+        "account": "Savings",
+    },
+]
+
+RENAMED_TRANSFER_TYPES = {"food": "expense", "move money": "transfer"}
+
+
+def test_renamed_transfer_leaks_into_spending_without_type_map():
+    """Baseline: name-matching alone misses a renamed transfer category (the #115 bug)."""
+    processor = TillerDataProcessor(RENAMED_TRANSFER_TRANSACTIONS)
+    result = {row["month"]: row["amount"] for row in processor.get_monthly_spending()}
+    # The -2000 "Move Money" outgoing leg is wrongly counted as spending.
+    assert result == {"2024-01": 2005.0}
+
+
+def test_type_map_excludes_renamed_transfer_from_monthly_spending():
+    processor = TillerDataProcessor(RENAMED_TRANSFER_TRANSACTIONS, category_types=RENAMED_TRANSFER_TYPES)
+    result = {row["month"]: row["amount"] for row in processor.get_monthly_spending()}
+    # Only the genuine -5 expense remains; both transfer legs are excluded by Type.
+    assert result == {"2024-01": 5.0}
+
+
+def test_type_map_excludes_renamed_transfer_from_category_breakdown():
+    processor = TillerDataProcessor(RENAMED_TRANSFER_TRANSACTIONS, category_types=RENAMED_TRANSFER_TYPES)
+    amounts = {row["category"]: row["amount"] for row in processor.get_category_breakdown()}
+    assert amounts == {"Food": 5.0}
+
+
+def test_type_map_excludes_renamed_transfer_from_top_expenses():
+    processor = TillerDataProcessor(RENAMED_TRANSFER_TRANSACTIONS, category_types=RENAMED_TRANSFER_TYPES)
+    assert [row["description"] for row in processor.get_top_expenses()] == ["Coffee"]
+
+
+def test_type_map_excludes_income_typed_category_even_with_negative_amount():
+    """An Income-typed category is excluded from spending even when its name isn't
+    "Income" and its amount is negative (e.g. an income adjustment/refund)."""
+    transactions = [
+        {"date": "2024-01-05", "description": "Coffee", "category": "Food", "amount": -5.0, "account": "Visa"},
+        {"date": "2024-01-08", "description": "Adjustment", "category": "Paycheck", "amount": -30.0, "account": "Bank"},
+    ]
+    category_types = {"food": "expense", "paycheck": "income"}
+    processor = TillerDataProcessor(transactions, category_types=category_types)
+    assert {row["month"]: row["amount"] for row in processor.get_monthly_spending()} == {"2024-01": 5.0}
+    assert {row["category"]: row["amount"] for row in processor.get_category_breakdown()} == {"Food": 5.0}
+    assert [row["description"] for row in processor.get_top_expenses()] == ["Coffee"]
+
+
+def test_income_typed_category_leaks_into_spending_without_type_map():
+    """Baseline: a negative-amount income category is miscounted as spending without the map."""
+    transactions = [
+        {"date": "2024-01-08", "description": "Adjustment", "category": "Paycheck", "amount": -30.0, "account": "Bank"},
+    ]
+    processor = TillerDataProcessor(transactions)
+    assert {row["month"]: row["amount"] for row in processor.get_monthly_spending()} == {"2024-01": 30.0}
+
+
+def test_category_absent_from_map_falls_back_to_name_matching():
+    """A category not present in the type map is classified by the name-based fallback."""
+    transactions = [
+        {"date": "2024-01-05", "description": "Coffee", "category": "Food", "amount": -5.0, "account": "Visa"},
+        {
+            "date": "2024-01-10",
+            "description": "To savings",
+            "category": "Transfer",
+            "amount": -2000.0,
+            "account": "Bank",
+        },
+    ]
+    # "Transfer" is deliberately NOT in the map, so it must fall back to TRANSFER_CATEGORIES.
+    processor = TillerDataProcessor(transactions, category_types={"food": "expense"})
+    assert {row["month"]: row["amount"] for row in processor.get_monthly_spending()} == {"2024-01": 5.0}
+
+
+def test_no_map_preserves_name_based_behavior():
+    """With no map (default), classification is exactly the existing name-based behavior."""
+    processor = TillerDataProcessor(TRANSFER_TRANSACTIONS, category_types=None)
+    assert {row["month"]: row["amount"] for row in processor.get_monthly_spending()} == {"2024-01": 5.0}
+
+
+def test_type_map_keys_are_case_and_whitespace_insensitive():
+    transactions = [
+        {
+            "date": "2024-01-10",
+            "description": "Move",
+            "category": "  Move Money  ",
+            "amount": -100.0,
+            "account": "Bank",
+        },
+    ]
+    processor = TillerDataProcessor(transactions, category_types={"move money": "Transfer"})
+    assert processor.get_monthly_spending() == []
+
+
+def test_type_map_net_worth_still_includes_transfers():
+    """Type-classified transfers still net out in the cumulative net-worth series."""
+    processor = TillerDataProcessor(RENAMED_TRANSFER_TRANSACTIONS, category_types=RENAMED_TRANSFER_TYPES)
+    series = processor.get_net_worth_over_time()
+    assert series[-1]["net_worth"] == -5.0  # -5 - 2000 + 2000
+
+
 def test_get_budget_vs_actual_computes_remaining():
     result = {row["category"]: row for row in _processor().get_budget_vs_actual({"Food": 200.0, "Housing": 1000.0})}
     # amount is negative for expenses; remaining = budgeted + amount

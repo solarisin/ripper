@@ -70,6 +70,11 @@ class DashboardRefreshResult:
 
     data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     statuses: dict[str, DataSourceRefreshStatus] = field(default_factory=dict)
+    # Authoritative ``{category_name: type}`` map built from the Tiller Categories
+    # sheet's "Type" column (keys/values lowercased). Empty when the Categories
+    # sheet is unavailable, in which case widgets fall back to name-based transfer
+    # classification (issue #115).
+    category_types: dict[str, str] = field(default_factory=dict)
 
     def has_errors(self) -> bool:
         """Return True if any refresh status failed."""
@@ -85,6 +90,7 @@ class DashboardDataService:
         retrieve_sheet_data_fn: Callable[[SheetsService, str, str], tuple[SheetData, list[tuple[Any, str]]]]
         | None = None,
         records_provider: Callable[[str, str, str], list[dict[str, Any]] | None] | None = None,
+        categories_fetch_fn: Callable[[SheetsService, str], list[dict[str, Any]]] | None = None,
     ) -> None:
         """Initialise the service.
 
@@ -100,10 +106,16 @@ class DashboardDataService:
                 provider returns a non-None value the API call is skipped and the
                 provided records are used directly before ``DataSource.filters``
                 (date-range / accounts / categories) are applied.
+            categories_fetch_fn: Optional override for the Tiller Categories fetch,
+                a callable ``(service, spreadsheet_id) -> list[dict]`` (defaults to
+                :func:`ripper.ripperlib.sheets_backend.get_tiller_categories`).
+                Injected/patched in tests so the category->type map is built
+                without hitting the network (issue #115).
         """
         self._auth_manager = auth_manager or AuthManager()
         self._retrieve_sheet_data_fn = retrieve_sheet_data_fn
         self._records_provider = records_provider
+        self._categories_fetch_fn = categories_fetch_fn
 
     def create_sheets_service(self) -> SheetsService | None:
         """Create an authenticated Sheets service."""
@@ -128,12 +140,59 @@ class DashboardDataService:
         # GUI-thread editor may mutate dashboard.data_sources, and iterating the live dict view
         # would risk "dictionary changed size during iteration" or a silently inconsistent result
         # (#96). The snapshot fixes exactly which sources this refresh iterates.
-        for data_source in list(dashboard.data_sources.values()):
+        snapshot = list(dashboard.data_sources.values())
+        for data_source in snapshot:
             status, records = self.refresh_data_source(get_service, data_source)
             result.statuses[data_source.id] = status
             if records is not None:
                 result.data[data_source.id] = records
+
+        # Build the authoritative category->type map ONLY when a source genuinely needed the
+        # API this refresh (``service_box`` populated). A dashboard served entirely from
+        # pre-fetched records stays auth-free and degrades to name-based transfer
+        # classification -- consulting the Categories sheet must not force authentication or
+        # a network call for those (issue #115). ``service_box[0]`` may be None (auth failed);
+        # ``_build_category_types`` treats that as "no categories" and returns an empty map.
+        if service_box:
+            result.category_types = self._build_category_types(service_box[0], snapshot)
         return result
+
+    def _build_category_types(self, service: SheetsService | None, data_sources: list[DataSource]) -> dict[str, str]:
+        """Fetch the Tiller Categories sheet(s) and build a ``{category: type}`` map.
+
+        Keys and values are lowercased/stripped for case-insensitive matching in
+        ``TillerDataProcessor``. Each transaction source's spreadsheet is consulted
+        once. Any failure (missing sheet, API error) degrades gracefully to an empty
+        map so classification falls back to name matching -- never a hard dependency.
+        """
+        if service is None:
+            return {}
+        category_types: dict[str, str] = {}
+        seen_spreadsheets: set[str] = set()
+        for data_source in data_sources:
+            if data_source.type != DataSourceType.TILLER_TRANSACTIONS:
+                continue
+            if data_source.spreadsheet_id in seen_spreadsheets:
+                continue
+            seen_spreadsheets.add(data_source.spreadsheet_id)
+            try:
+                rows = self._fetch_categories(service, data_source.spreadsheet_id)
+            except Exception as exc:
+                logger.warning(f"Could not fetch Categories for {data_source.spreadsheet_id}: {exc}")
+                continue
+            for row in rows or []:
+                name = str(row.get("category", "")).strip().lower()
+                ctype = str(row.get("type", "")).strip().lower()
+                if name and ctype:
+                    category_types[name] = ctype
+        return category_types
+
+    def _fetch_categories(self, service: SheetsService, spreadsheet_id: str) -> list[dict[str, Any]]:
+        if self._categories_fetch_fn is not None:
+            return self._categories_fetch_fn(service, spreadsheet_id)
+        from ripper.ripperlib.sheets_backend import get_tiller_categories
+
+        return get_tiller_categories(service, spreadsheet_id)
 
     def refresh_data_source(
         self, service_provider: Callable[[], SheetsService | None], data_source: DataSource

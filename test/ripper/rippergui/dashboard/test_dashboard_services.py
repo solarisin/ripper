@@ -172,6 +172,107 @@ def test_refresh_succeeds_from_provider_without_creating_service():
     assert auth.calls == 0
 
 
+# --------------------------------------------------------------------------- #
+# Category Type metadata classifier wiring (issue #115)
+# --------------------------------------------------------------------------- #
+def _fake_retrieve_transactions(service, spreadsheet_id, range_name):
+    return (
+        [
+            ["Date", "Description", "Category", "Amount", "Account"],
+            ["2024-01-01", "Coffee", "Food", "-5", "Visa"],
+        ],
+        [],
+    )
+
+
+def test_refresh_dashboard_builds_category_types_from_injected_fetch():
+    """The service builds a normalized {category: type} map from the Categories sheet."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source())
+
+    categories_calls = []
+
+    def fake_categories_fetch(service, spreadsheet_id):
+        categories_calls.append(spreadsheet_id)
+        return [
+            {"category": "Food", "type": "Expense"},
+            {"category": "Move Money", "type": "Transfer"},
+            {"category": "Paycheck", "type": "Income"},
+        ]
+
+    result = DashboardDataService(
+        FakeAuthManager(service=_fake_sheets_service()),
+        retrieve_sheet_data_fn=_fake_retrieve_transactions,
+        categories_fetch_fn=fake_categories_fetch,
+    ).refresh_dashboard(dashboard)
+
+    assert categories_calls == ["spreadsheet-1"]
+    # Keys and values are normalized to lowercase for case-insensitive matching.
+    assert result.category_types == {"food": "expense", "move money": "transfer", "paycheck": "income"}
+
+
+def test_refresh_dashboard_degrades_to_empty_map_on_missing_categories_sheet():
+    """A missing/empty Categories sheet degrades gracefully to name-based (no crash)."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source())
+
+    result = DashboardDataService(
+        FakeAuthManager(service=_fake_sheets_service()),
+        retrieve_sheet_data_fn=_fake_retrieve_transactions,
+        categories_fetch_fn=lambda service, spreadsheet_id: [],
+    ).refresh_dashboard(dashboard)
+
+    assert result.category_types == {}
+    assert result.statuses["source-1"].ok  # transactions still refreshed fine
+
+
+def test_refresh_dashboard_tolerates_categories_fetch_errors():
+    """An exception fetching the Categories sheet must not fail the whole refresh."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source())
+
+    def boom(service, spreadsheet_id):
+        raise RuntimeError("categories unavailable")
+
+    result = DashboardDataService(
+        FakeAuthManager(service=_fake_sheets_service()),
+        retrieve_sheet_data_fn=_fake_retrieve_transactions,
+        categories_fetch_fn=boom,
+    ).refresh_dashboard(dashboard)
+
+    assert result.category_types == {}
+    assert result.statuses["source-1"].ok
+
+
+def test_refresh_from_provider_does_not_fetch_categories_or_authenticate():
+    """A fully-cached dashboard stays auth-free: no service, no Categories fetch (#115 guard)."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source())
+
+    class CountingAuth:
+        def __init__(self):
+            self.calls = 0
+
+        def create_sheets_service(self):
+            self.calls += 1
+            return None
+
+    auth = CountingAuth()
+    categories_calls = []
+    records = [{"date": "2024-06-01", "description": "Coffee", "category": "Food", "amount": "-5", "account": "Visa"}]
+
+    result = DashboardDataService(
+        auth,
+        records_provider=lambda s, sh, r: records,
+        categories_fetch_fn=lambda service, spreadsheet_id: categories_calls.append(spreadsheet_id) or [],
+    ).refresh_dashboard(dashboard)
+
+    assert result.statuses["source-1"].ok
+    assert auth.calls == 0  # provider satisfied the source; no auth
+    assert categories_calls == []  # and no Categories fetch was attempted
+    assert result.category_types == {}
+
+
 def test_refresh_dashboard_reports_unsupported_source():
     dashboard = Dashboard.create_new("Finance")
     dashboard.add_data_source(
