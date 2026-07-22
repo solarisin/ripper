@@ -451,6 +451,75 @@ class TestSheetDataCache(unittest.TestCase):
         # Only the open-ended fetch hit the API; the bounded sub-range was served from cache.
         self.assertEqual(mock_fetch.call_count, 1)
 
+    def test_whole_row_taller_request_misses_shorter_cache(self) -> None:
+        """Caching whole-row '2:10' must NOT satisfy a later '2:20' (different resolved end row) (#68).
+
+        Regression for the P1 review on #143: '2:10' and '2:20' both resolve to start row 2 and the
+        full column span, so the marker (which lacked the resolved end row) treated them as the same
+        key. After caching '2:10' a request for '2:20' was wrongly reported as a DATABASE hit and
+        returned only rows 2-10. The request for '2:20' must MISS, re-fetch, and return rows 2-20.
+        """
+        self._store_grid_dimensions(row_count=100, column_count=10)
+        data_2_10 = [[f"row{r}"] for r in range(2, 11)]  # rows 2..10 (9 rows)
+        data_2_20 = [[f"row{r}"] for r in range(2, 21)]  # rows 2..20 (19 rows)
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.side_effect = [data_2_10, data_2_20]
+            first, first_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "2:10"
+            )
+            second, second_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "2:20"
+            )
+
+        self.assertEqual(first, data_2_10)
+        self._assert_single_source(first_sources, LoadSource.API)
+        # The taller request must NOT be served from the shorter cached snapshot.
+        self.assertEqual(mock_fetch.call_count, 2)
+        self._assert_single_source(second_sources, LoadSource.API)
+        # And the returned data must span all requested rows, not be truncated to rows 2-10.
+        self.assertEqual(second, data_2_20)
+
+    def test_whole_row_repeated_read_served_from_cache(self) -> None:
+        """A repeated identical whole-row '2:10' read is served from the cache; API called once (#68)."""
+        self._store_grid_dimensions(row_count=100, column_count=10)
+        data_2_10 = [[f"row{r}"] for r in range(2, 11)]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = data_2_10
+            first, first_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "2:10"
+            )
+            second, second_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "2:10"
+            )
+
+        self.assertEqual(first, data_2_10)
+        self.assertEqual(second, data_2_10)
+        self._assert_single_source(first_sources, LoadSource.API)
+        self._assert_single_source(second_sources, LoadSource.DATABASE)
+        self.assertEqual(mock_fetch.call_count, 1)
+
+    def test_half_open_repeated_read_served_from_cache(self) -> None:
+        """A repeated half-open 'A5:Z' read still hits the cache (resolved end row identical) (#68 (c))."""
+        self._store_grid_dimensions(row_count=10, column_count=26)
+        api_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
+
+        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+            mock_fetch.return_value = api_data
+            first, first_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A5:Z"
+            )
+            second, second_sources = self.cache.get_sheet_data(
+                self.mock_sheets_service, self.test_spreadsheet_id, self.test_sheet_name, "A5:Z"
+            )
+
+        self.assertEqual(first, api_data)
+        self.assertEqual(second, api_data)
+        self._assert_single_source(first_sources, LoadSource.API)
+        self._assert_single_source(second_sources, LoadSource.DATABASE)
+        self.assertEqual(mock_fetch.call_count, 1)
+
     def test_get_sheet_data_open_ended_without_grid_dims_falls_back(self) -> None:
         """Without stored grid dims, an open-ended range falls back to a direct API read (#30)."""
         api_data = [["Date", "Amount"]]

@@ -30,7 +30,15 @@ def default_db_path() -> Path:
 # Columns added to ``sheet_data_ranges`` after the initial schema, mapping name -> SQL type.
 # These flag a stored range as a COMPLETE open-ended snapshot (issue #68): the range is the full
 # result of an open-ended request covering columns [open_ended_start_col..open_ended_end_col]
-# from row open_ended_start_row onward. A plain bounded store leaves all three NULL.
+# over the resolved rows [open_ended_start_row..open_ended_end_row]. A plain bounded store leaves
+# all four NULL.
+#
+# ``open_ended_end_row`` records the request's RESOLVED end row so whole-row forms of different
+# heights (e.g. ``2:10`` vs ``2:20``) do not collide on the same lookup key: both resolve to
+# start row 2 plus the full column span, so without the end row a cached ``2:10`` would wrongly
+# satisfy a ``2:20`` request and return truncated rows (P1 review on #143). ``A:Z``/``A5:Z`` and
+# whole-sheet reads resolve their end row from the grid dimensions, so a repeated read resolves
+# to the same end row and still hits.
 #
 # There is no migration framework (the DB is a rebuildable cache; see #78), so an existing DB
 # predating these columns is upgraded in place via a guarded, idempotent ``ALTER TABLE ... ADD
@@ -40,6 +48,7 @@ _SHEET_DATA_RANGE_ADDED_COLUMNS: dict[str, str] = {
     "open_ended_start_row": "INTEGER",
     "open_ended_start_col": "INTEGER",
     "open_ended_end_col": "INTEGER",
+    "open_ended_end_row": "INTEGER",
 }
 
 
@@ -217,6 +226,7 @@ class RipperDb:
                     open_ended_start_row INTEGER,
                     open_ended_start_col INTEGER,
                     open_ended_end_col INTEGER,
+                    open_ended_end_row INTEGER,
                     FOREIGN KEY (spreadsheet_id) REFERENCES spreadsheets(spreadsheet_id) ON DELETE CASCADE,
                     UNIQUE(spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
                 );"""
@@ -524,6 +534,7 @@ class RipperDb:
         open_ended_start_row: Optional[int] = None,
         open_ended_start_col: Optional[int] = None,
         open_ended_end_col: Optional[int] = None,
+        open_ended_end_row: Optional[int] = None,
     ) -> Optional[int]:
         """
         Store sheet data for a specific range in the database.
@@ -536,11 +547,15 @@ class RipperDb:
             end_row: Ending row (1-based)
             end_col: Ending column (1-based)
             cell_data: 2D list of cell values
-            open_ended_start_row: If set (together with the two below), marks this range as the
+            open_ended_start_row: If set (together with the three below), marks this range as the
                 COMPLETE result of an open-ended request whose resolved columns are
-                [open_ended_start_col..open_ended_end_col] starting at this row (issue #68).
+                [open_ended_start_col..open_ended_end_col] over the resolved rows
+                [open_ended_start_row..open_ended_end_row] (issue #68).
             open_ended_start_col: Resolved start column of the open-ended request (see above).
             open_ended_end_col: Resolved end column of the open-ended request (see above).
+            open_ended_end_row: Resolved end row of the open-ended request. Recorded so whole-row
+                forms of different heights (``2:10`` vs ``2:20``) don't collide on the same lookup
+                key; ``A:Z``/``A5:Z``/whole-sheet reads resolve this to the grid row count.
 
         Returns:
             Range ID if successful, None otherwise
@@ -565,13 +580,14 @@ class RipperDb:
                 c.execute(
                     """INSERT INTO sheet_data_ranges
                        (spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col, cached_at,
-                        open_ended_start_row, open_ended_start_col, open_ended_end_col)
-                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
+                        open_ended_start_row, open_ended_start_col, open_ended_end_col, open_ended_end_row)
+                       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
                        ON CONFLICT(spreadsheet_id, sheet_name, start_row, start_col, end_row, end_col)
                            DO UPDATE SET cached_at=CURRENT_TIMESTAMP,
                                          open_ended_start_row=excluded.open_ended_start_row,
                                          open_ended_start_col=excluded.open_ended_start_col,
-                                         open_ended_end_col=excluded.open_ended_end_col
+                                         open_ended_end_col=excluded.open_ended_end_col,
+                                         open_ended_end_row=excluded.open_ended_end_row
                        RETURNING id""",
                     (
                         spreadsheet_id,
@@ -583,6 +599,7 @@ class RipperDb:
                         open_ended_start_row,
                         open_ended_start_col,
                         open_ended_end_col,
+                        open_ended_end_row,
                     ),
                 )
                 range_id = int(c.fetchone()[0])
@@ -768,17 +785,26 @@ class RipperDb:
         open_ended_start_row: int,
         open_ended_start_col: int,
         open_ended_end_col: int,
+        open_ended_end_row: int,
     ) -> Optional[list[list[Any]]]:
         """Return the complete open-ended snapshot for a matching request, or ``None`` (issue #68).
 
         Looks for a ``sheet_data_ranges`` row flagged as the COMPLETE result of an open-ended
-        request with exactly this resolved identity (start row + start/end columns), and, if
-        found, reconstructs that stored range's rectangle from its own cells. Only rows carrying
-        the marker qualify, so a plain bounded store (marker NULL) can never satisfy an
-        open-ended read — the guard that keeps a seeded ``A1:B2`` from masquerading as ``A:Z``.
+        request whose resolved identity COVERS this request, and, if found, reconstructs that
+        stored range's rectangle from its own cells. A cached snapshot qualifies only when it
+        spans at least the requested rows: it shares the request's resolved start row and column
+        span, and its resolved end row is >= the request's resolved end row. This is what keeps
+        whole-row forms of different heights from colliding — a cached ``2:10`` (end row 10) does
+        NOT satisfy ``2:20`` (end row 20), while a repeated ``2:10`` (or an ``A:Z``/whole-sheet
+        read resolving to the same grid end row) still hits (P1 review on #143).
 
-        The reconstructed rectangle is padded (``None`` for absent cells); the caller reproduces
-        the same trailing-empty trimming a fresh API read would receive.
+        Only rows carrying the marker qualify (the columns are NULL on a plain bounded store), so
+        a seeded ``A1:B2`` can never masquerade as ``A:Z``.
+
+        When a taller cached snapshot serves a shorter request, the reconstructed rectangle is
+        trimmed to the requested end row so no rows beyond the request are returned. The result
+        is padded (``None`` for absent cells); the caller reproduces the same trailing-empty
+        trimming a fresh API read would receive.
 
         Args:
             spreadsheet_id: The ID of the spreadsheet.
@@ -786,10 +812,12 @@ class RipperDb:
             open_ended_start_row: Resolved start row of the open-ended request.
             open_ended_start_col: Resolved start column of the open-ended request.
             open_ended_end_col: Resolved end column of the open-ended request.
+            open_ended_end_row: Resolved end row of the open-ended request. A cached marker
+                satisfies the request only when its own resolved end row is >= this value.
 
         Returns:
-            2D list of cell values for the snapshot's extent, or ``None`` if no fresh
-            complete-coverage marker exists for this request.
+            2D list of cell values for the snapshot's extent (trimmed to the requested rows), or
+            ``None`` if no fresh complete-coverage marker covers this request.
         """
         if self._conn is None:
             logger.error("Database not open")
@@ -798,20 +826,38 @@ class RipperDb:
         try:
             with self._transaction():
                 c = self._conn.cursor()
+                # Match the resolved start row + column span exactly, and require the cached
+                # marker to cover at least the requested rows (its resolved end row >= ours). The
+                # marker columns are NULL on bounded stores, so those never match. Prefer the most
+                # recent qualifying snapshot.
                 c.execute(
                     """SELECT id, start_row, start_col, end_row, end_col
                        FROM sheet_data_ranges
                        WHERE spreadsheet_id = ? AND sheet_name = ?
                        AND open_ended_start_row = ? AND open_ended_start_col = ? AND open_ended_end_col = ?
+                       AND open_ended_end_row >= ?
                        ORDER BY cached_at DESC
                        LIMIT 1""",
-                    (spreadsheet_id, sheet_name, open_ended_start_row, open_ended_start_col, open_ended_end_col),
+                    (
+                        spreadsheet_id,
+                        sheet_name,
+                        open_ended_start_row,
+                        open_ended_start_col,
+                        open_ended_end_col,
+                        open_ended_end_row,
+                    ),
                 )
                 marker = c.fetchone()
                 if marker is None:
                     return None
 
                 range_id, start_row, start_col, end_row, end_col = marker
+                # A taller cached snapshot may extend past the requested rows; cap the stored
+                # extent at the requested end row so we never return rows beyond the request. The
+                # stored start row equals the (exactly-matched) resolved start row.
+                end_row = min(end_row, open_ended_end_row)
+                if end_row < start_row:
+                    return None
                 rows = end_row - start_row + 1
                 cols = end_col - start_col + 1
                 result: list[list[Any]] = [[None for _ in range(cols)] for _ in range(rows)]
