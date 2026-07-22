@@ -98,6 +98,30 @@ class TestDatabaseCaching(unittest.TestCase):
 
         conn.close()
 
+    def test_cell_value_types_survive_cache_round_trip(self) -> None:
+        """Booleans and numbers must come back with their original type, not str() (#144 review).
+
+        The Sheets values API returns bool/int/float as well as str. Before the type tag,
+        ``store_sheet_data_range`` coerced every cell with ``str(...)``, so a cache hit returned
+        ``"True"``/``"1.5"`` where a fresh read returned ``True``/``1.5`` — breaking byte-identity
+        and making behavior depend on whether the read was cached. Crucially, a numeric-looking
+        *string* must stay a string.
+        """
+        cell_data = [
+            [True, 1, 1.5],
+            [False, -3, "1.5"],  # "1.5" is a STRING and must not become the float 1.5
+        ]
+        self.db.store_sheet_data_range(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 2, 3, cell_data)
+
+        cached = self.db.get_sheet_data_from_cache(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 2, 3)
+        self.assertEqual(cached, cell_data)
+        # assertEqual treats True == 1 and 1 == 1.0, so pin the exact types too.
+        self.assertIs(cached[0][0], True)
+        self.assertIsInstance(cached[0][1], int)
+        self.assertIsInstance(cached[0][2], float)
+        self.assertIs(cached[1][0], False)
+        self.assertIsInstance(cached[1][2], str)  # "1.5" round-trips as a string, not a float
+
     def test_store_sheet_data_range_with_none_values(self) -> None:
         """Test storing sheet data with None values."""
         start_row, start_col = 1, 1

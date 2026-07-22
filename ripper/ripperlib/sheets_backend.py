@@ -300,10 +300,20 @@ def retrieve_sheet_data_for(
         :class:`ripper.ripperlib.sheet_data_cache.SheetDataCache`.
     """
     if not range_a1:
-        # Whole-sheet reference: quote the title as a single identifier (cannot be confused
-        # with a 'sheet!range' string even when the title contains '!').
-        whole_sheet = build_a1_range(sheet_name, None)
-        return fetch_data_from_spreadsheet(service, spreadsheet_id, whole_sheet), [(LoadSource.API, whole_sheet)]
+        try:
+            # Whole-sheet read: route through the cache so repeated Tiller reads are cached (#144).
+            # When the sheet's grid width is known, the cache expresses this as a concrete
+            # full-width open-ended range and reuses #68's store+reuse without reintroducing the
+            # #104 column truncation; otherwise it falls back to a direct unbounded read.
+            from ripper.ripperlib.sheet_data_cache import SheetDataCache
+
+            return SheetDataCache().get_whole_sheet_data(service, spreadsheet_id, sheet_name)
+
+        except Exception as e:
+            logger.error(f"Error retrieving whole sheet {sheet_name!r}: {e}; falling back to a direct read")
+            # Fallback: direct unbounded whole-sheet reference (quoted title cannot truncate).
+            whole_sheet = build_a1_range(sheet_name, None)
+            return fetch_data_from_spreadsheet(service, spreadsheet_id, whole_sheet), [(LoadSource.API, whole_sheet)]
 
     try:
         # Use the sheet data cache (it quotes the title at the API boundary).
