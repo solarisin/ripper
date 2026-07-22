@@ -51,6 +51,47 @@ _SHEET_DATA_RANGE_ADDED_COLUMNS: dict[str, str] = {
     "open_ended_end_row": "INTEGER",
 }
 
+# Same guarded-ADD-COLUMN mechanism for sheet_data_cells: ``cell_type`` records the Python type of
+# each cached cell so booleans and numbers survive a cache round-trip instead of being coerced to
+# their ``str()`` form (#144 review). Legacy rows predating the column have ``cell_type`` NULL and
+# are read back as plain strings — exactly the pre-existing behavior, so no cache rebuild is needed.
+_SHEET_DATA_CELL_ADDED_COLUMNS: dict[str, str] = {
+    "cell_type": "TEXT",
+}
+
+
+def _encode_cell_value(value: Any) -> tuple[Optional[str], Optional[str]]:
+    """Serialize a Sheets cell value to ``(text, type_tag)`` preserving its Python type.
+
+    The Sheets values API returns ``str``/``int``/``float``/``bool``; the cache column is TEXT, so
+    without the tag a cached bool/number would come back as ``"True"``/``"1.5"`` on a cache hit and
+    differ from a fresh read. ``None`` maps to ``(None, None)``. A numeric-looking *string* keeps
+    the ``"str"`` tag, so ``"1.5"`` (string) is never confused with ``1.5`` (float) on read.
+    """
+    if value is None:
+        return None, None
+    if isinstance(value, bool):  # bool before int: bool is a subclass of int
+        return ("true" if value else "false"), "bool"
+    if isinstance(value, int):
+        return str(value), "int"
+    if isinstance(value, float):
+        return repr(value), "float"  # repr round-trips float precision exactly
+    return str(value), "str"
+
+
+def _decode_cell_value(text: Optional[str], type_tag: Optional[str]) -> Any:
+    """Inverse of :func:`_encode_cell_value`. A NULL ``type_tag`` (legacy row) yields the raw string."""
+    if text is None:
+        return None
+    if type_tag == "bool":
+        return text == "true"
+    if type_tag == "int":
+        return int(text)
+    if type_tag == "float":
+        return float(text)
+    # "str" or a legacy row with no tag: return the stored text unchanged.
+    return text
+
 
 class RipperDb:
     """
@@ -240,10 +281,13 @@ class RipperDb:
                     row_num INTEGER NOT NULL,
                     col_num INTEGER NOT NULL,
                     cell_value TEXT,
+                    cell_type TEXT,
                     FOREIGN KEY (range_id) REFERENCES sheet_data_ranges(id) ON DELETE CASCADE,
                     UNIQUE(range_id, row_num, col_num)
                 );"""
             )
+            # Upgrade existing (pre-#144-review) databases in place: add the cell_type column.
+            self._ensure_sheet_data_cell_columns(c)
             # Create indices for efficient querying
             c.execute(
                 """CREATE INDEX IF NOT EXISTS idx_sheet_data_ranges_lookup
@@ -290,6 +334,24 @@ class RipperDb:
             # column/col_type come exclusively from the allowlist above (safe to interpolate).
             c.execute(f"ALTER TABLE sheet_data_ranges ADD COLUMN {column} {col_type}")
             logger.info(f"Added column '{column}' to sheet_data_ranges (schema upgrade)")
+
+    def _ensure_sheet_data_cell_columns(self, c: sqlite.Cursor) -> None:
+        """Add the ``sheet_data_cells.cell_type`` column to a pre-existing table (idempotent).
+
+        Same guarded, additive pattern as :meth:`_ensure_sheet_data_range_columns`: the column name
+        and type are interpolated only from :data:`_SHEET_DATA_CELL_ADDED_COLUMNS`, never from
+        untrusted input.
+
+        Args:
+            c: An open cursor participating in the caller's transaction.
+        """
+        existing = {row[1] for row in c.execute("PRAGMA table_info(sheet_data_cells)").fetchall()}
+        for column, col_type in _SHEET_DATA_CELL_ADDED_COLUMNS.items():
+            if column in existing:
+                continue
+            # column/col_type come exclusively from the allowlist above (safe to interpolate).
+            c.execute(f"ALTER TABLE sheet_data_cells ADD COLUMN {column} {col_type}")
+            logger.info(f"Added column '{column}' to sheet_data_cells (schema upgrade)")
 
     def store_sheet_properties(self, spreadsheet_id: str, sheet_properties: list[SheetProperties]) -> bool:
         """
@@ -610,20 +672,17 @@ class RipperDb:
                 c.execute("DELETE FROM sheet_data_cells WHERE range_id = ?", (range_id,))
 
                 # Batch-insert the new cell data (one executemany instead of a statement per cell).
+                # Each cell is stored with its type tag so bool/number values survive the round-trip
+                # instead of being coerced to str() (#144 review).
                 cell_rows = [
-                    (
-                        range_id,
-                        start_row + row_offset,
-                        start_col + col_offset,
-                        str(cell_value) if cell_value is not None else None,
-                    )
+                    (range_id, start_row + row_offset, start_col + col_offset, *_encode_cell_value(cell_value))
                     for row_offset, row_data in enumerate(cell_data)
                     for col_offset, cell_value in enumerate(row_data)
                 ]
                 if cell_rows:
                     c.executemany(
-                        """INSERT INTO sheet_data_cells (range_id, row_num, col_num, cell_value)
-                           VALUES (?, ?, ?, ?)""",
+                        """INSERT INTO sheet_data_cells (range_id, row_num, col_num, cell_value, cell_type)
+                           VALUES (?, ?, ?, ?, ?)""",
                         cell_rows,
                     )
 
@@ -733,7 +792,7 @@ class RipperDb:
                     # Get cell data for this range that intersects with
                     # requested range
                     c.execute(
-                        """SELECT row_num, col_num, cell_value
+                        """SELECT row_num, col_num, cell_value, cell_type
                            FROM sheet_data_cells
                            WHERE range_id = ?
                            AND row_num BETWEEN ? AND ?
@@ -761,12 +820,12 @@ class RipperDb:
                         )
 
                     for cell_row in cells:
-                        cell_row_num, cell_col_num, cell_value = cell_row
+                        cell_row_num, cell_col_num, cell_value, cell_type = cell_row
                         result_row = cell_row_num - start_row
                         result_col = cell_col_num - start_col
 
                         if 0 <= result_row < rows and 0 <= result_col < cols:
-                            result[result_row][result_col] = cell_value
+                            result[result_row][result_col] = _decode_cell_value(cell_value, cell_type)
                             covered[result_row][result_col] = True  # Check if the entire requested range is covered
                 all_covered = all(all(row) for row in covered)
                 if not all_covered:
@@ -863,14 +922,14 @@ class RipperDb:
                 result: list[list[Any]] = [[None for _ in range(cols)] for _ in range(rows)]
 
                 c.execute(
-                    "SELECT row_num, col_num, cell_value FROM sheet_data_cells WHERE range_id = ?",
+                    "SELECT row_num, col_num, cell_value, cell_type FROM sheet_data_cells WHERE range_id = ?",
                     (range_id,),
                 )
-                for cell_row_num, cell_col_num, cell_value in c.fetchall():
+                for cell_row_num, cell_col_num, cell_value, cell_type in c.fetchall():
                     result_row = cell_row_num - start_row
                     result_col = cell_col_num - start_col
                     if 0 <= result_row < rows and 0 <= result_col < cols:
-                        result[result_row][result_col] = cell_value
+                        result[result_row][result_col] = _decode_cell_value(cell_value, cell_type)
 
                 return result
 

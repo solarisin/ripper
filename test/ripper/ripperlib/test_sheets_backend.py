@@ -689,3 +689,29 @@ class TestTillerWholeSheetCaching(unittest.TestCase):
         # Byte-identical to the fresh whole-sheet read (which returns the canonical ragged shape).
         self.assertEqual(first, values)
         self.assertEqual(cached, first)
+
+    def test_cache_served_whole_sheet_preserves_bool_and_numeric_types(self) -> None:
+        """A whole-sheet cache hit preserves bool/number cell types, not their str() form (#144 review).
+
+        The Sheets values API returns booleans and numbers; without the cache's per-cell type tag a
+        cache hit would return ``"True"``/``"1.5"`` while the fresh read returned ``True``/``1.5``,
+        so behavior would depend on whether the read was cached.
+        """
+        self._store_grid_dimensions("Transactions", row_count=10, column_count=3)
+        values = [["Reviewed", "Amount", "Note"], [True, 1.5, "1.5"], [False, -3, "ok"]]
+        service, requested = self._mock_service(values)
+
+        with patch("ripper.ripperlib.sheet_data_cache.Db", self.db):
+            first, _ = retrieve_sheet_data_for(service, self.sid, "Transactions", None)
+            cached, cached_sources = retrieve_sheet_data_for(service, self.sid, "Transactions", None)
+
+        self.assertEqual(len(requested), 1)  # second read hit the cache
+        self.assertEqual(cached_sources[0][0], LoadSource.DATABASE)
+        self.assertEqual(cached, first)
+        self.assertEqual(cached, values)
+        # Pin exact types (assertEqual treats True == 1 == 1.0 and would miss coercion).
+        self.assertIs(cached[1][0], True)
+        self.assertIsInstance(cached[1][1], float)
+        self.assertIsInstance(cached[1][2], str)  # the string "1.5" stays a string
+        self.assertIs(cached[2][0], False)
+        self.assertIsInstance(cached[2][1], int)
