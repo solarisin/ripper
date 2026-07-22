@@ -294,7 +294,14 @@ class DashboardView(QWidget):
                     raise ValueError(f"Unknown widget type: {widget_config.type.value}")
                 runtime_widget = widget_class(widget_config, dashboard)
                 widget_view = runtime_widget.create_widget(container)
-                runtime_widget.update_data(self.refresh_result.data, self.refresh_result.category_types)
+                # Hand the widget ONLY the category-type map for its own configured data source's
+                # spreadsheet. Passing the whole per-source dict (or a cross-spreadsheet merge)
+                # would let one source's transactions be classified with another spreadsheet's
+                # metadata when they share a category name (issue #115). Absent map -> None ->
+                # name-based fallback in TillerDataProcessor.
+                source_id = widget_config.data_source_id
+                category_types = self.refresh_result.category_types.get(source_id) if source_id else None
+                runtime_widget.update_data(self.refresh_result.data, category_types)
                 container_layout.addWidget(widget_view, pos[0], pos[1], size[1], size[0])
             except Exception as e:
                 logger.error(f"Failed to create widget {widget_id}: {e}")

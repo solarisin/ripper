@@ -418,3 +418,58 @@ def test_refresh_result_for_switched_away_dashboard_is_ignored():
     assert view.refresh_result is not result  # not applied
     view._show_refresh_summary.assert_not_called()
     view._set_current_dashboard.assert_not_called()
+
+
+def test_view_passes_each_widget_only_its_own_source_category_map(tmp_path, qtbot, monkeypatch):
+    """DashboardView must hand each widget ONLY its configured source's category-type map, not a
+    shared/merged one (issue #115). Two widgets bound to two sources that share a category name
+    with different Types must each receive their own spreadsheet's map."""
+    from ripper.rippergui.dashboard import views as views_pkg  # noqa: F401
+    from ripper.rippergui.dashboard.models import DataSource, DataSourceType, DateRange, DateRangePreset
+    from ripper.rippergui.dashboard.views import dashboard_view as dv_module
+
+    def _make_source(source_id, spreadsheet_id):
+        return DataSource(
+            id=source_id,
+            type=DataSourceType.TILLER_TRANSACTIONS,
+            name=source_id,
+            spreadsheet_id=spreadsheet_id,
+            sheet_name="Transactions",
+            range_a1="A1:E10",
+            date_range=DateRange(DateRangePreset.LAST_30_DAYS),
+        )
+
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(_make_source("source-a", "spreadsheet-a"))
+    dashboard.add_data_source(_make_source("source-b", "spreadsheet-b"))
+    for widget_id, source_id, pos in (("w-a", "source-a", (0, 0)), ("w-b", "source-b", (0, 1))):
+        cfg = WidgetConfig(id=widget_id, type=WidgetType.SPENDING_TREND, title=widget_id, position=pos, size=(1, 1))
+        cfg.data_source_id = source_id
+        dashboard.add_widget(cfg)
+    dashboard.save_to_file(tmp_path / f"{dashboard.id}.json")
+
+    captured: dict[str, dict[str, str] | None] = {}
+
+    class _SpyWidget:
+        def __init__(self, config, _dashboard):
+            self.config = config
+
+        def create_widget(self, container):
+            return QLabel("spy", container)
+
+        def update_data(self, data_cache=None, category_types=None):
+            captured[self.config.data_source_id] = category_types
+
+    monkeypatch.setattr(dv_module, "get_widget_class", lambda _t: _SpyWidget)
+
+    view = DashboardView(tmp_path, data_service=_fake_data_service())
+    qtbot.addWidget(view)
+    view.refresh_result = DashboardRefreshResult(
+        data={"source-a": [], "source-b": []},
+        category_types={"source-a": {"adjustment": "expense"}, "source-b": {"adjustment": "income"}},
+    )
+    view._set_current_dashboard(dashboard)
+
+    # Each widget got ONLY its own source's spreadsheet map -- not merged, not swapped.
+    assert captured["source-a"] == {"adjustment": "expense"}
+    assert captured["source-b"] == {"adjustment": "income"}

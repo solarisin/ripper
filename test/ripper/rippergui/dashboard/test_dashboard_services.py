@@ -20,12 +20,12 @@ def _fake_sheets_service():
     return MagicMock()
 
 
-def make_transaction_source(source_id="source-1"):
+def make_transaction_source(source_id="source-1", spreadsheet_id="spreadsheet-1"):
     return DataSource(
         id=source_id,
         type=DataSourceType.TILLER_TRANSACTIONS,
         name="Transactions",
-        spreadsheet_id="spreadsheet-1",
+        spreadsheet_id=spreadsheet_id,
         sheet_name="Transactions",
         range_a1="A1:E10",
         date_range=DateRange(
@@ -186,7 +186,7 @@ def _fake_retrieve_transactions(service, spreadsheet_id, range_name):
 
 
 def test_refresh_dashboard_builds_category_types_from_injected_fetch():
-    """The service builds a normalized {category: type} map from the Categories sheet."""
+    """The service builds a normalized {category: type} map keyed by data-source id."""
     dashboard = Dashboard.create_new("Finance")
     dashboard.add_data_source(make_transaction_source())
 
@@ -207,8 +207,117 @@ def test_refresh_dashboard_builds_category_types_from_injected_fetch():
     ).refresh_dashboard(dashboard)
 
     assert categories_calls == ["spreadsheet-1"]
-    # Keys and values are normalized to lowercase for case-insensitive matching.
-    assert result.category_types == {"food": "expense", "move money": "transfer", "paycheck": "income"}
+    # Maps are keyed by data-source id; keys/values normalized to lowercase.
+    assert result.category_types == {"source-1": {"food": "expense", "move money": "transfer", "paycheck": "income"}}
+
+
+def test_refresh_dashboard_keeps_same_category_name_scoped_per_spreadsheet():
+    """Reviewer scenario (a): two sources on DIFFERENT spreadsheets both define 'Adjustment'
+    with different Types. The result must carry SEPARATE per-source maps, never a merged
+    last-wins entry (#115 regression)."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source("source-a", spreadsheet_id="spreadsheet-a"))
+    dashboard.add_data_source(make_transaction_source("source-b", spreadsheet_id="spreadsheet-b"))
+
+    categories_by_spreadsheet = {
+        "spreadsheet-a": [{"category": "Adjustment", "type": "Expense"}],
+        "spreadsheet-b": [{"category": "Adjustment", "type": "Income"}],
+    }
+
+    def fake_categories_fetch(service, spreadsheet_id):
+        return categories_by_spreadsheet[spreadsheet_id]
+
+    result = DashboardDataService(
+        FakeAuthManager(service=_fake_sheets_service()),
+        retrieve_sheet_data_fn=_fake_retrieve_transactions,
+        categories_fetch_fn=fake_categories_fetch,
+    ).refresh_dashboard(dashboard)
+
+    # Each source keeps its OWN spreadsheet's Type for the shared category name.
+    assert result.category_types["source-a"] == {"adjustment": "expense"}
+    assert result.category_types["source-b"] == {"adjustment": "income"}
+
+
+def test_per_source_maps_classify_shared_category_name_independently():
+    """Reviewer scenario (b): an 'Adjustment' transaction under source A (Type=Expense) counts
+    as spending, while the same-named category under source B (Type=Income) is excluded from
+    spending -- because each is classified by ITS OWN spreadsheet's map."""
+    from ripper.rippergui.dashboard.models.tiller_data import TillerDataProcessor
+
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source("source-a", spreadsheet_id="spreadsheet-a"))
+    dashboard.add_data_source(make_transaction_source("source-b", spreadsheet_id="spreadsheet-b"))
+
+    categories_by_spreadsheet = {
+        "spreadsheet-a": [{"category": "Adjustment", "type": "Expense"}],
+        "spreadsheet-b": [{"category": "Adjustment", "type": "Income"}],
+    }
+
+    result = DashboardDataService(
+        FakeAuthManager(service=_fake_sheets_service()),
+        retrieve_sheet_data_fn=_fake_retrieve_transactions,
+        categories_fetch_fn=lambda service, spreadsheet_id: categories_by_spreadsheet[spreadsheet_id],
+    ).refresh_dashboard(dashboard)
+
+    txn = [{"date": "2024-06-01", "description": "Adj", "category": "Adjustment", "amount": -20.0, "account": "Visa"}]
+
+    # Source A: Adjustment is an Expense -> counted as spending.
+    proc_a = TillerDataProcessor(txn, category_types=result.category_types["source-a"])
+    assert proc_a.get_category_breakdown() == [{"category": "Adjustment", "amount": 20.0}]
+
+    # Source B: Adjustment is Income -> excluded from spending.
+    proc_b = TillerDataProcessor(txn, category_types=result.category_types["source-b"])
+    assert proc_b.get_category_breakdown() == []
+
+
+def test_refresh_dashboard_mixed_sources_one_without_categories_falls_back():
+    """Reviewer scenario (c): a source whose spreadsheet has no/empty Categories is simply
+    absent from the per-source map (widget falls back to name-based), while a sibling source
+    with categories still gets its map -- no crash."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source("source-a", spreadsheet_id="spreadsheet-a"))
+    dashboard.add_data_source(make_transaction_source("source-b", spreadsheet_id="spreadsheet-b"))
+
+    categories_by_spreadsheet = {
+        "spreadsheet-a": [{"category": "Food", "type": "Expense"}],
+        "spreadsheet-b": [],  # no Categories sheet content
+    }
+
+    result = DashboardDataService(
+        FakeAuthManager(service=_fake_sheets_service()),
+        retrieve_sheet_data_fn=_fake_retrieve_transactions,
+        categories_fetch_fn=lambda service, spreadsheet_id: categories_by_spreadsheet[spreadsheet_id],
+    ).refresh_dashboard(dashboard)
+
+    assert result.category_types == {"source-a": {"food": "expense"}}
+    assert "source-b" not in result.category_types  # falls back to name-based
+    assert result.statuses["source-a"].ok
+    assert result.statuses["source-b"].ok
+
+
+def test_refresh_dashboard_shared_spreadsheet_fetches_once_and_shares_map():
+    """Reviewer scenario (d): two sources on the SAME spreadsheet each get that spreadsheet's
+    map, fetched only once (no duplicate-fetch)."""
+    dashboard = Dashboard.create_new("Finance")
+    dashboard.add_data_source(make_transaction_source("source-a", spreadsheet_id="spreadsheet-shared"))
+    dashboard.add_data_source(make_transaction_source("source-b", spreadsheet_id="spreadsheet-shared"))
+
+    categories_calls = []
+
+    def fake_categories_fetch(service, spreadsheet_id):
+        categories_calls.append(spreadsheet_id)
+        return [{"category": "Food", "type": "Expense"}]
+
+    result = DashboardDataService(
+        FakeAuthManager(service=_fake_sheets_service()),
+        retrieve_sheet_data_fn=_fake_retrieve_transactions,
+        categories_fetch_fn=fake_categories_fetch,
+    ).refresh_dashboard(dashboard)
+
+    # Fetched once for the shared spreadsheet, but both sources carry the map.
+    assert categories_calls == ["spreadsheet-shared"]
+    assert result.category_types["source-a"] == {"food": "expense"}
+    assert result.category_types["source-b"] == {"food": "expense"}
 
 
 def test_refresh_dashboard_degrades_to_empty_map_on_missing_categories_sheet():

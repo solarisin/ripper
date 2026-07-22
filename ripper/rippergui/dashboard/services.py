@@ -70,11 +70,16 @@ class DashboardRefreshResult:
 
     data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     statuses: dict[str, DataSourceRefreshStatus] = field(default_factory=dict)
-    # Authoritative ``{category_name: type}`` map built from the Tiller Categories
-    # sheet's "Type" column (keys/values lowercased). Empty when the Categories
-    # sheet is unavailable, in which case widgets fall back to name-based transfer
+    # Per-data-source category classification: ``{data_source_id: {category_name: type}}``.
+    # Each inner map is the authoritative ``{category: type}`` built from THAT source's own
+    # spreadsheet's Tiller Categories "Type" column (keys/values lowercased). Keying by data
+    # source keeps metadata scoped to its spreadsheet: two sources on different spreadsheets
+    # that define the same category name with different Types must NOT be merged into one
+    # global last-wins map, or one source's transactions would be classified using the other
+    # spreadsheet's metadata. A source is absent from this dict when its Categories sheet is
+    # unavailable/empty, in which case that widget falls back to name-based transfer
     # classification (issue #115).
-    category_types: dict[str, str] = field(default_factory=dict)
+    category_types: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def has_errors(self) -> bool:
         """Return True if any refresh status failed."""
@@ -157,35 +162,57 @@ class DashboardDataService:
             result.category_types = self._build_category_types(service_box[0], snapshot)
         return result
 
-    def _build_category_types(self, service: SheetsService | None, data_sources: list[DataSource]) -> dict[str, str]:
-        """Fetch the Tiller Categories sheet(s) and build a ``{category: type}`` map.
+    def _build_category_types(
+        self, service: SheetsService | None, data_sources: list[DataSource]
+    ) -> dict[str, dict[str, str]]:
+        """Build a per-data-source ``{data_source_id: {category: type}}`` classification map.
 
-        Keys and values are lowercased/stripped for case-insensitive matching in
-        ``TillerDataProcessor``. Each transaction source's spreadsheet is consulted
-        once. Any failure (missing sheet, API error) degrades gracefully to an empty
-        map so classification falls back to name matching -- never a hard dependency.
+        Each transaction source is classified using ONLY its own spreadsheet's Tiller
+        Categories "Type" column, so two sources on different spreadsheets that define the
+        same category name with different Types stay scoped and are never cross-classified
+        (issue #115). Each distinct spreadsheet is fetched at most once and its resulting map
+        shared by every source referencing it (no duplicate fetch). Keys and values are
+        lowercased/stripped for case-insensitive matching in ``TillerDataProcessor``. Any
+        failure (missing sheet, API error) or an empty Categories sheet degrades gracefully:
+        that source is simply omitted, so its widget falls back to name-based classification --
+        never a hard dependency.
         """
         if service is None:
             return {}
-        category_types: dict[str, str] = {}
-        seen_spreadsheets: set[str] = set()
+        per_source: dict[str, dict[str, str]] = {}
+        # Cache each spreadsheet's normalized map (including empty results) so a spreadsheet
+        # shared by multiple sources is fetched exactly once.
+        spreadsheet_maps: dict[str, dict[str, str]] = {}
         for data_source in data_sources:
             if data_source.type != DataSourceType.TILLER_TRANSACTIONS:
                 continue
-            if data_source.spreadsheet_id in seen_spreadsheets:
-                continue
-            seen_spreadsheets.add(data_source.spreadsheet_id)
-            try:
-                rows = self._fetch_categories(service, data_source.spreadsheet_id)
-            except Exception as exc:
-                logger.warning(f"Could not fetch Categories for {data_source.spreadsheet_id}: {exc}")
-                continue
-            for row in rows or []:
-                name = str(row.get("category", "")).strip().lower()
-                ctype = str(row.get("type", "")).strip().lower()
-                if name and ctype:
-                    category_types[name] = ctype
-        return category_types
+            spreadsheet_id = data_source.spreadsheet_id
+            if spreadsheet_id not in spreadsheet_maps:
+                spreadsheet_maps[spreadsheet_id] = self._fetch_spreadsheet_category_types(service, spreadsheet_id)
+            category_map = spreadsheet_maps[spreadsheet_id]
+            # Omit sources with no usable metadata so the widget falls back to name-based.
+            if category_map:
+                per_source[data_source.id] = category_map
+        return per_source
+
+    def _fetch_spreadsheet_category_types(self, service: SheetsService, spreadsheet_id: str) -> dict[str, str]:
+        """Fetch and normalize one spreadsheet's Categories into a ``{category: type}`` map.
+
+        Returns an empty map on any failure (missing sheet, API error) so classification
+        degrades to name matching rather than failing the refresh.
+        """
+        try:
+            rows = self._fetch_categories(service, spreadsheet_id)
+        except Exception as exc:
+            logger.warning(f"Could not fetch Categories for {spreadsheet_id}: {exc}")
+            return {}
+        category_map: dict[str, str] = {}
+        for row in rows or []:
+            name = str(row.get("category", "")).strip().lower()
+            ctype = str(row.get("type", "")).strip().lower()
+            if name and ctype:
+                category_map[name] = ctype
+        return category_map
 
     def _fetch_categories(self, service: SheetsService, spreadsheet_id: str) -> list[dict[str, Any]]:
         if self._categories_fetch_fn is not None:
