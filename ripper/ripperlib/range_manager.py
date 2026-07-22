@@ -436,6 +436,26 @@ def _parse_cell_reference(cell_ref: str) -> Tuple[int, int]:
     return row_num, col_num
 
 
+def column_number_to_a1(col: int) -> str:
+    """Convert a 1-based column number to its A1 column letters ('A', 'Z', 'AA', 'AD').
+
+    Args:
+        col: Column number (1-based).
+
+    Returns:
+        The A1 column-letter portion (no row), e.g. ``'AD'`` for column 30.
+    """
+    col_str = ""
+    col_num = col
+
+    while col_num > 0:
+        col_num -= 1
+        col_str = chr(ord("A") + (col_num % 26)) + col_str
+        col_num //= 26
+
+    return col_str
+
+
 def _cell_reference_to_a1(row: int, col: int) -> str:
     """
     Convert row and column numbers to A1 notation.
@@ -447,15 +467,7 @@ def _cell_reference_to_a1(row: int, col: int) -> str:
     Returns:
         Cell reference string (e.g., 'A1', 'BC123')
     """
-    col_str = ""
-    col_num = col
-
-    while col_num > 0:
-        col_num -= 1
-        col_str = chr(ord("A") + (col_num % 26)) + col_str
-        col_num //= 26
-
-    return f"{col_str}{row}"
+    return f"{column_number_to_a1(col)}{row}"
 
 
 class RangeOptimizer:

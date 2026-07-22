@@ -12,7 +12,13 @@ from loguru import logger
 
 from ripper.ripperlib.database import Db, RipperDb
 from ripper.ripperlib.defs import LoadSource, SheetData, SheetsService
-from ripper.ripperlib.range_manager import CachedRange, CellRange, RangeOptimizer, build_a1_range
+from ripper.ripperlib.range_manager import (
+    CachedRange,
+    CellRange,
+    RangeOptimizer,
+    build_a1_range,
+    column_number_to_a1,
+)
 
 
 class SheetDataCache:
@@ -79,6 +85,49 @@ class SheetDataCache:
         except Exception as e:
             logger.error(f"Error reading sheet data from cache for {range_str!r}, falling back to API: {e}")
             return self._fetch_direct(service, spreadsheet_id, sheet_name, range_str)
+
+    def get_whole_sheet_data(
+        self, service: SheetsService, spreadsheet_id: str, sheet_name: str
+    ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
+        """Read an entire sheet, routing through the cache when the grid width is known (#144).
+
+        The Tiller fetchers read whole sheets with no cell range. When the sheet's grid extent is
+        stored (``get_sheet_properties_of_spreadsheet``), the read is expressed as a concrete
+        full-width open-ended range (``A:<lastcol>``) and served through the open-ended
+        store+reuse path (:meth:`_load_open_ended`, issue #68). Because the resolved width spans
+        every column of the grid, nothing is truncated — the #104 whole-sheet guarantee holds —
+        and freshness is inherited from the same complete-coverage marker (dropped on a
+        ``modifiedTime`` change or a range-scoped Refresh).
+
+        When the grid width is unknown (cold cache, no stored sheet metadata) this falls back to a
+        direct, unbounded whole-sheet read: correct (nothing truncated), just uncached that once.
+        A width is never guessed, since guessing could silently drop columns of a wide sheet.
+
+        Args:
+            service: Authenticated Google Sheets API service.
+            spreadsheet_id: The ID of the spreadsheet.
+            sheet_name: The (unquoted) sheet title to read in full.
+
+        Returns:
+            Tuple of (sheet_data, range_sources), matching :meth:`get_sheet_data`.
+        """
+        max_row, max_col = self._resolve_grid_dimensions(spreadsheet_id, sheet_name)
+        if max_row is not None and max_col is not None and max_col >= 1:
+            # Concrete full-width open-ended range spanning every column of the grid.
+            full_width_range = f"A:{column_number_to_a1(max_col)}"
+            return self.get_sheet_data(service, spreadsheet_id, sheet_name, full_width_range)
+
+        logger.debug(
+            f"Whole-sheet read for {sheet_name!r} in {spreadsheet_id!r} is uncached: grid width "
+            f"unknown (cold cache); fetching the whole sheet directly from the API"
+        )
+        from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
+
+        # Whole-sheet reference: the quoted title alone (cannot be confused with 'sheet!range'
+        # even when the title contains '!', and cannot truncate a wide sheet).
+        whole_sheet = build_a1_range(sheet_name, None)
+        data = fetch_data_from_spreadsheet(service, spreadsheet_id, whole_sheet)
+        return data, [(LoadSource.API, whole_sheet)]
 
     def _load_with_cache(
         self,

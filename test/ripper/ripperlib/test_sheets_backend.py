@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -225,18 +227,25 @@ class TestRetrieveSheetDataParsing(unittest.TestCase):
         'Q1!Actuals' (no range) would be misparsed as sheet 'Q1' + range 'Actuals'.
         """
         mock_service = MagicMock()
-        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
-            mock_fetch.return_value = []
-            retrieve_sheet_data_for(mock_service, "book", "Q1!Actuals", None)
-            mock_fetch.assert_called_once_with(mock_service, "book", "'Q1!Actuals'")
+        # No stored grid dims -> the whole-sheet read falls back to a direct unbounded fetch.
+        mock_db = MagicMock(spec=RipperDb)
+        mock_db.get_sheet_properties_of_spreadsheet.return_value = []
+        with patch("ripper.ripperlib.sheet_data_cache.Db", mock_db):
+            with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+                mock_fetch.return_value = []
+                retrieve_sheet_data_for(mock_service, "book", "Q1!Actuals", None)
+                mock_fetch.assert_called_once_with(mock_service, "book", "'Q1!Actuals'")
 
     def test_empty_range_is_treated_as_whole_sheet(self) -> None:
         """An empty range_a1 (whole-sheet load) quotes the title rather than appending '!'."""
         mock_service = MagicMock()
-        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
-            mock_fetch.return_value = []
-            retrieve_sheet_data_for(mock_service, "book", "Monthly Budget", "")
-            mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'")
+        mock_db = MagicMock(spec=RipperDb)
+        mock_db.get_sheet_properties_of_spreadsheet.return_value = []
+        with patch("ripper.ripperlib.sheet_data_cache.Db", mock_db):
+            with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+                mock_fetch.return_value = []
+                retrieve_sheet_data_for(mock_service, "book", "Monthly Budget", "")
+                mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'")
 
     def test_ranged_separate_args_go_through_cache(self) -> None:
         """With a range supplied, the bare title + range are handed to the cache verbatim."""
@@ -262,11 +271,14 @@ class TestRetrieveSheetDataParsing(unittest.TestCase):
     def test_whole_sheet_bare_title_is_quoted_for_api(self) -> None:
         """A bare sheet title (no cell range, e.g. a whole-sheet load) must be quoted for the API."""
         mock_service = MagicMock()
-        with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
-            mock_fetch.return_value = []
-            retrieve_sheet_data(mock_service, "book", "Monthly Budget")
+        mock_db = MagicMock(spec=RipperDb)
+        mock_db.get_sheet_properties_of_spreadsheet.return_value = []
+        with patch("ripper.ripperlib.sheet_data_cache.Db", mock_db):
+            with patch("ripper.ripperlib.sheets_backend.fetch_data_from_spreadsheet") as mock_fetch:
+                mock_fetch.return_value = []
+                retrieve_sheet_data(mock_service, "book", "Monthly Budget")
 
-            mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'")
+                mock_fetch.assert_called_once_with(mock_service, "book", "'Monthly Budget'")
 
     def test_fallback_quotes_special_title(self) -> None:
         """If the cache path raises, the direct fallback must still quote the title for the API."""
@@ -477,3 +489,203 @@ class TestTillerWideSheets(unittest.TestCase):
                         {"date": "2026-01-02", "description": "Salary", "amount": "1000.00"},
                     ],
                 )
+
+
+class TestTillerWholeSheetCaching(unittest.TestCase):
+    """Whole-sheet (rangeless) Tiller reads route through SheetDataCache when the grid is known (#144).
+
+    After #104 the Tiller fetchers read the whole sheet with ``range_a1=None``; that path used to
+    bypass ``SheetDataCache`` entirely, so every load hit the API. When the sheet's grid width is
+    stored, the read is now expressed as a concrete full-width open-ended range (``A:<lastcol>``)
+    and served through #68's open-ended store+reuse — cached without reintroducing the #104
+    column truncation. When the grid width is unknown (cold cache) it falls back to a direct,
+    uncached unbounded whole-sheet read.
+    """
+
+    def setUp(self) -> None:
+        self.temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.db_path = self.temp_db.name
+        self.temp_db.close()
+
+        self.db = RipperDb(self.db_path)
+        self.db.create_tables()
+
+        self.sid = "book_144"
+        self.spreadsheet_props = SpreadsheetProperties(
+            {
+                "id": self.sid,
+                "name": "Tiller Book",
+                "modifiedTime": "2024-01-01T00:00:00Z",
+                "createdTime": "2024-01-01T00:00:00Z",
+                "webViewLink": "https://example.com",
+                "owners": [],
+                "size": 1000,
+                "shared": False,
+            }
+        )
+        self.db.store_spreadsheet_properties(self.sid, self.spreadsheet_props)
+
+    def tearDown(self) -> None:
+        self.db.close()
+        os.unlink(self.db_path)
+
+    def _store_grid_dimensions(self, sheet_name: str, row_count: int, column_count: int) -> None:
+        """Store sheet metadata so a whole-sheet read can resolve the full grid width."""
+        metadata = {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": 1,
+                        "index": 0,
+                        "title": sheet_name,
+                        "sheetType": "GRID",
+                        "gridProperties": {"rowCount": row_count, "columnCount": column_count},
+                    }
+                }
+            ]
+        }
+        self.db.store_sheet_properties(self.sid, SheetProperties.from_api_result(metadata))
+
+    @staticmethod
+    def _mock_service(values):
+        """Build a mocked Sheets service that records every requested A1 range (no live API)."""
+        requested: list[str] = []
+
+        def _get(**kwargs):
+            requested.append(kwargs["range"])
+            request = MagicMock()
+            request.execute.return_value = {"values": values}
+            return request
+
+        service = MagicMock()
+        service.spreadsheets.return_value.values.return_value.get.side_effect = _get
+        return service, requested
+
+    @staticmethod
+    def _wide_grid(column_count, row_count=3):
+        headers = [f"col_{i}" for i in range(column_count)]
+        rows = [[f"r{r}c{c}" for c in range(column_count)] for r in range(1, row_count)]
+        return [headers, *rows]
+
+    # (a) repeated whole-sheet read served from cache
+    def test_repeated_whole_sheet_read_served_from_cache(self) -> None:
+        """Two whole-sheet Tiller reads with known grid dims hit the API once (#144 (a))."""
+        self._store_grid_dimensions("Transactions", row_count=10, column_count=5)
+        values = [["Date", "Amount"], ["2024-01-01", "-5"]]
+        service, requested = self._mock_service(values)
+
+        with patch("ripper.ripperlib.sheet_data_cache.Db", self.db):
+            rows1 = get_tiller_transactions(service, self.sid, "Transactions")
+            rows2 = get_tiller_transactions(service, self.sid, "Transactions")
+
+        self.assertEqual(len(requested), 1, f"expected exactly one API read, got {requested}")
+        self.assertEqual(rows1, [{"date": "2024-01-01", "amount": "-5"}])
+        self.assertEqual(rows1, rows2)
+
+    # (b) wide (>26 col) sheet returns all columns through the resolved full-width range
+    def test_wide_sheet_through_cache_returns_all_columns(self) -> None:
+        """A 30-column whole-sheet read via the cache keeps every column; range never bounded at Z (#144 (b))."""
+        column_count = 30
+        self._store_grid_dimensions("Transactions", row_count=3, column_count=column_count)
+        values = self._wide_grid(column_count)
+        service, requested = self._mock_service(values)
+
+        with patch("ripper.ripperlib.sheet_data_cache.Db", self.db):
+            rows = get_tiller_transactions(service, self.sid, "Transactions")
+
+        for range_name in requested:
+            self.assertGreaterEqual(
+                _requested_column_bound(range_name),
+                column_count,
+                f"requested range {range_name!r} truncates a {column_count}-column sheet",
+            )
+        expected_headers = [f"col_{i}" for i in range(column_count)]
+        self.assertEqual(len(rows), len(values) - 1)
+        for row in rows:
+            self.assertEqual(list(row.keys()), expected_headers)
+        self.assertEqual(rows[0]["col_29"], "r1c29")
+
+    # (c) modifiedTime change forces a re-fetch
+    def test_modified_time_change_refetches(self) -> None:
+        """A modifiedTime change invalidates the whole-sheet marker, forcing a re-fetch (#144 (c))."""
+        self._store_grid_dimensions("Transactions", row_count=10, column_count=5)
+        values = [["Date", "Amount"], ["2024-01-01", "-5"]]
+        service, requested = self._mock_service(values)
+
+        with patch("ripper.ripperlib.sheet_data_cache.Db", self.db):
+            get_tiller_transactions(service, self.sid, "Transactions")
+
+            changed = SpreadsheetProperties(
+                {
+                    "id": self.sid,
+                    "name": "Tiller Book",
+                    "modifiedTime": "2024-06-01T00:00:00Z",
+                    "createdTime": "2024-01-01T00:00:00Z",
+                    "webViewLink": "https://example.com",
+                    "owners": [],
+                    "size": 1000,
+                    "shared": False,
+                }
+            )
+            self.db.store_spreadsheet_properties(self.sid, changed)
+            # The invalidation dropped the stored sheet metadata; restore it so the width resolves again.
+            self._store_grid_dimensions("Transactions", row_count=10, column_count=5)
+
+            get_tiller_transactions(service, self.sid, "Transactions")
+
+        self.assertEqual(len(requested), 2, f"expected a re-fetch after modifiedTime change, got {requested}")
+
+    # (c) explicit Refresh forces a re-fetch
+    def test_refresh_refetches(self) -> None:
+        """An explicit range-scoped Refresh invalidates the whole-sheet marker, forcing a re-fetch (#144 (c))."""
+        from ripper.ripperlib.sheet_data_cache import SheetDataCache
+
+        self._store_grid_dimensions("Transactions", row_count=10, column_count=5)
+        values = [["Date", "Amount"], ["2024-01-01", "-5"]]
+        service, requested = self._mock_service(values)
+
+        with patch("ripper.ripperlib.sheet_data_cache.Db", self.db):
+            get_tiller_transactions(service, self.sid, "Transactions")
+            # Refresh the source's full-width extent (issue #80 range-scoped invalidation).
+            self.assertTrue(SheetDataCache(self.db).invalidate_cache_range(self.sid, "Transactions", "A:E"))
+            get_tiller_transactions(service, self.sid, "Transactions")
+
+        self.assertEqual(len(requested), 2, f"expected a re-fetch after Refresh, got {requested}")
+
+    # (d) cold cache with no grid dims falls back to a direct, uncached read
+    def test_cold_cache_no_grid_falls_back_to_direct(self) -> None:
+        """Without stored grid dims, a whole-sheet read falls back to a direct unbounded read (#144 (d))."""
+        column_count = 30
+        values = self._wide_grid(column_count)  # wide data; must not be truncated by the fallback
+        service, requested = self._mock_service(values)
+
+        with patch("ripper.ripperlib.sheet_data_cache.Db", self.db):
+            rows = get_tiller_transactions(service, self.sid, "Transactions")
+            # A second read is also uncached (still correct), proving the fallback path.
+            get_tiller_transactions(service, self.sid, "Transactions")
+
+        self.assertEqual(len(requested), 2, "cold-cache whole-sheet reads should each hit the API")
+        # The fallback is the unbounded whole-sheet reference (quoted title), which cannot truncate.
+        self.assertEqual(requested, ["'Transactions'", "'Transactions'"])
+        expected_headers = [f"col_{i}" for i in range(column_count)]
+        self.assertEqual(len(rows), len(values) - 1)
+        for row in rows:
+            self.assertEqual(list(row.keys()), expected_headers)
+
+    # (e) cache-served whole-sheet read is byte-identical to a fresh fetch
+    def test_cache_served_whole_sheet_byte_identical_to_fresh(self) -> None:
+        """A cache-served whole-sheet read equals the fresh whole-sheet read, incl. ragged trimming (#144 (e))."""
+        self._store_grid_dimensions("Transactions", row_count=10, column_count=3)
+        # Ragged, fresh-API-shaped data: a short row and no trailing empty cells.
+        values = [["Date", "Amount"], ["2024-01-01"], ["2024-01-02", "-9"]]
+        service, requested = self._mock_service(values)
+
+        with patch("ripper.ripperlib.sheet_data_cache.Db", self.db):
+            first, first_sources = retrieve_sheet_data_for(service, self.sid, "Transactions", None)
+            cached, cached_sources = retrieve_sheet_data_for(service, self.sid, "Transactions", None)
+
+        self.assertEqual(len(requested), 1)
+        self.assertEqual(cached_sources[0][0], LoadSource.DATABASE)
+        # Byte-identical to the fresh whole-sheet read (which returns the canonical ragged shape).
+        self.assertEqual(first, values)
+        self.assertEqual(cached, first)
