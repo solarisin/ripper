@@ -713,7 +713,7 @@ class TestDatabaseCaching(unittest.TestCase):
         """A range stored with the open-ended marker is retrievable via get_open_ended_coverage (#68)."""
         cell_data = [["Date", "Amount"], ["2024-01-01", "-5"]]
         # Store under the actual extent A1:B2, marked as the complete result of an A:Z request
-        # (open-ended columns 1..26 starting at row 1).
+        # (open-ended columns 1..26 starting at row 1, resolved end row 100 from the grid).
         self.db.store_sheet_data_range(
             self.test_spreadsheet_id,
             self.test_sheet_name,
@@ -725,20 +725,70 @@ class TestDatabaseCaching(unittest.TestCase):
             open_ended_start_row=1,
             open_ended_start_col=1,
             open_ended_end_col=26,
+            open_ended_end_row=100,
         )
 
-        covered = self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26)
+        covered = self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26, 100)
         self.assertEqual(covered, cell_data)
 
         # A different open-ended request (different column span) does not match.
-        self.assertIsNone(self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 13))
+        self.assertIsNone(
+            self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 13, 100)
+        )
 
-    def test_bounded_store_has_no_open_ended_marker(self) -> None:
-        """A plain bounded store never satisfies an open-ended coverage lookup (#68 (c) at the DB layer)."""
+    def test_open_ended_coverage_marker_end_row_containment(self) -> None:
+        """The marker satisfies a request only when it covers the resolved end row (#68 P1 review).
+
+        Mirrors whole-row '2:10' vs '2:20': the marker records the resolved end row, so a shorter
+        cached snapshot cannot satisfy a taller request, while a taller (or equal) snapshot can.
+        """
+        cell_data = [["r2"], ["r3"], ["r4"]]  # actual extent rows 2..4
+        # A cached whole-row '2:10' snapshot: resolved rows 2..10, full column span.
+        self.db.store_sheet_data_range(
+            self.test_spreadsheet_id,
+            self.test_sheet_name,
+            2,
+            1,
+            4,
+            1,
+            cell_data,
+            open_ended_start_row=2,
+            open_ended_start_col=1,
+            open_ended_end_col=10,
+            open_ended_end_row=10,
+        )
+
+        # Same height ('2:10' again) hits.
+        self.assertEqual(
+            self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 2, 1, 10, 10),
+            cell_data,
+        )
+        # Taller request ('2:20') is NOT covered -> miss.
+        self.assertIsNone(self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 2, 1, 10, 20))
+        # Shorter request ('2:3') is covered by the taller snapshot, trimmed to the requested rows.
+        self.assertEqual(
+            self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 2, 1, 10, 3),
+            [["r2"], ["r3"]],
+        )
+
+    def test_bounded_store_leaves_open_ended_end_row_null(self) -> None:
+        """A plain bounded store leaves open_ended_end_row NULL and never satisfies a lookup (#68 (d))."""
         self.db.store_sheet_data_range(
             self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 2, 2, [["A1", "B1"], ["A2", "B2"]]
         )
-        self.assertIsNone(self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26))
+        # The new marker column is NULL for bounded stores.
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            "SELECT open_ended_end_row FROM sheet_data_ranges WHERE spreadsheet_id = ? AND sheet_name = ?",
+            (self.test_spreadsheet_id, self.test_sheet_name),
+        )
+        self.assertEqual(c.fetchall(), [(None,)])
+        conn.close()
+        # And a bounded store never satisfies an open-ended coverage lookup.
+        self.assertIsNone(
+            self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26, 100)
+        )
 
     def test_open_ended_marker_dropped_by_sheet_wide_invalidation(self) -> None:
         """Sheet-wide invalidation drops the open-ended marker along with the range (#68)."""
@@ -753,9 +803,12 @@ class TestDatabaseCaching(unittest.TestCase):
             open_ended_start_row=1,
             open_ended_start_col=1,
             open_ended_end_col=26,
+            open_ended_end_row=100,
         )
         self.db.invalidate_sheet_data_cache(self.test_spreadsheet_id, self.test_sheet_name)
-        self.assertIsNone(self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26))
+        self.assertIsNone(
+            self.db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26, 100)
+        )
 
     def test_schema_add_column_on_existing_db(self) -> None:
         """Opening a DB whose sheet_data_ranges predates the marker columns adds them, no crash (#68 (e))."""
@@ -786,7 +839,12 @@ class TestDatabaseCaching(unittest.TestCase):
                 conn = sqlite3.connect(legacy_path.name)
                 cols = {row[1] for row in conn.execute("PRAGMA table_info(sheet_data_ranges)").fetchall()}
                 conn.close()
-                for expected in ("open_ended_start_row", "open_ended_start_col", "open_ended_end_col"):
+                for expected in (
+                    "open_ended_start_row",
+                    "open_ended_start_col",
+                    "open_ended_end_col",
+                    "open_ended_end_row",
+                ):
                     self.assertIn(expected, cols)
 
                 # And the marker round-trips on the upgraded DB.
@@ -802,9 +860,10 @@ class TestDatabaseCaching(unittest.TestCase):
                     open_ended_start_row=1,
                     open_ended_start_col=1,
                     open_ended_end_col=26,
+                    open_ended_end_row=100,
                 )
                 self.assertEqual(
-                    legacy_db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26),
+                    legacy_db.get_open_ended_coverage(self.test_spreadsheet_id, self.test_sheet_name, 1, 1, 26, 100),
                     [["X"]],
                 )
             finally:

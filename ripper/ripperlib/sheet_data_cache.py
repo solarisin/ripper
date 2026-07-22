@@ -160,13 +160,16 @@ class SheetDataCache:
         under the data's *actual* extent, padded to a complete rectangle so it isn't later
         mis-flagged as an incomplete grid-sized range, and marked as complete coverage for reuse.
         """
-        # Read-reuse: serve from a fresh complete-coverage snapshot when one exists.
+        # Read-reuse: serve from a fresh complete-coverage snapshot when one exists. The resolved
+        # end row is part of the identity so whole-row forms of different heights (2:10 vs 2:20)
+        # don't collide; a cached snapshot must cover at least the requested rows (issue #68).
         cached = self._db.get_open_ended_coverage(
             spreadsheet_id,
             sheet_name,
             requested_range.start_row,
             requested_range.start_col,
             requested_range.end_col,
+            requested_range.end_row,
         )
         if cached is not None:
             return _finalize_open_ended_cached(cached), [(LoadSource.DATABASE, range_str)]
@@ -185,8 +188,9 @@ class SheetDataCache:
         """Store an open-ended fetch under its actual extent, marked as complete coverage (#68).
 
         Anchored at the request start and padded to a rectangle. The complete-coverage marker
-        records the resolved open-ended identity (start row + column span) so a later identical
-        open-ended request can be served from this stored extent.
+        records the resolved open-ended identity (start row + column span + resolved end row) so a
+        later open-ended request that this snapshot fully covers can be served from this stored
+        extent. The resolved end row distinguishes whole-row heights (``2:10`` vs ``2:20``).
         """
         rectangle = _pad_to_rectangle(data)
         rows = len(rectangle)
@@ -207,6 +211,7 @@ class SheetDataCache:
             open_ended_start_row=requested_range.start_row,
             open_ended_start_col=requested_range.start_col,
             open_ended_end_col=requested_range.end_col,
+            open_ended_end_row=requested_range.end_row,
         )
 
     def _resolve_grid_dimensions(self, spreadsheet_id: str, sheet_name: str) -> tuple[Optional[int], Optional[int]]:
@@ -385,6 +390,7 @@ class SheetDataCache:
         open_ended_start_row: Optional[int] = None,
         open_ended_start_col: Optional[int] = None,
         open_ended_end_col: Optional[int] = None,
+        open_ended_end_row: Optional[int] = None,
     ) -> None:
         """
         Store range data in the cache.
@@ -394,10 +400,11 @@ class SheetDataCache:
             sheet_name: The name of the sheet
             cell_range: The range that was fetched
             data: The 2D list of cell values
-            open_ended_start_row: When set with the two below, marks this range as the complete
+            open_ended_start_row: When set with the three below, marks this range as the complete
                 result of an open-ended request (see ``store_sheet_data_range``); NULL otherwise.
             open_ended_start_col: Resolved start column of the open-ended request.
             open_ended_end_col: Resolved end column of the open-ended request.
+            open_ended_end_row: Resolved end row of the open-ended request.
         """
         range_id = self._db.store_sheet_data_range(
             spreadsheet_id,
@@ -410,6 +417,7 @@ class SheetDataCache:
             open_ended_start_row=open_ended_start_row,
             open_ended_start_col=open_ended_start_col,
             open_ended_end_col=open_ended_end_col,
+            open_ended_end_row=open_ended_end_row,
         )
 
         if range_id:
