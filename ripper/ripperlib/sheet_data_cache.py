@@ -145,16 +145,32 @@ class SheetDataCache:
         range_str: str,
         requested_range: CellRange,
     ) -> tuple[SheetData, list[tuple[LoadSource, str]]]:
-        """Fetch an open-ended range (e.g. A:Z) fresh, caching only its actual extent.
+        """Serve an open-ended range (e.g. A:Z) from a complete-coverage snapshot, else fetch fresh.
 
         Open-ended completeness cannot be inferred from arbitrary cached overlap: a cached
         bounded range (say A1:B2) does NOT prove the rest of A:Z is cached, and a wider
-        overlapping range could pull in columns outside the request. So we always fetch the
-        resolved rectangle once (correct for growing data) and store it under the data's
-        *actual* extent, padded to a complete rectangle so it isn't later mis-flagged as an
-        incomplete grid-sized range. This keeps the cache sound and still lets bounded
-        sub-range requests be served from the stored extent.
+        overlapping range could pull in columns outside the request. Read-reuse is therefore
+        gated on an explicit *complete-coverage marker* (issue #68): only a range previously
+        stored as the full result of THIS open-ended request (same resolved start row + column
+        span) qualifies. The marker lives on the ``sheet_data_ranges`` row, so every invalidation
+        path — ``modifiedTime`` change and range-scoped Refresh (#80) — drops it automatically,
+        and a plain bounded store (no marker) can never masquerade as an open-ended result.
+
+        On a miss we fetch the resolved rectangle once (correct for growing data) and store it
+        under the data's *actual* extent, padded to a complete rectangle so it isn't later
+        mis-flagged as an incomplete grid-sized range, and marked as complete coverage for reuse.
         """
+        # Read-reuse: serve from a fresh complete-coverage snapshot when one exists.
+        cached = self._db.get_open_ended_coverage(
+            spreadsheet_id,
+            sheet_name,
+            requested_range.start_row,
+            requested_range.start_col,
+            requested_range.end_col,
+        )
+        if cached is not None:
+            return _finalize_open_ended_cached(cached), [(LoadSource.DATABASE, range_str)]
+
         from ripper.ripperlib.sheets_backend import fetch_data_from_spreadsheet
 
         range_notation = build_a1_range(sheet_name, requested_range.to_a1_notation())
@@ -166,7 +182,12 @@ class SheetDataCache:
     def _store_actual_extent(
         self, spreadsheet_id: str, sheet_name: str, requested_range: CellRange, data: SheetData
     ) -> None:
-        """Store fetched data under its actual (rectangular) extent, anchored at the request start."""
+        """Store an open-ended fetch under its actual extent, marked as complete coverage (#68).
+
+        Anchored at the request start and padded to a rectangle. The complete-coverage marker
+        records the resolved open-ended identity (start row + column span) so a later identical
+        open-ended request can be served from this stored extent.
+        """
         rectangle = _pad_to_rectangle(data)
         rows = len(rectangle)
         cols = len(rectangle[0]) if rectangle else 0
@@ -178,7 +199,15 @@ class SheetDataCache:
             requested_range.start_row + rows - 1,
             requested_range.start_col + cols - 1,
         )
-        self._store_range_data(spreadsheet_id, sheet_name, extent, rectangle)
+        self._store_range_data(
+            spreadsheet_id,
+            sheet_name,
+            extent,
+            rectangle,
+            open_ended_start_row=requested_range.start_row,
+            open_ended_start_col=requested_range.start_col,
+            open_ended_end_col=requested_range.end_col,
+        )
 
     def _resolve_grid_dimensions(self, spreadsheet_id: str, sheet_name: str) -> tuple[Optional[int], Optional[int]]:
         """Look up (row_count, column_count) for a sheet from stored metadata, if available."""
@@ -347,7 +376,16 @@ class SheetDataCache:
 
         return cached_data
 
-    def _store_range_data(self, spreadsheet_id: str, sheet_name: str, cell_range: CellRange, data: SheetData) -> None:
+    def _store_range_data(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        cell_range: CellRange,
+        data: SheetData,
+        open_ended_start_row: Optional[int] = None,
+        open_ended_start_col: Optional[int] = None,
+        open_ended_end_col: Optional[int] = None,
+    ) -> None:
         """
         Store range data in the cache.
 
@@ -356,6 +394,10 @@ class SheetDataCache:
             sheet_name: The name of the sheet
             cell_range: The range that was fetched
             data: The 2D list of cell values
+            open_ended_start_row: When set with the two below, marks this range as the complete
+                result of an open-ended request (see ``store_sheet_data_range``); NULL otherwise.
+            open_ended_start_col: Resolved start column of the open-ended request.
+            open_ended_end_col: Resolved end column of the open-ended request.
         """
         range_id = self._db.store_sheet_data_range(
             spreadsheet_id,
@@ -365,6 +407,9 @@ class SheetDataCache:
             cell_range.end_row,
             cell_range.end_col,
             data,
+            open_ended_start_row=open_ended_start_row,
+            open_ended_start_col=open_ended_start_col,
+            open_ended_end_col=open_ended_end_col,
         )
 
         if range_id:
@@ -553,3 +598,25 @@ def _trim_trailing_empty_columns(data: SheetData) -> SheetData:
                 last_col = max(last_col, idx + 1)
                 break
     return [row[:last_col] for row in data]
+
+
+def _trim_trailing_empty_cells(row: list[Any]) -> list[Any]:
+    """Drop trailing empty cells from a single row (mirrors a ragged unbounded API read)."""
+    end = len(row)
+    while end > 0 and _is_empty_cell(row[end - 1]):
+        end -= 1
+    return row[:end]
+
+
+def _finalize_open_ended_cached(data: SheetData) -> SheetData:
+    """Trim a padded cached rectangle to be byte-identical to a fresh open-ended API read (#68).
+
+    A fresh unbounded read returns *ragged* rows (each truncated at its last non-empty cell) with
+    trailing empty rows omitted, then ``_finalize`` trims trailing empty rows/columns. The cache
+    instead stores a padded rectangle, so we reproduce that exact shape here: drop trailing empty
+    rows, then per-row drop trailing empty cells. This yields the same result the fresh path
+    (`_finalize`) would for the same underlying data, so a cache-served ``A:Z`` is indistinguishable
+    from a direct fetch.
+    """
+    trimmed_rows = _trim_trailing_empty_rows(data)
+    return [_trim_trailing_empty_cells(row) for row in trimmed_rows]
